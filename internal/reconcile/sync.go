@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"barglvojtech.net/nxf/internal/paths"
+	"github.com/vbargl/nxf/internal/paths"
 )
 
 // Run reconciles systemd user units and activation scripts against the set

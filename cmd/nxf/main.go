@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"barglvojtech.net/nxf/internal/oscmd"
-	"barglvojtech.net/nxf/internal/profilecmd"
-	"barglvojtech.net/nxf/internal/version"
+	"github.com/vbargl/nxf/internal/oscmd"
+	"github.com/vbargl/nxf/internal/profilecmd"
+	"github.com/vbargl/nxf/internal/version"
 )
 
 func main() {

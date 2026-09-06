@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"barglvojtech.net/nxf/internal/paths"
+	"github.com/vbargl/nxf/internal/paths"
 )
 
 // loadRefs reads the name -> flake mapping nxf records for every profile

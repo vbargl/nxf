@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"barglvojtech.net/nxf/internal/nixutil"
+	"github.com/vbargl/nxf/internal/nixutil"
 )
 
 const longDescription = `Builds and activates the NixOS system configuration.

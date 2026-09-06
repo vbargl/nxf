@@ -21,10 +21,10 @@ buildGoModule rec {
   # profile` diffing and build-progress display don't depend on any of them
   # being on the caller's PATH.
   ldflags = [
-    "-X barglvojtech.net/nxf/internal/nixutil.NvdPath=${nvd}/bin/nvd"
-    "-X barglvojtech.net/nxf/internal/nixutil.NomPath=${nix-output-monitor}/bin/nom"
-    "-X barglvojtech.net/nxf/internal/nixutil.NixFastBuildPath=${nix-fast-build}/bin/nix-fast-build"
-    "-X barglvojtech.net/nxf/internal/version.Version=${version}"
+    "-X github.com/vbargl/nxf/internal/nixutil.NvdPath=${nvd}/bin/nvd"
+    "-X github.com/vbargl/nxf/internal/nixutil.NomPath=${nix-output-monitor}/bin/nom"
+    "-X github.com/vbargl/nxf/internal/nixutil.NixFastBuildPath=${nix-fast-build}/bin/nix-fast-build"
+    "-X github.com/vbargl/nxf/internal/version.Version=${version}"
   ];
 
   meta = {

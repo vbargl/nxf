@@ -10,9 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"barglvojtech.net/nxf/internal/nixutil"
-	"barglvojtech.net/nxf/internal/paths"
-	"barglvojtech.net/nxf/internal/reconcile"
+	"github.com/vbargl/nxf/internal/nixutil"
+	"github.com/vbargl/nxf/internal/paths"
+	"github.com/vbargl/nxf/internal/reconcile"
 )
 
 // NewCommand returns the `nxf profile` command tree: reconciles systemd user

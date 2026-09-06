@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"barglvojtech.net/nxf/internal/paths"
+	"github.com/vbargl/nxf/internal/paths"
 )
 
 // execCommand constructs the systemctl command; overridden in tests so

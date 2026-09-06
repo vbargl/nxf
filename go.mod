@@ -1,4 +1,4 @@
-module barglvojtech.net/nxf
+module github.com/vbargl/nxf
 
 go 1.26
 

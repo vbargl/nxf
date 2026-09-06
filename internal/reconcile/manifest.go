@@ -14,7 +14,7 @@ import (
 )
 
 // Manifest mirrors the JSON written by lib/mkProfile.nix into
-// <profile>/share/barglvojtech.net/nxf/profiles/<name>/nxf.json.
+// <profile>/share/github.com/vbargl/nxf/profiles/<name>/nxf.json.
 type Manifest struct {
 	Name        string            `json:"name"`
 	Units       map[string]string `json:"units"`
@@ -29,7 +29,7 @@ func (m Manifest) autoStart(unit string) bool {
 	return !slices.Contains(m.ManualUnits, unit)
 }
 
-// Discover walks profileLink/share/barglvojtech.net/nxf/profiles/*/nxf.json and returns the
+// Discover walks profileLink/share/github.com/vbargl/nxf/profiles/*/nxf.json and returns the
 // manifest of every profile currently merged into the nix profile.
 func Discover(profileLink string) ([]Manifest, error) {
 	base := filepath.Join(profileLink, "share", "nxf", "profiles")
