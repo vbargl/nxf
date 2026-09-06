@@ -75,8 +75,8 @@ func runNixTree(args ...string) error {
 	return nixErr
 }
 
-// ProfileAdd installs an already-built store path (see profilecmd) - nothing
-// to build here, so this is a plain, near-instant command.
+// ProfileAdd installs an already-built store path (see internal/profile) -
+// nothing to build here, so this is a plain, near-instant command.
 func ProfileAdd(storePath string) error {
 	return RunNix("profile", "add", storePath)
 }
@@ -87,8 +87,8 @@ func ProfileRemove(name string) error {
 
 // ProfileRemoveQuiet best-effort removes name without printing anything -
 // used to clear out a prior element before re-adding under the same name
-// (see profilecmd), where "no such element" is the expected common case and
-// shouldn't be reported as if something went wrong.
+// (see internal/profile), where "no such element" is the expected common
+// case and shouldn't be reported as if something went wrong.
 func ProfileRemoveQuiet(name string) {
 	cmd := execCommand("nix", "profile", "remove", name)
 	_ = cmd.Run()

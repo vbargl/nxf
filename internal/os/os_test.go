@@ -1,4 +1,4 @@
-package oscmd
+package os
 
 import (
 	"os/exec"

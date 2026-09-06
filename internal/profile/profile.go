@@ -1,6 +1,6 @@
-// Package profilecmd implements the `nxf profile` subcommand: building,
-// adding, removing, upgrading, syncing, and listing user-level nix profiles.
-package profilecmd
+// Package profile builds, adds, removes, upgrades, and lists user-level nix
+// profiles - the logic behind `nxf profile`.
+package profile
 
 import (
 	"fmt"
@@ -8,98 +8,41 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spf13/cobra"
-
 	"github.com/vbargl/nxf/internal/nixutil"
 	"github.com/vbargl/nxf/internal/paths"
 	"github.com/vbargl/nxf/internal/reconcile"
 )
 
-// NewCommand returns the `nxf profile` command tree: reconciles systemd user
-// units and activation scripts for nix profiles.
-func NewCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "profile",
-		Short: "Manage user-level nix profiles",
-	}
-	cmd.AddCommand(
-		newBuildCommand(),
-		newAddCommand(),
-		newRemoveCommand(),
-		newUpgradeCommand(),
-		newSyncCommand(),
-		newListCommand(),
-	)
-	return cmd
+// Sync reconciles systemd user units and activation scripts for the
+// currently applied profiles, without adding or removing anything.
+func Sync() error {
+	return reconcile.Run()
 }
 
-func newBuildCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "build <flake-ref>#<profile>",
-		Short: "Build a profile without installing it (./result)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdBuild(args[0])
-		},
+// List prints every nxf-aware profile currently applied.
+func List() error {
+	profileLink, err := paths.NixProfileLink()
+	if err != nil {
+		return err
 	}
-}
-
-func newAddCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "add <flake-ref>#<profile>...",
-		Short: "Add one or more profiles (nix profile add), then sync",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdAdd(args)
-		},
+	manifests, err := reconcile.Discover(profileLink)
+	if err != nil {
+		return err
 	}
-}
-
-func newRemoveCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "remove <name>...",
-		Short: "Remove one or more profiles (nix profile remove), then sync",
-		Args:  cobra.MinimumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdRemove(args)
-		},
+	if len(manifests) == 0 {
+		fmt.Println("no nxf-aware profiles applied")
+		return nil
 	}
-}
-
-func newUpgradeCommand() *cobra.Command {
-	var all, refresh bool
-	c := &cobra.Command{
-		Use:   "upgrade [name...]",
-		Short: "Rebuild and reinstall already-applied profiles from the flake ref they were added with",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdUpgrade(args, all, refresh)
-		},
+	for _, m := range manifests {
+		fmt.Printf("%s\n", m.Name)
+		for unit, path := range m.Units {
+			fmt.Printf("  unit %s -> %s\n", unit, path)
+		}
+		if m.Activate != nil {
+			fmt.Printf("  activate -> %s\n", *m.Activate)
+		}
 	}
-	c.Flags().BoolVar(&all, "all", false, "upgrade every profile nxf has a recorded ref for")
-	c.Flags().BoolVar(&refresh, "refresh", false, "bypass nix's flake-ref resolution cache and re-check upstream")
-	return c
-}
-
-func newSyncCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "sync",
-		Short: "Reconcile units/activation without add/remove",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return reconcile.Run()
-		},
-	}
-}
-
-func newListCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List profiles currently applied",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdList()
-		},
-	}
+	return nil
 }
 
 // currentProfilePath resolves ~/.nix-profile to its current store path, or
@@ -116,7 +59,8 @@ func currentProfilePath() string {
 	return resolved
 }
 
-func cmdBuild(ref string) error {
+// Build builds a profile from ref without installing it.
+func Build(ref string) error {
 	expanded, _, err := expandProfileRef(ref, nixutil.CurrentSystem)
 	if err != nil {
 		return err
@@ -132,7 +76,7 @@ func cmdBuild(ref string) error {
 	return nixutil.ShowDiff(oldPath, newPath)
 }
 
-// cmdAdd builds and installs every ref in refs, then shows a single combined
+// Add builds and installs every ref in refs, then shows a single combined
 // diff and runs sync once - not once per ref - so adding several profiles in
 // one invocation reads as one atomic change instead of N separate ones.
 //
@@ -144,7 +88,7 @@ func cmdBuild(ref string) error {
 // "<flake>#profileConfigurations.<system>...." path (which might target a
 // system other than the current one, so it can't be safely batched), falls
 // back to the plain per-ref path in addSingle.
-func cmdAdd(refs []string) error {
+func Add(refs []string) error {
 	oldPath := currentProfilePath()
 
 	var flakeOrder []string
@@ -204,7 +148,7 @@ func splitConvenienceRef(ref string) (flake, name string, ok bool) {
 // addBatch builds every name under <flake>#profileConfigurations.<system> in
 // one nix-fast-build invocation (see nixutil.BuildMany) and installs each
 // resulting store path. refresh is passed straight through to BuildMany (see
-// cmdUpgrade).
+// Upgrade).
 func addBatch(flake string, names []string, refresh bool) error {
 	system, err := nixutil.CurrentSystem()
 	if err != nil {
@@ -225,9 +169,9 @@ func addBatch(flake string, names []string, refresh bool) error {
 	return nil
 }
 
-// addSingle builds and installs a single ref, the same way cmdAdd always
-// used to - nom's tree view only makes sense for a single build. refresh is
-// passed straight through to nixutil.Build (see cmdUpgrade).
+// addSingle builds and installs a single ref, the same way Add always used
+// to before batching existed - nom's tree view only makes sense for a single
+// build. refresh is passed straight through to nixutil.Build (see Upgrade).
 func addSingle(ref string, refresh bool) error {
 	expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
 	if err != nil {
@@ -268,9 +212,9 @@ func profileElementName(name string) string {
 	return "profile-" + name
 }
 
-// cmdRemove removes every name in names, then shows a single combined diff
-// and runs sync once - see cmdAdd.
-func cmdRemove(names []string) error {
+// Remove removes every name in names, then shows a single combined diff and
+// runs sync once - see Add.
+func Remove(names []string) error {
 	oldPath := currentProfilePath()
 
 	for _, name := range names {
@@ -287,13 +231,13 @@ func cmdRemove(names []string) error {
 	return reconcile.Run()
 }
 
-// cmdUpgrade rebuilds and reinstalls already-applied profiles from the flake
+// Upgrade rebuilds and reinstalls already-applied profiles from the flake
 // ref nxf recorded when each was added (see rememberRef) - the same
-// build+install path as cmdAdd (batched per flake via addBatch, same as
+// build+install path as Add (batched per flake via addBatch, same as
 // addBatch/addSingle), just resolving refs from recorded state instead of
 // the command line. names selects specific profiles; all selects every
 // profile nxf has a recorded ref for - exactly one of the two must be given.
-func cmdUpgrade(names []string, all, refresh bool) error {
+func Upgrade(names []string, all, refresh bool) error {
 	if all == (len(names) > 0) {
 		return fmt.Errorf("specify either --all or one or more profile names, not both/neither")
 	}
@@ -351,35 +295,10 @@ func cmdUpgrade(names []string, all, refresh bool) error {
 	return reconcile.Run()
 }
 
-func cmdList() error {
-	profileLink, err := paths.NixProfileLink()
-	if err != nil {
-		return err
-	}
-	manifests, err := reconcile.Discover(profileLink)
-	if err != nil {
-		return err
-	}
-	if len(manifests) == 0 {
-		fmt.Println("no nxf-aware profiles applied")
-		return nil
-	}
-	for _, m := range manifests {
-		fmt.Printf("%s\n", m.Name)
-		for unit, path := range m.Units {
-			fmt.Printf("  unit %s -> %s\n", unit, path)
-		}
-		if m.Activate != nil {
-			fmt.Printf("  activate -> %s\n", *m.Activate)
-		}
-	}
-	return nil
-}
-
 // expandProfileRef turns a convenience reference like "<flake>#<name>" into
 // the full "<flake>#profileConfigurations.<system>.<name>" flake output
 // path, so callers don't have to spell out the current system, and also
-// returns name on its own (needed by cmdAdd for profileElementName).
+// returns name on its own (needed by Add for profileElementName).
 //
 // name is quoted as its own attribute-path segment (...system."name") since
 // nxf's profile names are themselves dot-joined (e.g. "dev.default", see

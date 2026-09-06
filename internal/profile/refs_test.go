@@ -1,4 +1,4 @@
-package profilecmd
+package profile
 
 import "testing"
 

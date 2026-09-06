@@ -1,4 +1,4 @@
-package profilecmd
+package profile
 
 import (
 	"errors"
@@ -127,31 +127,31 @@ func TestSplitConvenienceRef(t *testing.T) {
 	}
 }
 
-func TestCmdUpgradeRequiresAllXorNames(t *testing.T) {
+func TestUpgradeRequiresAllXorNames(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if err := cmdUpgrade(nil, false, false); err == nil {
-		t.Error("cmdUpgrade(no names, --all not set): expected an error, got none")
+	if err := Upgrade(nil, false, false); err == nil {
+		t.Error("Upgrade(no names, --all not set): expected an error, got none")
 	}
-	if err := cmdUpgrade([]string{"media"}, true, false); err == nil {
-		t.Error("cmdUpgrade(names given, --all set): expected an error, got none")
+	if err := Upgrade([]string{"media"}, true, false); err == nil {
+		t.Error("Upgrade(names given, --all set): expected an error, got none")
 	}
 }
 
-func TestCmdUpgradeErrorsOnUnknownName(t *testing.T) {
+func TestUpgradeErrorsOnUnknownName(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	err := cmdUpgrade([]string{"never-added"}, false, false)
+	err := Upgrade([]string{"never-added"}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "never-added") {
-		t.Fatalf("cmdUpgrade(unknown name): expected an error mentioning it, got %v", err)
+		t.Fatalf("Upgrade(unknown name): expected an error mentioning it, got %v", err)
 	}
 }
 
-func TestCmdUpgradeAllWithNothingRecordedIsANoop(t *testing.T) {
+func TestUpgradeAllWithNothingRecordedIsANoop(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if err := cmdUpgrade(nil, true, false); err != nil {
-		t.Fatalf("cmdUpgrade(--all, nothing recorded): unexpected error: %v", err)
+	if err := Upgrade(nil, true, false); err != nil {
+		t.Fatalf("Upgrade(--all, nothing recorded): unexpected error: %v", err)
 	}
 }
 

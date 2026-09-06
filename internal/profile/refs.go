@@ -1,4 +1,4 @@
-package profilecmd
+package profile
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 )
 
 // loadRefs reads the name -> flake mapping nxf records for every profile
-// installed via a convenience ref (<flake>#<name>), so `nxf profile upgrade`
-// knows what to rebuild without the caller having to repeat the ref.
+// installed via a convenience ref (<flake>#<name>), so Upgrade knows what to
+// rebuild without the caller having to repeat the ref.
 func loadRefs() (map[string]string, error) {
 	path, err := paths.ProfileRefsFile()
 	if err != nil {
@@ -45,9 +45,9 @@ func saveRefs(refs map[string]string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// rememberRef records that name was installed from flake, for a later `nxf
-// profile upgrade` to rebuild from. Best-effort: a failure here shouldn't
-// fail the add itself, since the profile was already successfully installed.
+// rememberRef records that name was installed from flake, for a later
+// Upgrade to rebuild from. Best-effort: a failure here shouldn't fail the
+// add itself, since the profile was already successfully installed.
 func rememberRef(name, flake string) {
 	refs, err := loadRefs()
 	if err != nil {

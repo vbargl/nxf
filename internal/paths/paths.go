@@ -65,10 +65,10 @@ func AppliedStateDir() (string, error) {
 }
 
 // ProfileRefsFile records, per installed profile name, the flake it was
-// installed from (see profilecmd's rememberRef) - the source `nxf profile
-// upgrade` rebuilds from, since profiles are installed as plain built store
-// paths (see nixutil.ProfileAdd) and so carry no flake-ref metadata of their
-// own for `nix profile upgrade` to work from directly.
+// installed from (see internal/profile's rememberRef) - the source `nxf
+// profile upgrade` rebuilds from, since profiles are installed as plain
+// built store paths (see nixutil.ProfileAdd) and so carry no flake-ref
+// metadata of their own for `nix profile upgrade` to work from directly.
 func ProfileRefsFile() (string, error) {
 	state, err := XDGStateHome()
 	if err != nil {
