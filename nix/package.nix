@@ -12,7 +12,7 @@ buildGoModule rec {
   # new commands/flags, major for breaking CLI changes).
   version = "0.4.0";
 
-  src = ./.;
+  src = ../.;
   # go.mod has a real dependency (spf13/cobra), so this must be a real
   # vendor hash rather than null - update it whenever go.mod/go.sum change.
   vendorHash = "sha256-7K17JaXFsjf163g5PXCb5ng2gYdotnZ2IDKk8KFjNj0=";

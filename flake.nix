@@ -21,7 +21,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          nxf = pkgs.callPackage ./package.nix { };
+          nxf = pkgs.callPackage ./nix/package.nix { };
           default = self.packages.${system}.nxf;
         }
       );
