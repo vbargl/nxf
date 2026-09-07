@@ -9,9 +9,11 @@ import (
 const osLongDescription = `Builds and activates the NixOS system configuration.
 
 Every mode prints an nvd package diff (with its closure size delta) against
-/run/current-system before doing anything else. host defaults to the current
-hostname. The flake built from defaults to ".", override with the NXF_FLAKE
-environment variable.`
+/run/current-system before doing anything else. The argument is either a bare
+host name (host defaults to the current hostname when omitted; the flake
+defaults to ".", override with the NXF_FLAKE environment variable), or a
+"<flake>#<host>" pair like ".#saber" - the same convention nh and nix profile
+use.`
 
 // newOSCommand returns the `nxf os` command tree: building and activating
 // the NixOS system configuration via nixos-rebuild.
