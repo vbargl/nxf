@@ -83,8 +83,19 @@ func splitTarget(ref string) (flake, host string, err error) {
 // argument construction can be verified without actually rebuilding.
 var execCommand = exec.Command
 
+// geteuid is overridden in tests to simulate running as a non-root user.
+var geteuid = os.Geteuid
+
 func runNixosRebuild(mode, target string) error {
-	cmd := execCommand("nixos-rebuild", mode, "--flake", target)
+	args := []string{mode, "--flake", target}
+	if geteuid() != 0 {
+		// nixos-rebuild-ng doesn't self-elevate: without --sudo it just
+		// errors out on activation ("also pass '--sudo' or run the command
+		// as root"). Passing it here lets nixos-rebuild prompt for sudo
+		// itself, only for the activation steps that actually need root.
+		args = append(args, "--sudo")
+	}
+	cmd := execCommand("nixos-rebuild", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

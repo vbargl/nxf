@@ -89,25 +89,46 @@ func TestSplitTargetRespectsNxfFlakeEnv(t *testing.T) {
 }
 
 func TestRunNixosRebuildArgs(t *testing.T) {
-	var got struct {
-		name string
-		args []string
+	cases := []struct {
+		name     string
+		euid     int
+		wantArgs []string
+	}{
+		{
+			name:     "root: no --sudo",
+			euid:     0,
+			wantArgs: []string{"switch", "--flake", ".#saber"},
+		},
+		{
+			name:     "non-root: appends --sudo so nixos-rebuild self-elevates",
+			euid:     1000,
+			wantArgs: []string{"switch", "--flake", ".#saber", "--sudo"},
+		},
 	}
-	orig := execCommand
-	execCommand = func(name string, args ...string) *exec.Cmd {
-		got.name, got.args = name, args
-		return exec.Command("true")
-	}
-	t.Cleanup(func() { execCommand = orig })
 
-	if err := runNixosRebuild("switch", ".#saber"); err != nil {
-		t.Fatalf("runNixosRebuild: unexpected error: %v", err)
-	}
-	if got.name != "nixos-rebuild" {
-		t.Errorf("runNixosRebuild command = %q, want %q", got.name, "nixos-rebuild")
-	}
-	want := []string{"switch", "--flake", ".#saber"}
-	if !reflect.DeepEqual(got.args, want) {
-		t.Errorf("runNixosRebuild args = %v, want %v", got.args, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got struct {
+				name string
+				args []string
+			}
+			origExec, origEuid := execCommand, geteuid
+			execCommand = func(name string, args ...string) *exec.Cmd {
+				got.name, got.args = name, args
+				return exec.Command("true")
+			}
+			geteuid = func() int { return c.euid }
+			t.Cleanup(func() { execCommand, geteuid = origExec, origEuid })
+
+			if err := runNixosRebuild("switch", ".#saber"); err != nil {
+				t.Fatalf("runNixosRebuild: unexpected error: %v", err)
+			}
+			if got.name != "nixos-rebuild" {
+				t.Errorf("runNixosRebuild command = %q, want %q", got.name, "nixos-rebuild")
+			}
+			if !reflect.DeepEqual(got.args, c.wantArgs) {
+				t.Errorf("runNixosRebuild args = %v, want %v", got.args, c.wantArgs)
+			}
+		})
 	}
 }
