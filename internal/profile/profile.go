@@ -154,15 +154,18 @@ func addBatch(flake string, names []string, refresh bool) error {
 	if err != nil {
 		return err
 	}
-	built, err := nixutil.BuildMany(flake, system, names, refresh)
-	if err != nil {
+	if _, err := nixutil.BuildMany(flake, system, names, refresh); err != nil {
 		return err
 	}
 	for _, name := range names {
 		// See addSingle for why this is cleared before re-adding.
 		nixutil.ProfileRemoveQuiet(profileElementName(name))
-		if err := nixutil.ProfileAdd(built[name]); err != nil {
-			return fmt.Errorf("nix profile add %s: %w", built[name], err)
+		// Install by flake ref, not the store path BuildMany returned - see
+		// nixutil.ProfileAdd. The derivation's already built, so this just
+		// registers it.
+		ref := fmt.Sprintf("%s#profileConfigurations.%s.%q", flake, system, name)
+		if err := nixutil.ProfileAdd(ref); err != nil {
+			return fmt.Errorf("nix profile add %s: %w", ref, err)
 		}
 		rememberRef(name, flake)
 	}
@@ -178,8 +181,7 @@ func addSingle(ref string, refresh bool) error {
 		return err
 	}
 
-	built, err := nixutil.Build(expanded, refresh)
-	if err != nil {
+	if _, err := nixutil.Build(expanded, refresh); err != nil {
 		return err
 	}
 
@@ -193,8 +195,11 @@ func addSingle(ref string, refresh bool) error {
 	// the common case (first-ever add) and isn't an error.
 	nixutil.ProfileRemoveQuiet(profileElementName(name))
 
-	if err := nixutil.ProfileAdd(built); err != nil {
-		return fmt.Errorf("nix profile add %s: %w", built, err)
+	// Install by flake ref, not the store path Build returned - see
+	// nixutil.ProfileAdd. The derivation's already built, so this just
+	// registers it.
+	if err := nixutil.ProfileAdd(expanded); err != nil {
+		return fmt.Errorf("nix profile add %s: %w", expanded, err)
 	}
 
 	flake, _, _ := splitConvenienceRef(ref)
