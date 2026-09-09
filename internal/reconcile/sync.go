@@ -99,5 +99,24 @@ func Run() error {
 		}
 	}
 
+	refreshDesktopDatabase()
+
 	return nil
+}
+
+// refreshDesktopDatabase rebuilds KDE's application launcher cache, best
+// effort. Nix profile generations are swapped by relinking ~/.nix-profile to
+// a new store path rather than mutating the old one in place, which breaks
+// any inotify watch KDE's kded had on ~/.nix-profile/share/applications - so
+// without this, newly added/removed .desktop entries from a profile change
+// never show up in the launcher until something else (e.g. a session
+// restart) happens to trigger a rebuild. Silently does nothing where
+// kbuildsycoca6 isn't installed (not every nxf user runs KDE).
+func refreshDesktopDatabase() {
+	path, err := exec.LookPath("kbuildsycoca6")
+	if err != nil {
+		return
+	}
+	cmd := exec.Command(path, "--noincremental")
+	_ = cmd.Run()
 }
