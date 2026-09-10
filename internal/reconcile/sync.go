@@ -6,14 +6,16 @@ import (
 	"os/exec"
 
 	"github.com/vbargl/nxf/internal/paths"
+	"github.com/vbargl/nxf/internal/ui"
 )
 
-// Run reconciles systemd user units and activation scripts against the set
-// of profiles currently merged into the nix profile. For every unit and
-// activation script it compares the desired nix store path against the path
-// recorded the last time it was applied: an unchanged path means an
-// unchanged derivation (Nix content-addresses the store), so it's skipped;
-// a changed or new path is (re)applied.
+// Run reconciles systemd user units and activation/deactivation scripts
+// against the set of profiles currently merged into the nix profile. For
+// every unit and activation script it compares the desired nix store path
+// against the path recorded the last time it was applied: an unchanged path
+// means an unchanged derivation (Nix content-addresses the store), so it's
+// skipped; a changed or new path is (re)applied. Removed profiles run their
+// deactivate hook (if any) and then tear down every unit they owned.
 func Run() error {
 	profileLink, err := paths.NixProfileLink()
 	if err != nil {
@@ -53,9 +55,17 @@ func Run() error {
 		desiredByName[m.Name] = m
 	}
 
-	// Removed profiles: tear down every unit they owned and run their
-	// deactivation via a fresh apply is not needed (no deactivate hook in
-	// the manifest today - only activation), then drop the state snapshot.
+	var firstErr error
+	note := func(err error) {
+		if err == nil {
+			return
+		}
+		ui.Warn(err.Error())
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+
 	for name, prev := range previous {
 		if name == "" {
 			continue
@@ -64,6 +74,10 @@ func Run() error {
 			continue
 		}
 		fmt.Printf("nxf: profile %q removed, tearing down\n", name)
+		if prev.Deactivate != nil {
+			path := hookExecPath(profileLink, name, paths.DeactivationHookName, prev.Deactivate)
+			note(runHook("deactivate", name, path))
+		}
 		for unit := range prev.Units {
 			if err := removeUnit(unitDir, name, unit); err != nil {
 				return err
@@ -76,6 +90,7 @@ func Run() error {
 
 	for _, m := range desired {
 		prev := previous[m.Name]
+		prev.Units = normalizeUnitKeys(prev.Units)
 
 		for unit := range prev.Units {
 			if _, stillWanted := m.Units[unit]; !stillWanted {
@@ -90,21 +105,26 @@ func Run() error {
 			if wasPresent && prevPath == storePath {
 				continue
 			}
-			if err := installUnit(unitDir, m.Name, unit, storePath, wasPresent, m.autoStart(unit)); err != nil {
+			if err := installUnit(unitDir, m.Name, unit, storePath, wasPresent, m.AutoStart(unit)); err != nil {
 				return err
 			}
 		}
 
+		activateChanged := false
 		if m.Activate != nil {
-			if prev.Activate == nil || *prev.Activate != *m.Activate {
-				fmt.Printf("nxf: running activation script for %q\n", m.Name)
-				cmd := exec.Command(*m.Activate)
-				cmd.Stdout = os.Stdout
-				cmd.Stderr = os.Stderr
-				cmd.Env = append(os.Environ(), "NXFP_PROFILE_NAME="+m.Name)
-				if err := cmd.Run(); err != nil {
-					return fmt.Errorf("activation script for %q failed: %w", m.Name, err)
-				}
+			activateChanged = prev.Activate == nil || *prev.Activate != *m.Activate
+		} else if prev.Activate != nil {
+			activateChanged = true
+		}
+
+		if activateChanged && prev.Deactivate != nil {
+			path := hookExecPath(profileLink, m.Name, paths.DeactivationHookName, prev.Deactivate)
+			note(runHook("deactivate", m.Name, path))
+		}
+		if m.Activate != nil && activateChanged {
+			path := hookExecPath(profileLink, m.Name, paths.ActivationHookName, m.Activate)
+			if err := runHook("activate", m.Name, path); err != nil {
+				return err
 			}
 		}
 
@@ -113,5 +133,30 @@ func Run() error {
 		}
 	}
 
-	return syncDesktopEntries(profileLink, desktopEntriesDir, desktopStateFile)
+	if err := syncDesktopEntries(profileLink, desktopEntriesDir, desktopStateFile); err != nil {
+		return err
+	}
+	return firstErr
+}
+
+func runHook(kind, profile, path string) error {
+	fmt.Printf("nxf: running %s script for %q\n", kind, profile)
+	cmd := exec.Command(path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s script for %q failed: %w", kind, profile, err)
+	}
+	return nil
+}
+
+func hookExecPath(profileLink, name, hook string, stored *string) string {
+	live := paths.HookFile(profileLink, name, hook)
+	if _, err := os.Lstat(live); err == nil {
+		return live
+	}
+	if stored != nil {
+		return *stored
+	}
+	return ""
 }

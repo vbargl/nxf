@@ -7,7 +7,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+
+	"github.com/vbargl/nxf/internal/paths"
 )
+
+// profileCmd prepends `profile --profile <link>` so mutations hit the
+// same profile NixProfileLink() resolved (test-only NXF_PROFILE, else
+// ~/.nix-profile).
+func profileCmd(sub string, extra ...string) []string {
+	args := []string{"profile", sub}
+	if p, err := paths.NixProfileLink(); err == nil && p != "" {
+		args = append(args, "--profile", p)
+	}
+	return append(args, extra...)
+}
 
 // NomPath is overridden at Nix build time via -ldflags to point at
 // nix-output-monitor's store path, so nxf doesn't depend on nom being on the
@@ -82,12 +96,30 @@ func runNixTree(args ...string) error {
 // installable, not a bare store path. The referenced derivation was already
 // built by an earlier nixutil.Build/BuildMany call, so nix finds it already
 // realized in the store and this is still a plain, near-instant command.
-func ProfileAdd(ref string) error {
-	return RunNix("profile", "add", ref)
+func ProfileAdd(ref string, priority *int) error {
+	var extra []string
+	if priority != nil {
+		extra = append(extra, "--priority", strconv.Itoa(*priority))
+	}
+	extra = append(extra, ref)
+	return RunNix(profileCmd("add", extra...)...)
 }
 
 func ProfileRemove(name string) error {
-	return RunNix("profile", "remove", name)
+	return RunNix(profileCmd("remove", name)...)
+}
+
+func ProfileListJSON(profile string) ([]byte, error) {
+	args := []string{"profile", "list", "--json"}
+	if profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	cmd := execCommand("nix", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("nix profile list --json: %w", err)
+	}
+	return out, nil
 }
 
 // ProfileRemoveQuiet best-effort removes name without printing anything -
@@ -95,7 +127,7 @@ func ProfileRemove(name string) error {
 // (see internal/profile), where "no such element" is the expected common
 // case and shouldn't be reported as if something went wrong.
 func ProfileRemoveQuiet(name string) {
-	cmd := execCommand("nix", "profile", "remove", name)
+	cmd := execCommand("nix", profileCmd("remove", name)...)
 	_ = cmd.Run()
 }
 
@@ -103,7 +135,12 @@ func ProfileRemoveQuiet(name string) {
 // a remove-then-add sequence fails after the remove has already taken
 // effect, so the user is not left with the package gone.
 func ProfileRollback() error {
-	return RunNix("profile", "rollback")
+	return RunNix(profileCmd("rollback")...)
+}
+
+// ProfileRollbackTo switches the nix profile to generation n.
+func ProfileRollbackTo(n int) error {
+	return RunNix(profileCmd("rollback", "--to", strconv.Itoa(n))...)
 }
 
 // Build builds ref (progress goes through nom when enabled, see

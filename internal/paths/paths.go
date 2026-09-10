@@ -6,6 +6,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func HomeDir() (string, error) {
@@ -16,7 +17,10 @@ func HomeDir() (string, error) {
 }
 
 func NixProfileLink() (string, error) {
-	if p := os.Getenv("NXFP_PROFILE"); p != "" {
+	// NXF_PROFILE is a test-only override (throwaway profile in
+	// test/integration.sh and unit tests). Normal use is ~/.nix-profile,
+	// the same default as `nix profile`.
+	if p := os.Getenv("NXF_PROFILE"); p != "" {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()
@@ -79,12 +83,28 @@ func SystemdUserUnitDir() (string, error) {
 	return filepath.Join(config, "systemd", "user"), nil
 }
 
-func AppliedStateDir() (string, error) {
+func StateDir() (string, error) {
 	state, err := XDGStateHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(state, "nxf", "applied"), nil
+	return filepath.Join(state, "nxf"), nil
+}
+
+func LockFile() (string, error) {
+	state, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(state, "lock"), nil
+}
+
+func AppliedStateDir() (string, error) {
+	state, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(state, "applied"), nil
 }
 
 // DesktopEntriesStateFile records the .desktop names nxf last mirrored into
@@ -105,6 +125,17 @@ func DesktopEntriesStateFile() (string, error) {
 // from, since only the fully-qualified ref actually passed to nix profile
 // add (see nixutil.ProfileAdd) is visible in `nix profile list`, not the
 // shorthand the user originally typed.
+const (
+	ActivationHookName   = "activationHook.sh"
+	DeactivationHookName = "deactivationHook.sh"
+)
+
+// HookFile is the conventional path of a profile hook inside a nix profile
+// (etc/nxf/hooks/<name>/activationHook.sh or deactivationHook.sh).
+func HookFile(profileLink, name, hook string) string {
+	return filepath.Join(profileLink, "etc", "nxf", "hooks", name, hook)
+}
+
 func ProfileRefsFile() (string, error) {
 	state, err := XDGStateHome()
 	if err != nil {
@@ -113,6 +144,28 @@ func ProfileRefsFile() (string, error) {
 	return filepath.Join(state, "nxf", "refs.json"), nil
 }
 
+// Known systemd unit type suffixes nxf will install (not just .service).
+var KnownUnitTypes = []string{
+	"service", "timer", "socket", "path", "target", "slice",
+	"mount", "automount", "swap", "scope",
+}
+
+func UnitHasTypeSuffix(unit string) bool {
+	for _, t := range KnownUnitTypes {
+		if strings.HasSuffix(unit, "."+t) {
+			return true
+		}
+	}
+	return false
+}
+
+func EnsureUnitSuffix(unit string) string {
+	if UnitHasTypeSuffix(unit) {
+		return unit
+	}
+	return unit + ".service"
+}
+
 func UnitFileName(profile, unit string) string {
-	return "nxf-" + profile + "-" + unit + ".service"
+	return "nxf-" + profile + "-" + EnsureUnitSuffix(unit)
 }

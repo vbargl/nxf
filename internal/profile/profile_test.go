@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/vbargl/nxf/internal/apply"
 )
 
 func fakeSystem(sys string, err error) func() (string, error) {
@@ -130,18 +132,19 @@ func TestSplitConvenienceRef(t *testing.T) {
 func TestUpgradeRequiresAllXorNames(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if err := Upgrade(nil, false, false); err == nil {
+	if err := Upgrade(nil, false, apply.Options{}); err == nil {
 		t.Error("Upgrade(no names, --all not set): expected an error, got none")
 	}
-	if err := Upgrade([]string{"media"}, true, false); err == nil {
+	if err := Upgrade([]string{"media"}, true, apply.Options{}); err == nil {
 		t.Error("Upgrade(names given, --all set): expected an error, got none")
 	}
 }
 
 func TestUpgradeErrorsOnUnknownName(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("NXF_PROFILE", t.TempDir())
 
-	err := Upgrade([]string{"never-added"}, false, false)
+	err := Upgrade([]string{"never-added"}, false, apply.Options{Approve: true})
 	if err == nil || !strings.Contains(err.Error(), "never-added") {
 		t.Fatalf("Upgrade(unknown name): expected an error mentioning it, got %v", err)
 	}
@@ -149,20 +152,25 @@ func TestUpgradeErrorsOnUnknownName(t *testing.T) {
 
 func TestUpgradeAllWithNothingRecordedIsANoop(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("NXF_PROFILE", t.TempDir())
 
-	if err := Upgrade(nil, true, false); err != nil {
+	if err := Upgrade(nil, true, apply.Options{Approve: true}); err != nil {
 		t.Fatalf("Upgrade(--all, nothing recorded): unexpected error: %v", err)
 	}
 }
 
-func TestProfileElementName(t *testing.T) {
-	cases := map[string]string{
-		"media":       "profile-media",
-		"dev.default": "profile-dev.default",
+func TestExpandProfileRefUnquotedNestedName(t *testing.T) {
+	expanded, name, err := expandProfileRef(
+		"vbargl2#profileConfigurations.x86_64-linux.gui.daily",
+		fakeSystem("x86_64-linux", nil),
+	)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, want := range cases {
-		if got := profileElementName(name); got != want {
-			t.Errorf("profileElementName(%q) = %q, want %q", name, got, want)
-		}
+	if name != "gui.daily" {
+		t.Errorf("name = %q, want gui.daily (not the last segment 'daily')", name)
+	}
+	if expanded != "vbargl2#profileConfigurations.x86_64-linux.gui.daily" {
+		t.Errorf("expanded = %q", expanded)
 	}
 }

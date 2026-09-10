@@ -56,11 +56,38 @@ func TestDiscoverReadsManifestsAndFollowsSymlinks(t *testing.T) {
 	if got[0].Name != "dev.default" || got[1].Name != "media" || got[2].Name != "terminal.admintools" {
 		t.Errorf("Discover order/names = %q, %q, %q", got[0].Name, got[1].Name, got[2].Name)
 	}
-	if got[1].Units["player"] != "/nix/store/u1" {
+	if got[2].AutoStart("syncthing") || got[2].AutoStart("syncthing.service") {
+		t.Errorf("terminal.admintools syncthing autoStart = true, want false")
+	}
+	if got[1].Units["player.service"] != "/nix/store/u1" {
 		t.Errorf("media units = %#v", got[1].Units)
 	}
-	if got[2].autoStart("syncthing") {
-		t.Errorf("terminal.admintools syncthing autoStart = true, want false")
+}
+
+func TestDiscoverResolvesHookFiles(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, "media", `{"name":"media"}`)
+	storeAct := filepath.Join(t.TempDir(), "act")
+	if err := os.WriteFile(storeAct, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "etc", "nxf", "hooks", "media")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(storeAct, filepath.Join(dir, "activationHook.sh")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(got) != 1 || got[0].Activate == nil || *got[0].Activate != storeAct {
+		t.Fatalf("Discover hooks = %#v, want activate -> %s", got, storeAct)
+	}
+	if got[0].Deactivate != nil {
+		t.Errorf("unexpected deactivate: %#v", got[0].Deactivate)
 	}
 }
 

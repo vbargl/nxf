@@ -4,46 +4,23 @@ package profile
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/vbargl/nxf/internal/apply"
+	"github.com/vbargl/nxf/internal/gens"
+	"github.com/vbargl/nxf/internal/names"
 	"github.com/vbargl/nxf/internal/nixutil"
 	"github.com/vbargl/nxf/internal/paths"
 	"github.com/vbargl/nxf/internal/reconcile"
+	"github.com/vbargl/nxf/internal/ui"
 )
 
 // Sync reconciles systemd user units and activation scripts for the
 // currently applied profiles, without adding or removing anything.
 func Sync() error {
-	return reconcile.Run()
-}
-
-// List prints every nxf-aware profile currently applied.
-func List() error {
-	profileLink, err := paths.NixProfileLink()
-	if err != nil {
-		return err
-	}
-	manifests, err := reconcile.Discover(profileLink)
-	if err != nil {
-		return err
-	}
-	if len(manifests) == 0 {
-		fmt.Println("no nxf-aware profiles applied")
-		return nil
-	}
-	for _, m := range manifests {
-		fmt.Printf("%s\n", m.Name)
-		for unit, path := range m.Units {
-			fmt.Printf("  unit %s -> %s\n", unit, path)
-		}
-		if m.Activate != nil {
-			fmt.Printf("  activate -> %s\n", *m.Activate)
-		}
-	}
-	return nil
+	return withLock(reconcile.Run)
 }
 
 // currentProfilePath resolves ~/.nix-profile to its current store path, or
@@ -60,38 +37,65 @@ func currentProfilePath() string {
 	return resolved
 }
 
+func currentGeneration() int {
+	link, err := paths.NixProfileLink()
+	if err != nil {
+		return 0
+	}
+	list, err := gens.List(link)
+	if err != nil {
+		return 0
+	}
+	return gens.CurrentNumber(list)
+}
+
+func rollbackTo(n int) error {
+	if n > 0 {
+		return nixutil.ProfileRollbackTo(n)
+	}
+	if currentGeneration() > 0 {
+		return nixutil.ProfileRollback()
+	}
+	return nil
+}
+
 // Build builds a profile from ref without installing it.
 func Build(ref string) error {
-	expanded, _, err := expandProfileRef(ref, nixutil.CurrentSystem)
+	expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
 	if err != nil {
 		return err
 	}
+	if err := names.Check(name); err != nil {
+		return err
+	}
 
+	ui.Phase("build " + expanded)
 	oldPath := currentProfilePath()
-
 	newPath, err := nixutil.Build(expanded, false)
 	if err != nil {
 		return err
 	}
-
+	ui.OK("build")
 	return nixutil.ShowDiff(oldPath, newPath)
 }
 
-// Add builds and installs every ref in refs, then shows a single combined
-// diff and runs sync once - not once per ref - so adding several profiles in
-// one invocation reads as one atomic change instead of N separate ones.
-//
-// Convenience refs (plain "<flake>#<name>", the common case) that share a
-// flake are batched into one nix-fast-build invocation per flake via
-// addBatch, so profiles sharing dependencies get evaluated and built
-// concurrently instead of once per sequential `nix build`. A lone ref per
-// flake, or a ref that's already a fully-qualified
-// "<flake>#profileConfigurations.<system>...." path (which might target a
-// system other than the current one, so it can't be safely batched), falls
-// back to the plain per-ref path in addSingle.
-func Add(refs []string) error {
-	oldPath := currentProfilePath()
+type planned struct {
+	name     string
+	expanded string
+	newPath  string
+	priority *int
+}
 
+// Add builds and installs every ref, as one transaction: all builds run
+// first, then one plan/diff, then (unless --dry-run) a confirmation, then
+// every install. A failure during install rolls the nix profile back to the
+// generation taken at the start of activate.
+func Add(refs []string, opts apply.Options) error {
+	return withLock(func() error { return addLocked(refs, opts) })
+}
+
+func addLocked(refs []string, opts apply.Options) error {
+	var plans []planned
 	var flakeOrder []string
 	grouped := map[string][]string{}
 	var singles []string
@@ -102,39 +106,140 @@ func Add(refs []string) error {
 			singles = append(singles, ref)
 			continue
 		}
+		if err := names.Check(name); err != nil {
+			return err
+		}
 		if _, seen := grouped[flake]; !seen {
 			flakeOrder = append(flakeOrder, flake)
 		}
 		grouped[flake] = append(grouped[flake], name)
 	}
 
+	ui.Phase("evaluate / build")
 	for _, flake := range flakeOrder {
-		names := grouped[flake]
-		if len(names) == 1 {
-			singles = append(singles, flake+"#"+names[0])
+		ns := grouped[flake]
+		if len(ns) == 1 {
+			singles = append(singles, flake+"#"+ns[0])
 			continue
 		}
-		if err := addBatch(flake, names, false); err != nil {
+		system, err := nixutil.CurrentSystem()
+		if err != nil {
 			return err
 		}
+		pathsByName, err := nixutil.BuildMany(flake, system, ns, opts.Refresh)
+		if err != nil {
+			return err
+		}
+		for _, name := range ns {
+			expanded := fmt.Sprintf("%s#profileConfigurations.%s.%q", flake, system, name)
+			plans = append(plans, planned{name: name, expanded: expanded, newPath: pathsByName[name], priority: opts.Priority})
+		}
 	}
-
 	for _, ref := range singles {
-		if err := addSingle(ref, false); err != nil {
+		expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
+		if err != nil {
 			return err
 		}
+		if err := names.Check(name); err != nil {
+			return err
+		}
+		newPath, err := nixutil.Build(expanded, opts.Refresh)
+		if err != nil {
+			return err
+		}
+		plans = append(plans, planned{name: name, expanded: expanded, newPath: newPath, priority: opts.Priority})
+	}
+	ui.OK("evaluate / build")
+
+	if err := showPlan(plans); err != nil {
+		ui.Warn(err.Error())
 	}
 
-	showDiffOrWarn(oldPath, currentProfilePath())
-	return reconcile.Run()
+	if opts.DryRun {
+		fmt.Println("Dry run: not applying.")
+		return nil
+	}
+	if err := opts.Confirm("add these profiles"); err != nil {
+		return err
+	}
+
+	ui.Phase("activate")
+	snap := currentGeneration()
+	if err := installPlans(plans); err != nil {
+		if rb := rollbackTo(snap); rb != nil {
+			ui.Warn("rolling back after failed add: " + rb.Error())
+		}
+		return err
+	}
+	if err := reconcile.Run(); err != nil {
+		if rb := rollbackTo(snap); rb != nil {
+			ui.Warn("rolling back after failed reconcile: " + rb.Error())
+		} else if snap > 0 {
+			_ = reconcile.Run()
+		}
+		return err
+	}
+	ui.OK("activate")
+	return nil
 }
 
-// splitConvenienceRef splits a plain "<flake>#<name>" ref (the common case)
-// into its flake and name. ok is false for a ref that's missing "#" or is
-// already a fully-qualified "profileConfigurations...." path - the latter may
-// target an explicit system other than the current one, so batching it
-// alongside other refs in addBatch (which builds everything for one shared
-// system) wouldn't necessarily be correct.
+func showPlan(plans []planned) error {
+	ui.Phase("plan")
+	elements, _ := nixutil.ListElements()
+	for _, p := range plans {
+		old := nixutil.StorePathFor(elements, p.name)
+		fmt.Printf("  %s  %s\n", ui.Bullet(), p.name)
+		if err := nixutil.ShowDiff(old, p.newPath); err != nil {
+			ui.Warn(p.name + ": " + err.Error())
+		}
+	}
+	ui.OK("plan")
+	return nil
+}
+
+func installPlans(plans []planned) error {
+	elements, _ := nixutil.ListElements()
+	for _, p := range plans {
+		prio := p.priority
+		if prio == nil {
+			if e, ok := nixutil.FindElement(elements, p.name); ok && e.Priority > 0 {
+				// keep existing priority on replace unless the caller set one
+				n := e.Priority
+				prio = &n
+			} else if m, err := manifestFor(p.newPath, p.name); err == nil && m.Priority != nil {
+				prio = m.Priority
+			}
+		}
+		if e, ok := nixutil.FindElement(elements, p.name); ok {
+			nixutil.ProfileRemoveQuiet(e.Name)
+		}
+		if err := nixutil.ProfileAdd(p.expanded, prio); err != nil {
+			return fmt.Errorf("nix profile add %s: %w", p.expanded, err)
+		}
+		rememberAfterAdd(p.name, p.expanded)
+		if els, err := nixutil.ListElements(); err == nil {
+			elements = els
+		}
+	}
+	return nil
+}
+
+func manifestFor(store, name string) (reconcile.Manifest, error) {
+	ms, err := reconcile.Discover(store)
+	if err != nil {
+		return reconcile.Manifest{}, err
+	}
+	for _, m := range ms {
+		if m.Name == name {
+			return m, nil
+		}
+	}
+	if len(ms) == 1 {
+		return ms[0], nil
+	}
+	return reconcile.Manifest{}, fmt.Errorf("no manifest named %q in %s", name, store)
+}
+
 func splitConvenienceRef(ref string) (flake, name string, ok bool) {
 	flake, fragment, found := strings.Cut(ref, "#")
 	if !found || strings.HasPrefix(fragment, "profileConfigurations.") {
@@ -143,131 +248,101 @@ func splitConvenienceRef(ref string) (flake, name string, ok bool) {
 	return flake, fragment, true
 }
 
-// addBatch builds every name under <flake>#profileConfigurations.<system> in
-// one nix-fast-build invocation (see nixutil.BuildMany) and installs each
-// resulting store path. refresh is passed straight through to BuildMany (see
-// Upgrade).
-func addBatch(flake string, names []string, refresh bool) error {
-	system, err := nixutil.CurrentSystem()
-	if err != nil {
-		return err
-	}
-	if _, err := nixutil.BuildMany(flake, system, names, refresh); err != nil {
-		return err
-	}
-	for _, name := range names {
-		// Install by flake ref, not the store path BuildMany returned - see
-		// nixutil.ProfileAdd. The derivation's already built, so this just
-		// registers it.
-		ref := fmt.Sprintf("%s#profileConfigurations.%s.%q", flake, system, name)
-		if err := replaceProfile(profileElementName(name), ref); err != nil {
+// Remove removes every name, failing if any name is not actually installed.
+func Remove(profileNames []string, opts apply.Options) error {
+	return withLock(func() error { return removeLocked(profileNames, opts) })
+}
+
+func removeLocked(profileNames []string, opts apply.Options) error {
+	for _, name := range profileNames {
+		if err := names.Check(name); err != nil {
 			return err
 		}
-		rememberRef(name, flake)
 	}
-	return nil
-}
-
-// addSingle builds and installs a single ref, the same way Add always used
-// to before batching existed - nom's tree view only makes sense for a single
-// build. refresh is passed straight through to nixutil.Build (see Upgrade).
-func addSingle(ref string, refresh bool) error {
-	expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
+	elements, err := nixutil.ListElements()
 	if err != nil {
 		return err
 	}
 
-	if _, err := nixutil.Build(expanded, refresh); err != nil {
-		return err
+	type hit struct {
+		name    string
+		element nixutil.Element
 	}
-
-	// Install by flake ref, not the store path Build returned - see
-	// nixutil.ProfileAdd. The derivation's already built, so this just
-	// registers it.
-	if err := replaceProfile(profileElementName(name), expanded); err != nil {
-		return err
-	}
-
-	flake, _, _ := splitConvenienceRef(ref)
-	if flake != "" {
-		rememberRef(name, flake)
-	}
-	return nil
-}
-
-// profileElementName maps nxf's short profile name (what `nxf profile list`
-// prints, and what a user types) to the identifier `nix profile remove`
-// actually matches against - the profile derivation's own name, which
-// nix/mkProfile.nix always sets to "profile-<name>".
-func profileElementName(name string) string {
-	return "profile-" + name
-}
-
-// replaceProfile removes any existing element for name then adds ref.
-// `nix profile add` never replaces an existing element - re-adding a name
-// that's already installed just appends a second element disambiguated as
-// "profile-<name>-1". Clearing first keeps add idempotent. If add fails
-// after a remove that actually changed the profile, roll back so the
-// previous generation is restored rather than leaving the package gone.
-func replaceProfile(elementName, ref string) error {
-	before := currentProfilePath()
-	nixutil.ProfileRemoveQuiet(elementName)
-	if err := nixutil.ProfileAdd(ref); err != nil {
-		if currentProfilePath() != before {
-			if rbErr := nixutil.ProfileRollback(); rbErr != nil {
-				fmt.Fprintf(os.Stderr, "nxf: warning: rolling back after failed add: %v\n", rbErr)
-			}
+	var hits []hit
+	for _, name := range profileNames {
+		e, ok := nixutil.FindElement(elements, name)
+		if !ok {
+			return fmt.Errorf("profile %q is not installed\n  hint: nxf profile list", name)
 		}
-		return fmt.Errorf("nix profile add %s: %w", ref, err)
+		hits = append(hits, hit{name: name, element: e})
 	}
-	return nil
-}
 
-// showDiffOrWarn prints an nvd diff but does not fail the calling command:
-// a diff tool error must not skip reconcile after a successful add/remove.
-func showDiffOrWarn(oldPath, newPath string) {
-	if err := nixutil.ShowDiff(oldPath, newPath); err != nil {
-		fmt.Fprintf(os.Stderr, "nxf: warning: %v\n", err)
-	}
-}
-
-// Remove removes every name in names, then shows a single combined diff and
-// runs sync once - see Add.
-func Remove(names []string) error {
+	ui.Phase("plan")
 	oldPath := currentProfilePath()
+	for _, h := range hits {
+		fmt.Printf("  %s  remove %s  (nix element %s)\n", ui.Bullet(), h.name, h.element.Name)
+	}
+	ui.OK("plan")
 
-	for _, name := range names {
-		if err := nixutil.ProfileRemove(profileElementName(name)); err != nil {
-			return fmt.Errorf("nix profile remove %s: %w", name, err)
-		}
-		forgetRef(name)
+	if opts.DryRun {
+		fmt.Println("Dry run: not applying.")
+		return nil
+	}
+	if err := opts.Confirm("remove these profiles"); err != nil {
+		return err
 	}
 
+	ui.Phase("activate")
+	snap := currentGeneration()
+	for _, h := range hits {
+		if err := nixutil.ProfileRemove(h.element.Name); err != nil {
+			if rb := rollbackTo(snap); rb != nil {
+				ui.Warn("rolling back after failed remove: " + rb.Error())
+			}
+			return fmt.Errorf("nix profile remove %s: %w", h.name, err)
+		}
+		forgetRef(h.name)
+	}
 	showDiffOrWarn(oldPath, currentProfilePath())
-	return reconcile.Run()
+	if err := reconcile.Run(); err != nil {
+		return err
+	}
+	ui.OK("activate")
+	return nil
 }
 
-// Upgrade rebuilds and reinstalls already-applied profiles from the flake
-// ref nxf recorded when each was added (see rememberRef) - the same
-// build+install path as Add (batched per flake via addBatch, same as
-// addBatch/addSingle), just resolving refs from recorded state instead of
-// the command line. names selects specific profiles; all selects every
-// profile nxf has a recorded ref for - exactly one of the two must be given.
-func Upgrade(names []string, all, refresh bool) error {
-	if all == (len(names) > 0) {
+// Upgrade rebuilds already-applied profiles from the resolved flake URL nxf
+// recorded at add time (or recovered from `nix profile list --json`).
+func Upgrade(profileNames []string, all bool, opts apply.Options) error {
+	return withLock(func() error { return upgradeLocked(profileNames, all, opts) })
+}
+
+func upgradeLocked(profileNames []string, all bool, opts apply.Options) error {
+	if all == (len(profileNames) > 0) {
 		return fmt.Errorf("specify either --all or one or more profile names, not both/neither")
 	}
 
-	refs, err := loadRefs()
+	stored, err := loadRefs()
 	if err != nil {
 		return err
 	}
+	elements, _ := nixutil.ListElements()
 
-	targets := names
+	targets := profileNames
 	if all {
-		targets = make([]string, 0, len(refs))
-		for name := range refs {
+		seen := map[string]bool{}
+		for name := range stored {
 			targets = append(targets, name)
+			seen[name] = true
+		}
+		if link, err := paths.NixProfileLink(); err == nil {
+			if ms, err := reconcile.Discover(link); err == nil {
+				for _, m := range ms {
+					if !seen[m.Name] {
+						targets = append(targets, m.Name)
+					}
+				}
+			}
 		}
 		sort.Strings(targets)
 	}
@@ -276,53 +351,40 @@ func Upgrade(names []string, all, refresh bool) error {
 		return nil
 	}
 
-	var flakeOrder []string
-	grouped := map[string][]string{}
+	var refs []string
 	for _, name := range targets {
-		flake, ok := refs[name]
-		if !ok {
-			return fmt.Errorf("profile %q has no recorded flake ref (not installed by this version of nxf, or already removed) - add it first", name)
-		}
-		if _, seen := grouped[flake]; !seen {
-			flakeOrder = append(flakeOrder, flake)
-		}
-		grouped[flake] = append(grouped[flake], name)
-	}
-
-	oldPath := currentProfilePath()
-
-	for _, flake := range flakeOrder {
-		names := grouped[flake]
-		if len(names) == 1 {
-			if err := addSingle(flake+"#"+names[0], refresh); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := addBatch(flake, names, refresh); err != nil {
+		if err := names.Check(name); err != nil {
 			return err
 		}
+		r, ok := stored[name]
+		if !ok {
+			if e, found := nixutil.FindElement(elements, name); found && e.OriginalURL != "" {
+				r = Ref{OriginalURL: e.OriginalURL, LockedURL: e.LockedURL, AttrPath: e.AttrPath}
+			}
+		}
+		installable, err := upgradeInstallable(name, r)
+		if err != nil {
+			return err
+		}
+		refs = append(refs, installable)
 	}
+	return addLocked(refs, opts)
+}
 
-	showDiffOrWarn(oldPath, currentProfilePath())
-	return reconcile.Run()
+func showDiffOrWarn(oldPath, newPath string) {
+	if err := nixutil.ShowDiff(oldPath, newPath); err != nil {
+		ui.Warn(err.Error())
+	}
 }
 
 // expandProfileRef turns a convenience reference like "<flake>#<name>" into
 // the full "<flake>#profileConfigurations.<system>.<name>" flake output
 // path, so callers don't have to spell out the current system, and also
-// returns name on its own (needed by Add for profileElementName).
+// returns name on its own (needed by Add).
 //
 // name is quoted as its own attribute-path segment (...system."name") since
-// nxf's profile names are themselves dot-joined (e.g. "dev.default", see
-// flake.nix's nameFor) - the nix CLI's attribute-path syntax splits on every
-// unquoted ".", so passing it through unquoted would make nix look for a
-// nested "dev"."default" attribute pair instead of the single flat
-// "dev.default" key that actually exists.
-//
-// A fragment that already starts with "profileConfigurations." is passed
-// through unchanged; name is extracted from its trailing segment, unquoting
-// it first if it's already quoted.
+// nxf's profile names are themselves dot-joined (e.g. "gui.daily") - the nix
+// CLI's attribute-path syntax splits on every unquoted "." .
 func expandProfileRef(ref string, currentSystem func() (string, error)) (expanded, name string, err error) {
 	flake, fragment, found := strings.Cut(ref, "#")
 	if !found {
@@ -331,15 +393,17 @@ func expandProfileRef(ref string, currentSystem func() (string, error)) (expande
 	if strings.HasPrefix(fragment, "profileConfigurations.") {
 		name = fragment
 		if strings.HasSuffix(fragment, `"`) {
-			// Trailing segment is already quoted (e.g. ...x86_64-linux."dev.default") -
-			// take the content between the matching quotes verbatim, since a
-			// naive last-dot split would land inside the quoted name itself
-			// whenever the name contains a dot.
 			if idx := strings.LastIndex(fragment[:len(fragment)-1], `"`); idx != -1 {
 				name = fragment[idx+1 : len(fragment)-1]
 			}
 		} else if idx := strings.LastIndex(fragment, "."); idx != -1 {
 			name = fragment[idx+1:]
+			// Unquoted nested path: take everything after the system segment
+			// (profileConfigurations.<system>.<rest>) so gui.daily stays intact.
+			rest := strings.TrimPrefix(fragment, "profileConfigurations.")
+			if i := strings.Index(rest, "."); i != -1 {
+				name = rest[i+1:]
+			}
 		}
 		return ref, name, nil
 	}

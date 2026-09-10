@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+
+	"github.com/vbargl/nxf/internal/paths"
 )
 
 // Manifest mirrors the JSON written by nix/mkProfile.nix into
@@ -20,13 +22,21 @@ type Manifest struct {
 	Units       map[string]string `json:"units"`
 	ManualUnits []string          `json:"manualUnits"`
 	Activate    *string           `json:"activate"`
+	Deactivate  *string           `json:"deactivate"`
+	Priority    *int              `json:"priority"`
 }
 
 // autoStart reports whether nxf should enable/start (and later restart) unit
 // on its own, as opposed to only installing the unit file and leaving
 // enable/start to the user (see manualUnits in nix/mkProfile.nix).
-func (m Manifest) autoStart(unit string) bool {
-	return !slices.Contains(m.ManualUnits, unit)
+func (m Manifest) AutoStart(unit string) bool {
+	want := paths.EnsureUnitSuffix(unit)
+	for _, man := range m.ManualUnits {
+		if paths.EnsureUnitSuffix(man) == want {
+			return false
+		}
+	}
+	return true
 }
 
 // Discover walks profileLink/share/nxf/profiles/*/nxf.json and returns the
@@ -68,9 +78,51 @@ func Discover(profileLink string) ([]Manifest, error) {
 		if m.Name == "" {
 			continue
 		}
+		// Old manifests stored unit keys without a type suffix.
+		m.Units = normalizeUnitKeys(m.Units)
+		for i, u := range m.ManualUnits {
+			m.ManualUnits[i] = paths.EnsureUnitSuffix(u)
+		}
+		// Hooks live at etc/nxf/hooks/<name>/{activation,deactivation}Hook.sh.
+		// JSON activate/deactivate is only a fallback for pre-convention profiles.
+		if p := resolveHook(profileLink, m.Name, paths.ActivationHookName); p != "" {
+			m.Activate = &p
+		}
+		if p := resolveHook(profileLink, m.Name, paths.DeactivationHookName); p != "" {
+			m.Deactivate = &p
+		}
 		manifests = append(manifests, m)
 	}
 
 	sort.Slice(manifests, func(i, j int) bool { return manifests[i].Name < manifests[j].Name })
 	return manifests, nil
+}
+
+func resolveHook(profileLink, name, hook string) string {
+	path := paths.HookFile(profileLink, name, hook)
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return resolved
+}
+
+func normalizeUnitKeys(units map[string]string) map[string]string {
+	if units == nil {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(units))
+	for k, v := range units {
+		out[paths.EnsureUnitSuffix(k)] = v
+	}
+	return out
+}
+
+func (m Manifest) UnitNames() []string {
+	names := make([]string, 0, len(m.Units))
+	for u := range m.Units {
+		names = append(names, u)
+	}
+	slices.Sort(names)
+	return names
 }

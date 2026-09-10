@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/vbargl/nxf/internal/apply"
 	"github.com/vbargl/nxf/internal/version"
 )
 
@@ -17,7 +18,9 @@ func New() *cobra.Command {
 		Short:         "Manages nix profiles and NixOS system generations",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Version:       version.Version,
 	}
+	root.SetVersionTemplate("{{.Version}}\n")
 	root.AddCommand(newProfileCommand())
 	root.AddCommand(newOSCommand())
 	root.AddCommand(&cobra.Command{
@@ -30,4 +33,21 @@ func New() *cobra.Command {
 		},
 	})
 	return root
+}
+
+func bindApplyFlags(cmd *cobra.Command, opts *apply.Options) {
+	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "Build and show the plan without applying")
+	cmd.Flags().BoolVar(&opts.Approve, "approve", false, "Apply without asking for confirmation")
+}
+
+func bindPriorityFlag(cmd *cobra.Command) {
+	cmd.Flags().Int("priority", 5, "nix profile file-collision priority (lower wins)")
+}
+
+func takePriority(cmd *cobra.Command, opts *apply.Options) {
+	if !cmd.Flags().Changed("priority") {
+		return
+	}
+	p, _ := cmd.Flags().GetInt("priority")
+	opts.Priority = &p
 }

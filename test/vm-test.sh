@@ -22,7 +22,13 @@ EXEC_BASE=(incus exec "$VM" --user 1000 --group 100 \
   --env "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus")
 
 nxf() {
-  "${EXEC_BASE[@]}" --cwd "$PROFILES_DIR" -- nxf "$@"
+  local extra=()
+  case "${1-} ${2-}" in
+    "profile add"|"profile remove"|"profile upgrade"|"profile rollback"|"profile clean"|"os switch"|"os test"|"os boot"|"os rollback"|"os clean")
+      extra+=(--approve)
+      ;;
+  esac
+  "${EXEC_BASE[@]}" --cwd "$PROFILES_DIR" -- nxf "$@" "${extra[@]}"
 }
 
 vm() {
@@ -120,7 +126,8 @@ assert_not_contains "$out" "no systemd user session available" "add with-unit: r
 assert_contains "$out" "enabling nxf-with-unit-greeter.service" "add with-unit: reports enabling the unit"
 out=$(nxf profile list 2>&1)
 assert_contains "$out" "with-unit" "profile list shows with-unit"
-assert_contains "$out" "unit greeter ->" "profile list shows greeter unit mapping"
+out=$(nxf profile list -v 2>&1)
+assert_contains "$out" "greeter.service" "profile list -v shows greeter unit"
 assert_exists "unit symlink installed" -L "$HOME_DIR/.config/systemd/user/nxf-with-unit-greeter.service"
 assert_exists "applied state recorded" -f "$HOME_DIR/.local/state/nxf/applied/with-unit.json"
 active=$(vm systemctl --user is-active nxf-with-unit-greeter.service 2>&1)
@@ -183,10 +190,10 @@ assert_not_exists "unit #2 symlink removed" -e "$HOME_DIR/.config/systemd/user/n
 # (root, bare containers, etc). Runs as root with no XDG_RUNTIME_DIR/
 # DBUS_SESSION_BUS_ADDRESS at all, unlike EXEC_BASE above.
 section "with-unit: no-session degradation (as root, no bus)"
-out=$(incus exec "$VM" --env PATH=/run/current-system/sw/bin --cwd "$PROFILES_DIR" -- nxf profile add "$PROFILES_DIR#with-unit" 2>&1); rc=$?
+out=$(incus exec "$VM" --env PATH=/run/current-system/sw/bin --cwd "$PROFILES_DIR" -- nxf profile add --approve "$PROFILES_DIR#with-unit" 2>&1); rc=$?
 assert_rc "$rc" 0 "add with-unit as root (no session) still exits 0"
 assert_contains "$out" "no systemd user session available" "add with-unit as root: warns instead of failing"
-incus exec "$VM" --env PATH=/run/current-system/sw/bin --cwd "$PROFILES_DIR" -- nxf profile remove with-unit >/dev/null 2>&1
+incus exec "$VM" --env PATH=/run/current-system/sw/bin --cwd "$PROFILES_DIR" -- nxf profile remove --approve with-unit >/dev/null 2>&1
 
 # ---- with-config: activate hook lands a config file -----------------------
 section "with-config: activate hook"
@@ -277,7 +284,7 @@ fi
 
 # ---- NXF_NO_NOM: escape hatch ----------------------------------------------
 section "NXF_NO_NOM=1: build proceeds without nom"
-out=$("${EXEC_BASE[@]}" --env NXF_NO_NOM=1 --cwd "$PROFILES_DIR" -- nxf profile add "$PROFILES_DIR#pkgs-only" 2>&1); rc=$?
+out=$("${EXEC_BASE[@]}" --env NXF_NO_NOM=1 --cwd "$PROFILES_DIR" -- nxf profile add --approve "$PROFILES_DIR#pkgs-only" 2>&1); rc=$?
 assert_rc "$rc" 0 "NXF_NO_NOM=1 add exits 0"
 assert_contains "$out" "cowsay" "NXF_NO_NOM=1 add: nvd diff still runs"
 nxf profile remove pkgs-only >/dev/null 2>&1
@@ -285,11 +292,8 @@ nxf profile remove pkgs-only >/dev/null 2>&1
 # ---- known-gap probe: removing a name that was never added ----------------
 section "edge case: remove a profile name that was never added"
 out=$(nxf profile remove never-added 2>&1); rc=$?
-if [[ "$rc" != "0" ]]; then
-  pass "remove never-added: reports failure (rc=$rc)"
-else
-  finding "nxf profile remove never-added exited 0 despite nix warning \"Package name 'profile-never-added' does not match any packages in the profile\" - nxf doesn't surface nix's own failure to remove a nonexistent name as a nonzero exit or error message, it just silently prints \"No changes.\" Output was: $out"
-fi
+assert_rc "$rc" 1 "remove never-added reports failure"
+assert_contains "$out" "not installed" "remove never-added: error says it is not installed"
 
 # ---- nxf profile sync (standalone, not just implicitly via add/remove) ----
 section "profile sync: reconciles drift left by a plain (non-nxf) nix profile remove"
@@ -323,10 +327,10 @@ section "nxf os: build/test/switch/boot across small synthetic NixOS generations
 OS_TESTS_DIR=/mnt/os-tests
 ORIG_NXF=/nix/var/nix/profiles/system-1-link/sw/bin/nxf
 os_nxf() {
-  "${EXEC_BASE[@]}" --cwd "$OS_TESTS_DIR" -- "$ORIG_NXF" "$@"
+  "${EXEC_BASE[@]}" --cwd "$OS_TESTS_DIR" -- "$ORIG_NXF" "$@" --approve
 }
 os_root_nxf() {
-  incus exec "$VM" --env "PATH=/run/current-system/sw/bin" --cwd "$OS_TESTS_DIR" -- "$ORIG_NXF" "$@"
+  incus exec "$VM" --env "PATH=/run/current-system/sw/bin" --cwd "$OS_TESTS_DIR" -- "$ORIG_NXF" "$@" --approve
 }
 restore_original_generation() {
   incus exec "$VM" -- /nix/var/nix/profiles/system-1-link/bin/switch-to-configuration switch >/dev/null 2>&1

@@ -53,44 +53,73 @@ func TestRunNixArgs(t *testing.T) {
 }
 
 func TestProfileAddArgs(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
 	calls := stubExec(t, "")
-	if err := ProfileAdd("/nix/store/built-path"); err != nil {
+	if err := ProfileAdd("/nix/store/built-path", nil); err != nil {
 		t.Fatalf("ProfileAdd: unexpected error: %v", err)
 	}
-	want := []call{{name: "nix", args: []string{"profile", "add", "/nix/store/built-path"}}}
+	want := []call{{name: "nix", args: []string{"profile", "add", "--profile", "/tmp/nxf-profile", "/nix/store/built-path"}}}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Errorf("ProfileAdd calls = %#v, want %#v", *calls, want)
+	}
+}
+
+func TestProfileAddPriority(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
+	calls := stubExec(t, "")
+	p := 3
+	if err := ProfileAdd("flake#attr", &p); err != nil {
+		t.Fatalf("ProfileAdd: unexpected error: %v", err)
+	}
+	want := []call{{name: "nix", args: []string{"profile", "add", "--profile", "/tmp/nxf-profile", "--priority", "3", "flake#attr"}}}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Errorf("ProfileAdd calls = %#v, want %#v", *calls, want)
 	}
 }
 
 func TestProfileRemoveArgs(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
 	calls := stubExec(t, "")
 	if err := ProfileRemove("profile-media"); err != nil {
 		t.Fatalf("ProfileRemove: unexpected error: %v", err)
 	}
-	want := []call{{name: "nix", args: []string{"profile", "remove", "profile-media"}}}
+	want := []call{{name: "nix", args: []string{"profile", "remove", "--profile", "/tmp/nxf-profile", "profile-media"}}}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Errorf("ProfileRemove calls = %#v, want %#v", *calls, want)
 	}
 }
 
 func TestProfileRemoveQuietArgs(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
 	calls := stubExec(t, "")
 	ProfileRemoveQuiet("profile-media")
-	want := []call{{name: "nix", args: []string{"profile", "remove", "profile-media"}}}
+	want := []call{{name: "nix", args: []string{"profile", "remove", "--profile", "/tmp/nxf-profile", "profile-media"}}}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Errorf("ProfileRemoveQuiet calls = %#v, want %#v", *calls, want)
 	}
 }
 
 func TestProfileRollbackArgs(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
 	calls := stubExec(t, "")
 	if err := ProfileRollback(); err != nil {
 		t.Fatalf("ProfileRollback: unexpected error: %v", err)
 	}
-	want := []call{{name: "nix", args: []string{"profile", "rollback"}}}
+	want := []call{{name: "nix", args: []string{"profile", "rollback", "--profile", "/tmp/nxf-profile"}}}
 	if !reflect.DeepEqual(*calls, want) {
 		t.Errorf("ProfileRollback calls = %#v, want %#v", *calls, want)
+	}
+}
+
+func TestProfileRollbackToArgs(t *testing.T) {
+	t.Setenv("NXF_PROFILE", "/tmp/nxf-profile")
+	calls := stubExec(t, "")
+	if err := ProfileRollbackTo(12); err != nil {
+		t.Fatalf("ProfileRollbackTo: unexpected error: %v", err)
+	}
+	want := []call{{name: "nix", args: []string{"profile", "rollback", "--profile", "/tmp/nxf-profile", "--to", "12"}}}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Errorf("ProfileRollbackTo calls = %#v, want %#v", *calls, want)
 	}
 }
 

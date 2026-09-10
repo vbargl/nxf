@@ -1,19 +1,50 @@
 # nxf
 
-Manages user-level `nix profile` bundles (systemd user units, activation
-scripts, desktop entries) and NixOS system generations for a flake repo of
-your own.
+Manages user-level `nix profile` bundles (systemd user units of any type,
+activation/deactivation scripts, desktop entries) and NixOS system
+generations.
 
 ```
-nxf profile add/remove/upgrade/list/build/sync
-nxf os switch/boot/test/build
+nxf profile add/remove/upgrade/list/build/sync/generations/rollback/clean
+nxf os switch/boot/test/build/generations/rollback/clean
 ```
+
+Mutating commands build, print a plan, then ask for `yes` (terraform-style)
+before applying. Pass `--approve` to skip the prompt, `--dry-run` to stop
+after the plan. Unattended runs without `--approve` are refused.
 
 `nxf os` is Linux/NixOS only (`nixos-rebuild`). Profile reconcile talks to
 `systemctl --user`; without a user session it still installs unit files and
 warns instead of failing.
 
-## Using it from another flake
+## Install
+
+Standalone (puts `nxf` on PATH via your user profile):
+
+```
+nix profile add github:vbargl/nxf
+```
+
+NixOS system package, from a flake:
+
+```nix
+{
+  inputs.nxf.url = "github:vbargl/nxf";
+
+  outputs = { nixpkgs, nxf, ... }: {
+    nixosConfigurations.saber = nixpkgs.lib.nixosSystem {
+      modules = [
+        nxf.nixosModules.default
+        { programs.nxf.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+Or add `nxf.packages.${system}.nxf` to `environment.systemPackages` yourself.
+
+## Using `mkProfile` from another flake
 
 ```nix
 {
@@ -26,17 +57,44 @@ warns instead of failing.
   in {
     packages.x86_64-linux.nxf = nxf.packages.x86_64-linux.nxf;
 
-    profileConfigurations.x86_64-linux.media = mkProfile "media" {
-      description = "Media playback";
+    profileConfigurations.x86_64-linux."gui.daily" = mkProfile "gui.daily" {
+      description = "Daily GUI tools";
       packages = [ pkgs.vlc ];
+      priority = 4; # lower wins nix profile file collisions
+      systemdUnits.greeter = {
+        unit = {
+          Unit.Description = "Greeter";
+          Service.ExecStart = "${pkgs.hello}/bin/hello";
+          Install.WantedBy = [ "default.target" ]; # lists are fine
+        };
+      };
+      systemdUnits."backup.timer" = {
+        unit = {
+          Unit.Description = "Backup";
+          Timer.OnCalendar = "daily";
+          Install.WantedBy = "timers.target";
+        };
+      };
+      activate = pkgs.writeShellScript "gui-daily-activate" ''
+        mkdir -p "$HOME/.config/myapp"
+      '';
+      deactivate = pkgs.writeShellScript "gui-daily-deactivate" ''
+        rm -f "$HOME/.config/myapp/managed"
+      '';
     };
   };
 }
 ```
 
-Install with `nxf profile add .#media` (expands to
-`profileConfigurations.<currentSystem>."media"`). Dotted names such as
-`dev.default` are one attribute, not a nested path.
+Install with `nxf profile add --approve .#gui.daily` (expands to
+`profileConfigurations.<currentSystem>."gui.daily"`). Dotted names such as
+`gui.daily` are one attribute, not a nested path.
+
+`nix profile list` names packages after the last attr-path segment, so two
+profiles `gui.daily` and `terminal.daily` both show up as `daily` /
+`daily-1`. nxf does **not** use that name: `nxf profile list` / `remove` /
+`upgrade` always use the name you typed (`gui.daily`). Matching is by the
+derivation suffix `profile-<name>` on the store path.
 
 ### Contract
 
@@ -46,25 +104,62 @@ Install with `nxf profile add .#media` (expands to
 |---|---|
 | `bin/` etc. | `packages` merged onto PATH |
 | `share/nxf/profiles/<name>/nxf.json` | reconcile manifest |
+| `etc/nxf/hooks/<name>/activationHook.sh` | run when the profile is new or the hook changes |
+| `etc/nxf/hooks/<name>/deactivationHook.sh` | run on remove, and before a changed activation hook |
 
 `nxf.json`:
 
 ```json
 {
-  "name": "dev.default",
-  "units": { "ssh-agent": "/nix/store/...service" },
+  "name": "gui.daily",
+  "units": { "greeter.service": "/nix/store/...service", "backup.timer": "/nix/store/...timer" },
   "manualUnits": [],
-  "activate": null
+  "priority": 4
 }
 ```
 
-- `units`: unit name → store path of a `.service` file. `WantedBy` in the
-  unit INI must be a **string** (`"default.target"`), not a list (`lib.generators.toINI`).
+- `units`: `<unit>.<type>` → store path. Types: service (default), timer,
+  socket, path, target, slice, mount, automount, swap, scope. The attr name
+  may include the type (`"backup.timer"`) or set `type = "timer"`.
+- `WantedBy` (and other INI values) may be a string or a list of strings.
 - `manualUnits`: install the file but do not `enable --now` / restart.
-- `activate`: optional script run when the store path is new or changed.
-  There is no deactivate hook.
-- Derivation `name` must stay `profile-<name>`: `nxf profile remove`
-  matches `nix profile` elements against that identifier.
+- `activate` / `deactivate` on `mkProfile` install the hook files above.
+  While the profile is installed, nxf execs the path in the profile (so `$0`
+  is `.../hooks/<name>/activationHook.sh`). After remove, deactivation runs
+  from the recorded store path — bake `name` into the script in Nix if you
+  need it there. Units from the manifest are always stopped/unlinked on
+  teardown.
+- `priority`: default `nix profile add --priority` (CLI `--priority` wins).
+- Derivation `name` must stay `profile-<name>`.
+- Profile names: letters, digits, `.`, `_`, `-`; must start with a letter or
+  digit; no `/`, no `..`.
+
+### Commands
+
+```
+nxf profile add [--dry-run] [--approve] [--priority N] <flake>#<name>...
+nxf profile remove [--dry-run] [--approve] <name>...
+nxf profile upgrade [--all] [--refresh] [--dry-run] [--approve] [name...]
+nxf profile list [-v] [name...]
+nxf profile sync
+nxf profile generations
+nxf profile rollback [--to N] [--dry-run] [--approve]
+nxf profile clean --keep 3 | --keep-since 3d | --older-than 1w | --delete 10,11
+
+nxf os switch|boot|test|build [--dry-run] [--approve] [host]
+nxf os generations
+nxf os rollback [--to N] [--dry-run] [--approve]
+nxf os clean --keep 3 | --keep-since 3d | --older-than 1w | --delete 10,11
+```
+
+`list` is one profile per line; `-v` prints units, binaries, `.desktop`
+files, and other XDG dirs from that profile's store path.
+
+Phases on mutate: **evaluate / build** → **plan** (nvd diff) → confirm →
+**activate**.
+
+Cleaning never deletes the current generation. Durations: `30m`, `2h`, `3d`,
+`1w`.
 
 ### Environment
 
@@ -72,15 +167,20 @@ Install with `nxf profile add .#media` (expands to
 |---|---|
 | `NXF_FLAKE` | Default flake for `nxf os` (else `.`) |
 | `NXF_NO_NOM=1` | Skip nix-output-monitor's tree view |
-| `NXFP_PROFILE` | Override `~/.nix-profile` |
-| `NXFP_PROFILE_NAME` | Set on activation scripts |
+| `NO_COLOR` | ASCII markers instead of emoji |
+
+State lives under `$XDG_STATE_HOME/nxf/` (`applied/`, `refs.json`,
+`desktop-entries.json`, `lock`).
 
 ## Development
 
 ```
 just build            # go vet + go build
 just test-unit        # go test ./...
-just test-integration # local incus VM; not run in CI
+just test-integration # throwaway nix profile via NXF_PROFILE (also run in CI)
+just test-vm          # local incus VM; not run in CI
 nix build .#nxf       # also runs go test via buildGoModule
 nix flake check
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for 0.7.0 breaking changes (`--approve`).

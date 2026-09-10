@@ -22,7 +22,7 @@ func TestLoadAppliedStatesSkipsNamelessJSON(t *testing.T) {
 	if _, ok := got[""]; ok {
 		t.Errorf("loadAppliedStates picked up a nameless snapshot: %#v", got)
 	}
-	if got["media"].Units["u"] != "/nix/store/u" {
+	if got["media"].Units["u.service"] != "/nix/store/u" {
 		t.Errorf("loadAppliedStates[media] = %#v", got["media"])
 	}
 }
@@ -38,7 +38,7 @@ func TestAppliedStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadAppliedStates: %v", err)
 	}
-	if got["dev.default"].Units["a"] != "/nix/store/a" {
+	if got["dev.default"].Units["a.service"] != "/nix/store/a" {
 		t.Errorf("round-trip = %#v", got["dev.default"])
 	}
 	if got["dev.default"].Activate == nil || *got["dev.default"].Activate != act {

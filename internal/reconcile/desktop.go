@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/vbargl/nxf/internal/fsutil"
 )
 
 // syncDesktopEntries mirrors every .desktop file under
@@ -125,5 +127,5 @@ func saveDesktopEntryState(path string, state map[string]string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return fsutil.WriteFileAtomic(path, data, 0o644)
 }

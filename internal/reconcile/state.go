@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/vbargl/nxf/internal/fsutil"
+	"github.com/vbargl/nxf/internal/paths"
 )
 
 // The applied-state directory holds one JSON file per profile, a snapshot of
@@ -41,6 +44,10 @@ func loadAppliedStates(dir string) (map[string]Manifest, error) {
 		if m.Name == "" {
 			continue
 		}
+		m.Units = normalizeUnitKeys(m.Units)
+		for i, u := range m.ManualUnits {
+			m.ManualUnits[i] = paths.EnsureUnitSuffix(u)
+		}
 		states[m.Name] = m
 	}
 	return states, nil
@@ -55,7 +62,7 @@ func saveAppliedState(dir string, m Manifest) error {
 		return err
 	}
 	path := filepath.Join(dir, m.Name+".json")
-	return os.WriteFile(path, data, 0o644)
+	return fsutil.WriteFileAtomic(path, data, 0o644)
 }
 
 func removeAppliedState(dir, name string) error {

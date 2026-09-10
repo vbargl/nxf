@@ -86,7 +86,12 @@ func installUnit(unitDir, profile, unit, storePath string, wasPresent, autoStart
 		return systemctl("restart", name)
 	}
 	fmt.Printf("nxf: enabling %s\n", name)
-	return systemctl("enable", "--now", name)
+	if err := systemctl("enable", "--now", name); err != nil {
+		_ = os.Remove(link)
+		_ = daemonReload()
+		return err
+	}
+	return nil
 }
 
 // removeUnit stops, disables, and unlinks a unit that no longer belongs to
