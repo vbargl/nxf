@@ -177,6 +177,39 @@ func TestCollectProfilesJSON(t *testing.T) {
 	if _, err := collectProfiles([]string{"missing"}); err == nil {
 		t.Error("filter missing: expected error")
 	}
+
+	prefixed, err := collectProfiles([]string{"gui"})
+	if err != nil {
+		t.Fatalf("prefix filter: %v", err)
+	}
+	if len(prefixed) != 1 || prefixed[0].Name != "gui.daily" {
+		t.Errorf("prefix gui = %#v", prefixed)
+	}
+}
+
+func TestFilterProfilesOrderAndPrefix(t *testing.T) {
+	infos := []profileInfo{
+		{Name: "dev.default"},
+		{Name: "gui.admintools"},
+		{Name: "gui.daily"},
+		{Name: "media"},
+		{Name: "terminal.admintools"},
+	}
+	got, err := filterProfiles(infos, []string{"media", "gui", "terminal.admintools"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, p := range got {
+		names = append(names, p.Name)
+	}
+	want := []string{"media", "gui.admintools", "gui.daily", "terminal.admintools"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v, want %v", names, want)
+	}
+	if _, err := filterProfiles(infos, []string{"nope"}); err == nil {
+		t.Error("expected unknown profile error")
+	}
 }
 
 func TestCompactTable(t *testing.T) {

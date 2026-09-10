@@ -138,7 +138,7 @@ equals the nxf profile name.
 nxf profile add [--dry-run] [--refresh] [--priority N] <flake>#<name>...
 nxf profile remove [--dry-run] [--approve] <name>...
 nxf profile upgrade [--all] [--refresh] [--dry-run] [name...]
-nxf profile list [-v] [name...]
+nxf profile list [-v] [name...]          # names filter; "gui" matches gui.daily
 nxf profile sync
 nxf profile generations
 nxf profile rollback [--to N] [--dry-run] [--approve]

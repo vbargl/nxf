@@ -78,20 +78,52 @@ func collectProfiles(filter []string) ([]profileInfo, error) {
 }
 
 func profilesFrom(manifests []reconcile.Manifest, elements []nixutil.Element, filter []string) ([]profileInfo, error) {
-	want := map[string]bool{}
-	for _, n := range filter {
-		want[n] = true
-	}
-
-	out := make([]profileInfo, 0, len(manifests))
+	all := make([]profileInfo, 0, len(manifests))
 	for _, m := range manifests {
-		if len(want) > 0 && !want[m.Name] {
+		all = append(all, profileFrom(m, elements))
+	}
+	return filterProfiles(all, filter)
+}
+
+// filterProfiles keeps exact names and dotted prefixes (gui → gui.daily),
+// in the order the filter terms were given.
+func filterProfiles(infos []profileInfo, filter []string) ([]profileInfo, error) {
+	if len(filter) == 0 {
+		return infos, nil
+	}
+	byName := make(map[string]profileInfo, len(infos))
+	for _, p := range infos {
+		byName[p.Name] = p
+	}
+	var out []profileInfo
+	seen := map[string]bool{}
+	var missing []string
+	for _, term := range filter {
+		if p, ok := byName[term]; ok {
+			if !seen[p.Name] {
+				out = append(out, p)
+				seen[p.Name] = true
+			}
 			continue
 		}
-		out = append(out, profileFrom(m, elements))
+		matched := false
+		for _, p := range infos {
+			if !strings.HasPrefix(p.Name, term+".") {
+				continue
+			}
+			matched = true
+			if seen[p.Name] {
+				continue
+			}
+			out = append(out, p)
+			seen[p.Name] = true
+		}
+		if !matched {
+			missing = append(missing, term)
+		}
 	}
-	if len(want) > 0 && len(out) == 0 {
-		return nil, fmt.Errorf("no matching profiles")
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("unknown profile: %s", strings.Join(missing, ", "))
 	}
 	return out, nil
 }

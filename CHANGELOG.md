@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.3
+
+- `nxf profile list <name...>` filters by exact name or dotted prefix
+  (`gui` matches `gui.daily` and `gui.admintools`).
+
 ## 0.8.2
 
 - Dotted profile refs try a nested Nix attr path if the quoted name is

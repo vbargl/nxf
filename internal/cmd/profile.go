@@ -101,7 +101,7 @@ func newListCommand() *cobra.Command {
 	var verbose, asJSON bool
 	c := &cobra.Command{
 		Use:   "list [name...]",
-		Short: "List profiles currently applied (table; -v for details)",
+		Short: "List applied profiles (table; -v for details; names filter, prefix ok)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return profile.List(verbose, asJSON, args)
 		},
