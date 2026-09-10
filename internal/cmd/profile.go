@@ -49,6 +49,7 @@ func newAddCommand() *cobra.Command {
 		},
 	}
 	bindApplyFlags(c, &opts)
+	c.Flags().BoolVar(&opts.Refresh, "refresh", false, "bypass nix's flake-ref resolution cache")
 	bindPriorityFlag(c)
 	return c
 }

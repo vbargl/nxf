@@ -2,7 +2,6 @@ package nixutil
 
 import (
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -37,43 +36,54 @@ func emptyBaseline() (string, error) {
 	return emptyBaselinePath, nil
 }
 
-// ShowDiff prints an nvd package-level tree diff (added/removed/changed
-// packages, plus its own closure size / disk usage delta line) between
-// oldPath and newPath. Either side may be "" (nothing to compare against -
-// e.g. no /run/current-system yet, or a first-ever profile add / last
-// profile remove); that side is substituted with an empty baseline so the
-// diff still shows the full set of packages gained or lost, rather than
-// being skipped.
-func ShowDiff(oldPath, newPath string) error {
+// Diff returns nvd's package-level tree between oldPath and newPath.
+// Empty output means no changes (same store path, or both empty).
+// Either side may be "" (first add / last remove); that side is an empty
+// baseline so the diff still lists every package gained or lost.
+func Diff(oldPath, newPath string) (string, error) {
 	if oldPath == "" && newPath == "" {
-		return nil
+		return "", nil
 	}
-
 	if oldPath == "" {
 		p, err := emptyBaseline()
 		if err != nil {
-			return err
+			return "", err
 		}
 		oldPath = p
 	}
 	if newPath == "" {
 		p, err := emptyBaseline()
 		if err != nil {
-			return err
+			return "", err
 		}
 		newPath = p
 	}
-
 	if oldPath == newPath {
-		fmt.Println("No changes.")
+		return "", nil
+	}
+	cmd := execCommand(NvdPath, "diff", oldPath, newPath)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("nvd diff: %w", err)
+	}
+	return string(out), nil
+}
+
+// ShowDiff prints Diff to stdout. Equal paths print "No changes."
+func ShowDiff(oldPath, newPath string) error {
+	out, err := Diff(oldPath, newPath)
+	if err != nil {
+		return err
+	}
+	if out == "" {
+		if oldPath != "" || newPath != "" {
+			fmt.Println("No changes.")
+		}
 		return nil
 	}
-
-	cmd := execCommand(NvdPath, "diff", oldPath, newPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("nvd diff: %w", err)
+	fmt.Print(out)
+	if !strings.HasSuffix(out, "\n") {
+		fmt.Println()
 	}
 	return nil
 }

@@ -82,72 +82,39 @@ func Build(ref string) error {
 type planned struct {
 	name     string
 	expanded string
+	oldPath  string
 	newPath  string
 	priority *int
 }
 
-// Add builds and installs every ref, as one transaction: all builds run
-// first, then one plan/diff, then (unless --dry-run) a confirmation, then
-// every install. A failure during install rolls the nix profile back to the
-// generation taken at the start of activate.
+func (p planned) unchanged() bool {
+	return p.oldPath != "" && p.oldPath == p.newPath
+}
+
+type parsedRef struct {
+	flake    string
+	name     string
+	expanded string
+}
+
+// Add builds and installs every ref as one transaction: all builds first
+// (nix-fast-build when a flake contributes 2+ profiles), then a plan, then
+// install. Unchanged store paths are skipped. A failed install rolls the
+// nix profile back to the generation taken at the start of activate.
 func Add(refs []string, opts apply.Options) error {
 	return withLock(func() error { return addLocked(refs, opts) })
 }
 
 func addLocked(refs []string, opts apply.Options) error {
-	var plans []planned
-	var flakeOrder []string
-	grouped := map[string][]string{}
-	var singles []string
-
-	for _, ref := range refs {
-		flake, name, ok := splitConvenienceRef(ref)
-		if !ok {
-			singles = append(singles, ref)
-			continue
-		}
-		if err := names.Check(name); err != nil {
-			return err
-		}
-		if _, seen := grouped[flake]; !seen {
-			flakeOrder = append(flakeOrder, flake)
-		}
-		grouped[flake] = append(grouped[flake], name)
+	parsed, err := resolveAddRefs(refs)
+	if err != nil {
+		return err
 	}
 
 	ui.Phase("evaluate / build")
-	for _, flake := range flakeOrder {
-		ns := grouped[flake]
-		if len(ns) == 1 {
-			singles = append(singles, flake+"#"+ns[0])
-			continue
-		}
-		system, err := nixutil.CurrentSystem()
-		if err != nil {
-			return err
-		}
-		pathsByName, err := nixutil.BuildMany(flake, system, ns, opts.Refresh)
-		if err != nil {
-			return err
-		}
-		for _, name := range ns {
-			expanded := fmt.Sprintf("%s#profileConfigurations.%s.%q", flake, system, name)
-			plans = append(plans, planned{name: name, expanded: expanded, newPath: pathsByName[name], priority: opts.Priority})
-		}
-	}
-	for _, ref := range singles {
-		expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
-		if err != nil {
-			return err
-		}
-		if err := names.Check(name); err != nil {
-			return err
-		}
-		newPath, err := nixutil.Build(expanded, opts.Refresh)
-		if err != nil {
-			return err
-		}
-		plans = append(plans, planned{name: name, expanded: expanded, newPath: newPath, priority: opts.Priority})
+	plans, err := buildParsed(parsed, opts)
+	if err != nil {
+		return err
 	}
 	ui.OK("evaluate / build")
 
@@ -159,8 +126,16 @@ func addLocked(refs []string, opts apply.Options) error {
 		fmt.Println("Dry run: not applying.")
 		return nil
 	}
-	if err := opts.Confirm("add these profiles"); err != nil {
-		return err
+
+	any := false
+	for _, p := range plans {
+		if !p.unchanged() {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return nil
 	}
 
 	ui.Phase("activate")
@@ -183,23 +158,138 @@ func addLocked(refs []string, opts apply.Options) error {
 	return nil
 }
 
+func resolveAddRefs(refs []string) ([]parsedRef, error) {
+	stored, err := loadRefs()
+	if err != nil {
+		stored = map[string]Ref{}
+	}
+	out := make([]parsedRef, 0, len(refs))
+	for _, ref := range refs {
+		if !strings.Contains(ref, "#") {
+			if err := names.Check(ref); err != nil {
+				return nil, err
+			}
+			installable, err := upgradeInstallable(ref, stored[ref])
+			if err != nil {
+				return nil, fmt.Errorf("%w\n  hint: nxf profile add <flake>#%s", err, ref)
+			}
+			ref = installable
+		}
+		expanded, name, err := expandProfileRef(ref, nixutil.CurrentSystem)
+		if err != nil {
+			return nil, err
+		}
+		if err := names.Check(name); err != nil {
+			return nil, err
+		}
+		flake, _, _ := strings.Cut(expanded, "#")
+		out = append(out, parsedRef{flake: flake, name: name, expanded: expanded})
+	}
+	return out, nil
+}
+
+func groupByFlake(refs []parsedRef) [][]parsedRef {
+	idx := map[string]int{}
+	var groups [][]parsedRef
+	for _, r := range refs {
+		i, ok := idx[r.flake]
+		if !ok {
+			i = len(groups)
+			idx[r.flake] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], r)
+	}
+	return groups
+}
+
+func buildParsed(refs []parsedRef, opts apply.Options) ([]planned, error) {
+	elements, _ := nixutil.ListElements()
+	var plans []planned
+	for _, group := range groupByFlake(refs) {
+		system, err := nixutil.CurrentSystem()
+		if err != nil {
+			return nil, err
+		}
+		if len(group) == 1 {
+			g := group[0]
+			newPath, err := nixutil.Build(g.expanded, opts.Refresh)
+			if err != nil {
+				return nil, err
+			}
+			plans = append(plans, planned{
+				name:     g.name,
+				expanded: g.expanded,
+				oldPath:  nixutil.StorePathFor(elements, g.name),
+				newPath:  newPath,
+				priority: opts.Priority,
+			})
+			continue
+		}
+		ns := make([]string, len(group))
+		for i, g := range group {
+			ns[i] = g.name
+		}
+		pathsByName, err := nixutil.BuildMany(group[0].flake, system, ns, opts.Refresh)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range group {
+			expanded := g.expanded
+			if expanded == "" {
+				expanded = fmt.Sprintf("%s#profileConfigurations.%s.%q", g.flake, system, g.name)
+			}
+			plans = append(plans, planned{
+				name:     g.name,
+				expanded: expanded,
+				oldPath:  nixutil.StorePathFor(elements, g.name),
+				newPath:  pathsByName[g.name],
+				priority: opts.Priority,
+			})
+		}
+	}
+	return plans, nil
+}
+
 func showPlan(plans []planned) error {
 	ui.Phase("plan")
-	elements, _ := nixutil.ListElements()
+	w := 0
 	for _, p := range plans {
-		old := nixutil.StorePathFor(elements, p.name)
-		fmt.Printf("  %s  %s\n", ui.Bullet(), p.name)
-		if err := nixutil.ShowDiff(old, p.newPath); err != nil {
-			ui.Warn(p.name + ": " + err.Error())
+		if n := len(p.name); n > w {
+			w = n
 		}
+	}
+	for _, p := range plans {
+		diff, err := nixutil.Diff(p.oldPath, p.newPath)
+		if err != nil {
+			ui.Warn(p.name + ": " + err.Error())
+			continue
+		}
+		fmt.Print(formatPlanEntry(p.name, w, diff))
 	}
 	ui.OK("plan")
 	return nil
 }
 
+func formatPlanEntry(name string, nameWidth int, diff string) string {
+	diff = strings.TrimRight(diff, "\n")
+	if diff == "" {
+		return fmt.Sprintf("%-*s  no changes\n", nameWidth, name)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\n", name)
+	for _, line := range strings.Split(diff, "\n") {
+		fmt.Fprintf(&b, "  %s\n", line)
+	}
+	return b.String()
+}
+
 func installPlans(plans []planned) error {
 	elements, _ := nixutil.ListElements()
 	for _, p := range plans {
+		if p.unchanged() {
+			continue
+		}
 		prio := p.priority
 		if prio == nil {
 			if e, ok := nixutil.FindElement(elements, p.name); ok && e.Priority > 0 {

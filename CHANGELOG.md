@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `nxf profile upgrade --all` builds every profile from the same flake in
+  one `nix-fast-build` (parallel). Plan is one line per unchanged profile,
+  or the name plus an indented nvd diff. Add/upgrade no longer prompt for
+  `yes` (rollback still exists). `nxf profile add --refresh` works; a bare
+  profile name reuses the recorded flake URL.
+
 ## 0.8.0
 
 - `nix profile list` names nxf profiles `gui.daily` / `terminal.daily`

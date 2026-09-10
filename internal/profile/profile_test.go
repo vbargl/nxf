@@ -129,6 +129,34 @@ func TestSplitConvenienceRef(t *testing.T) {
 	}
 }
 
+func TestGroupByFlake(t *testing.T) {
+	g := groupByFlake([]parsedRef{
+		{flake: "flake:vbargl", name: "gui.daily"},
+		{flake: "flake:vbargl", name: "media"},
+		{flake: "other", name: "x"},
+	})
+	if len(g) != 2 || len(g[0]) != 2 || g[0][0].name != "gui.daily" || g[0][1].name != "media" {
+		t.Fatalf("same-flake group = %#v", g)
+	}
+	if g[1][0].name != "x" {
+		t.Fatalf("second group = %#v", g[1])
+	}
+}
+
+func TestFormatPlanEntry(t *testing.T) {
+	got := formatPlanEntry("gui.daily", 12, "")
+	if !strings.Contains(got, "gui.daily") || !strings.Contains(got, "no changes") || strings.Contains(got, "\n  ") {
+		t.Errorf("unchanged = %q", got)
+	}
+	got = formatPlanEntry("media", 5, "<<< old\n>>> new\n")
+	if !strings.HasPrefix(got, "media\n") {
+		t.Errorf("changed name line = %q", got)
+	}
+	if !strings.Contains(got, "  <<< old\n") || !strings.Contains(got, "  >>> new\n") {
+		t.Errorf("changed body not indented: %q", got)
+	}
+}
+
 func TestUpgradeRequiresAllXorNames(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 

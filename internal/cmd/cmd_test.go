@@ -4,6 +4,17 @@ import (
 	"testing"
 )
 
+func TestAddHasRefreshFlag(t *testing.T) {
+	root := New()
+	cmd, _, err := root.Find([]string{"profile", "add"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cmd.Flags().Lookup("refresh") == nil {
+		t.Fatal("profile add: missing --refresh")
+	}
+}
+
 func TestJSONFlagOnListCommands(t *testing.T) {
 	root := New()
 	have := [][]string{

@@ -135,9 +135,9 @@ equals the nxf profile name.
 ### Commands
 
 ```
-nxf profile add [--dry-run] [--approve] [--priority N] <flake>#<name>...
+nxf profile add [--dry-run] [--refresh] [--priority N] <flake>#<name>...
 nxf profile remove [--dry-run] [--approve] <name>...
-nxf profile upgrade [--all] [--refresh] [--dry-run] [--approve] [name...]
+nxf profile upgrade [--all] [--refresh] [--dry-run] [name...]
 nxf profile list [-v] [name...]
 nxf profile sync
 nxf profile generations
