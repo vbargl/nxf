@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2
 
 - Dotted profile refs try a nested Nix attr path if the quoted name is
   missing (`terminal.admintools.extra` → `.terminal.admintools.extra`, not
