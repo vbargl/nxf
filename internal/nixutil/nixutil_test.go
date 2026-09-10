@@ -155,6 +155,58 @@ func TestRunNixTreeWithNom(t *testing.T) {
 	}
 }
 
+func TestUnquoteDottedAttr(t *testing.T) {
+	in := `vbargl#profileConfigurations.x86_64-linux."terminal.admintools.extra"`
+	want := `vbargl#profileConfigurations.x86_64-linux.terminal.admintools.extra`
+	if got := unquoteDottedAttr(in); got != want {
+		t.Errorf("unquoteDottedAttr = %q, want %q", got, want)
+	}
+	quotedMedia := `vbargl#profileConfigurations.x86_64-linux."media"`
+	if got := unquoteDottedAttr(quotedMedia); got != quotedMedia {
+		t.Errorf("no-dot name should not unquote: %q", got)
+	}
+	already := `vbargl#profileConfigurations.x86_64-linux.gui.daily`
+	if got := unquoteDottedAttr(already); got != already {
+		t.Errorf("already unquoted: %q", got)
+	}
+}
+
+func TestBuildFallsBackToUnquotedAttr(t *testing.T) {
+	setUseNom(t, false)
+	fakeStorePath := filepath.Join(t.TempDir(), "fake-extra")
+	if err := os.Mkdir(fakeStorePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	orig := execCommand
+	execCommand = func(name string, args ...string) *exec.Cmd {
+		n++
+		if n == 1 {
+			return exec.Command("false")
+		}
+		for i, a := range args {
+			if a == "--out-link" && i+1 < len(args) {
+				_ = os.Symlink(fakeStorePath, args[i+1])
+			}
+		}
+		return exec.Command("true")
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	ref := `vbargl#profileConfigurations.x86_64-linux."terminal.admintools.extra"`
+	_, used, err := BuildResolved(ref, false)
+	if err != nil {
+		t.Fatalf("BuildResolved: %v", err)
+	}
+	want := `vbargl#profileConfigurations.x86_64-linux.terminal.admintools.extra`
+	if used != want {
+		t.Errorf("used = %q, want %q", used, want)
+	}
+	if n != 2 {
+		t.Errorf("builds = %d, want 2 (quoted fail, nested retry)", n)
+	}
+}
+
 func TestBuildRefreshAppendsFlag(t *testing.T) {
 	setUseNom(t, false)
 

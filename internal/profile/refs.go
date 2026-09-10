@@ -130,6 +130,11 @@ func upgradeInstallable(name string, stored Ref) (string, error) {
 	if isRelativeFlake(orig) {
 		return "", fmt.Errorf("profile %q has no resolved flake URL recorded (was added from a relative path) - add it again from a registry name or absolute flake ref", name)
 	}
+	if stored.Installable != "" {
+		if _, frag, ok := strings.Cut(stored.Installable, "#"); ok && frag != "" {
+			return orig + "#" + frag, nil
+		}
+	}
 	system, err := nixutil.CurrentSystem()
 	if err != nil {
 		return "", err

@@ -213,13 +213,13 @@ func buildParsed(refs []parsedRef, opts apply.Options) ([]planned, error) {
 		}
 		if len(group) == 1 {
 			g := group[0]
-			newPath, err := nixutil.Build(g.expanded, opts.Refresh)
+			newPath, used, err := nixutil.BuildResolved(g.expanded, opts.Refresh)
 			if err != nil {
 				return nil, err
 			}
 			plans = append(plans, planned{
 				name:     g.name,
-				expanded: g.expanded,
+				expanded: used,
 				oldPath:  nixutil.StorePathFor(elements, g.name),
 				newPath:  newPath,
 				priority: opts.Priority,
@@ -236,14 +236,19 @@ func buildParsed(refs []parsedRef, opts apply.Options) ([]planned, error) {
 		}
 		for _, g := range group {
 			expanded := g.expanded
-			if expanded == "" {
-				expanded = fmt.Sprintf("%s#profileConfigurations.%s.%q", g.flake, system, g.name)
+			newPath := pathsByName[g.name]
+			if newPath == "" {
+				var err error
+				newPath, expanded, err = nixutil.BuildResolved(g.expanded, opts.Refresh)
+				if err != nil {
+					return nil, err
+				}
 			}
 			plans = append(plans, planned{
 				name:     g.name,
 				expanded: expanded,
 				oldPath:  nixutil.StorePathFor(elements, g.name),
-				newPath:  pathsByName[g.name],
+				newPath:  newPath,
 				priority: opts.Priority,
 			})
 		}

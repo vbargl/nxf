@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/vbargl/nxf/internal/paths"
 )
@@ -148,6 +149,70 @@ func ProfileRollbackTo(n int) error {
 // `nix build --refresh`) - used by `nxf profile upgrade` to actually pick up
 // a moved ref instead of the stale, already-cached resolution.
 func Build(ref string, refresh bool) (string, error) {
+	path, _, err := BuildResolved(ref, refresh)
+	return path, err
+}
+
+// BuildResolved is Build, but also returns the installable that actually
+// evaluated. Dotted names are tried quoted (`."gui.daily"`) then as a nested
+// attr path (`.gui.daily`) so both mkProfile styles work.
+func BuildResolved(ref string, refresh bool) (storePath, used string, err error) {
+	var first error
+	seen := map[string]bool{}
+	for _, cand := range InstallableCandidates(ref) {
+		if seen[cand] {
+			continue
+		}
+		seen[cand] = true
+		path, err := buildOnce(cand, refresh)
+		if err == nil {
+			return path, cand, nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	if first == nil {
+		first = fmt.Errorf("nix build %s: no installable candidates", ref)
+	}
+	return "", ref, first
+}
+
+// InstallableCandidates is the quoted flake attr, then the same path with
+// dotted names unquoted (Nix nested selection).
+func InstallableCandidates(ref string) []string {
+	out := []string{ref}
+	if u := unquoteDottedAttr(ref); u != ref {
+		out = append(out, u)
+	}
+	return out
+}
+
+func unquoteDottedAttr(ref string) string {
+	flake, attr, ok := strings.Cut(ref, "#")
+	if !ok || !strings.HasPrefix(attr, "profileConfigurations.") {
+		return ref
+	}
+	rest := strings.TrimPrefix(attr, "profileConfigurations.")
+	dot := strings.Index(rest, ".")
+	if dot < 0 {
+		return ref
+	}
+	system, namePart := rest[:dot], rest[dot+1:]
+	if !strings.HasPrefix(namePart, `"`) {
+		return ref
+	}
+	name, err := strconv.Unquote(namePart)
+	if err != nil {
+		return ref
+	}
+	if !strings.Contains(name, ".") {
+		return ref
+	}
+	return flake + "#profileConfigurations." + system + "." + name
+}
+
+func buildOnce(ref string, refresh bool) (string, error) {
 	tmp, err := os.MkdirTemp("", "nxf-build-")
 	if err != nil {
 		return "", fmt.Errorf("creating temp dir for build result: %w", err)

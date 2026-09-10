@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Dotted profile refs try a nested Nix attr path if the quoted name is
+  missing (`terminal.admintools.extra` → `.terminal.admintools.extra`, not
+  `."terminal.admintools.extra"`).
+
 ## 0.8.1
 
 - `nxf profile upgrade --all` builds every profile from the same flake in

@@ -75,6 +75,20 @@ func TestLoadRefsMigratesLegacyStringMap(t *testing.T) {
 	}
 }
 
+func TestUpgradeInstallablePrefersStoredNestedPath(t *testing.T) {
+	got, err := upgradeInstallable("terminal.admintools.extra", Ref{
+		OriginalURL: "flake:vbargl",
+		Installable: `flake:vbargl#profileConfigurations.x86_64-linux.terminal.admintools.extra`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `flake:vbargl#profileConfigurations.x86_64-linux.terminal.admintools.extra`
+	if got != want {
+		t.Errorf("got %q, want nested path %q", got, want)
+	}
+}
+
 func TestUpgradeInstallable(t *testing.T) {
 	got, err := upgradeInstallable("gui.daily", Ref{OriginalURL: "flake:vbargl"})
 	if err != nil {
