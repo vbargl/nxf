@@ -40,6 +40,10 @@ func bindApplyFlags(cmd *cobra.Command, opts *apply.Options) {
 	cmd.Flags().BoolVar(&opts.Approve, "approve", false, "Apply without asking for confirmation")
 }
 
+func bindJSONFlag(cmd *cobra.Command, asJSON *bool) {
+	cmd.Flags().BoolVar(asJSON, "json", false, "print a JSON document instead of human-readable output")
+}
+
 func bindPriorityFlag(cmd *cobra.Command) {
 	cmd.Flags().Int("priority", 5, "nix profile file-collision priority (lower wins)")
 }

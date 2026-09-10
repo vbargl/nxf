@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- `nix profile list` names nxf profiles `gui.daily` / `terminal.daily`
+  (install the built store path; derivation name equals the nxf name).
+  Older `profile-<name>` / `daily` / `daily-1` installs still match.
+- `nxf profile list` is a table; `-v` is a card (flake, short rev, labeled
+  store, bins/desktop/xdg in two columns). `nxf os list` is a generation
+  table; `>` marks the current generation.
+- `--json` on `profile list`, `profile generations`, and `os generations`.
+
 ## 0.7.0
 
 Breaking CLI: mutating commands (`profile add/remove/upgrade/rollback/clean`,

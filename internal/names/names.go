@@ -1,6 +1,6 @@
 // Package names validates nxf profile names. These names are used as
 // directory entries, applied-state filenames, systemd unit prefixes, and
-// nix derivation suffixes (profile-<name>), so they must be path-safe.
+// the nix derivation name (so `nix profile list` shows `gui.daily`).
 package names
 
 import (
@@ -39,10 +39,15 @@ func Check(name string) error {
 	return nil
 }
 
-// DerivationName is the nix derivation `name` mkProfile writes, and the
-// suffix of the resulting store path (`…-profile-gui.daily`). nix profile
-// element *keys* are a different string (nix takes the last attr-path
-// segment), so this is for matching store paths, not for `nix profile remove`.
+// DerivationName is the current mkProfile derivation name (equal to the
+// nxf profile name, so `nix profile add <store-path>` names the element
+// `gui.daily`).
 func DerivationName(profileName string) string {
+	return profileName
+}
+
+// LegacyDerivationName is the 0.6/0.7 prefix form (`profile-gui.daily`)
+// still present in already-installed profiles.
+func LegacyDerivationName(profileName string) string {
 	return "profile-" + profileName
 }

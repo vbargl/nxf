@@ -97,29 +97,24 @@ func isRelativeFlake(flake string) bool {
 	return flake == "" || flake == "." || strings.HasPrefix(flake, "./") || strings.HasPrefix(flake, "../")
 }
 
-// rememberAfterAdd records the resolved original/locked URLs nix stored for
-// name, using the fragment from the installable we actually passed so
-// dotted names stay quoted.
+// rememberAfterAdd records flake identity from `nix flake metadata` (store-
+// path installs have no originalUrl in `nix profile list`). Relative flakes
+// (`.`) become the resolved git/file URL so upgrade is cwd-independent.
 func rememberAfterAdd(name, expanded string) {
-	_, frag, _ := strings.Cut(expanded, "#")
-	ref := Ref{Installable: expanded, AttrPath: frag}
-	if els, err := nixutil.ListElements(); err == nil {
-		if e, ok := nixutil.FindElement(els, name); ok {
-			ref.OriginalURL = e.OriginalURL
-			ref.LockedURL = e.LockedURL
-			if e.AttrPath != "" {
-				ref.AttrPath = e.AttrPath
-			}
-			if e.OriginalURL != "" && frag != "" {
-				ref.Installable = e.OriginalURL + "#" + frag
-			}
+	flake, frag, _ := strings.Cut(expanded, "#")
+	ref := Ref{Installable: expanded, AttrPath: frag, OriginalURL: flake}
+	if meta, err := nixutil.FlakeMetadata(flake); err == nil {
+		orig := meta.OriginalURL
+		if orig == "" {
+			orig = meta.ResolvedURL
 		}
-	}
-	if ref.OriginalURL == "" {
-		if flake, _, ok := splitConvenienceRef(expanded); ok {
-			ref.OriginalURL = flake
-		} else if flake, _, found := strings.Cut(expanded, "#"); found {
-			ref.OriginalURL = flake
+		if isRelativeFlake(orig) && meta.ResolvedURL != "" {
+			orig = meta.ResolvedURL
+		}
+		ref.OriginalURL = orig
+		ref.LockedURL = meta.LockedURL
+		if orig != "" && frag != "" {
+			ref.Installable = orig + "#" + frag
 		}
 	}
 	rememberRef(name, ref)

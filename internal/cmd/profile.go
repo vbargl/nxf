@@ -97,28 +97,32 @@ func newSyncCommand() *cobra.Command {
 }
 
 func newListCommand() *cobra.Command {
-	var verbose bool
+	var verbose, asJSON bool
 	c := &cobra.Command{
 		Use:   "list [name...]",
-		Short: "List profiles currently applied (one per line; -v for details)",
+		Short: "List profiles currently applied (table; -v for details)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return profile.List(verbose, args)
+			return profile.List(verbose, asJSON, args)
 		},
 	}
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show units, binaries, desktop files, flake refs")
+	bindJSONFlag(c, &asJSON)
 	return c
 }
 
 func newProfileGenerationsCommand() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	c := &cobra.Command{
 		Use:     "generations",
 		Aliases: []string{"history"},
 		Short:   "List user-profile generations",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return profile.Generations()
+			return profile.Generations(asJSON)
 		},
 	}
+	bindJSONFlag(c, &asJSON)
+	return c
 }
 
 func newProfileRollbackCommand() *cobra.Command {

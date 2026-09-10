@@ -16,7 +16,7 @@ func profileLink() (string, error) {
 }
 
 // Generations prints user-profile generations, newest first.
-func Generations() error {
+func Generations(asJSON bool) error {
 	link, err := profileLink()
 	if err != nil {
 		return err
@@ -24,6 +24,11 @@ func Generations() error {
 	list, err := gens.List(link)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		return printJSON(struct {
+			Generations []gens.JSONGeneration `json:"generations"`
+		}{gens.JSONList(list)})
 	}
 	if len(list) == 0 {
 		fmt.Println("no profile generations")

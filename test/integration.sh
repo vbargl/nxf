@@ -99,6 +99,9 @@ out=$(nxf profile add --approve "$TEST_FLAKE#gui.daily" 2>&1); rc=$?
 assert_rc "$rc" 0 "add gui.daily exits 0"
 out=$(nxf profile list 2>&1)
 assert_contains "$out" "gui.daily" "list shows gui.daily (not nix's 'daily')"
+nixlist=$(nix profile list --json --profile "$NXF_PROFILE" 2>/dev/null || true)
+assert_contains "$nixlist" '"gui.daily"' "nix profile list element key is gui.daily"
+assert_not_contains "$nixlist" '"daily"' "nix profile list has no colliding 'daily' key"
 out=$(nxf profile remove --approve gui.daily 2>&1); rc=$?
 assert_rc "$rc" 0 "remove gui.daily by nxf name exits 0"
 out=$(nxf profile list 2>&1)

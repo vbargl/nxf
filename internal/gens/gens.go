@@ -23,6 +23,29 @@ type Generation struct {
 	Current bool
 }
 
+// JSONGeneration is one generation in --json output.
+type JSONGeneration struct {
+	Number        int    `json:"number"`
+	Time          string `json:"time"`
+	Current       bool   `json:"current"`
+	NixosVersion  string `json:"nixosVersion,omitempty"`
+	KernelVersion string `json:"kernelVersion,omitempty"`
+}
+
+// JSONList converts generations to JSON objects with RFC3339 UTC times.
+// The input order (newest-first) is preserved. The returned slice is never nil.
+func JSONList(gens []Generation) []JSONGeneration {
+	out := make([]JSONGeneration, 0, len(gens))
+	for _, g := range gens {
+		out = append(out, JSONGeneration{
+			Number:  g.Number,
+			Time:    g.Time.UTC().Format(time.RFC3339),
+			Current: g.Current,
+		})
+	}
+	return out
+}
+
 var linkRe = regexp.MustCompile(`^(.*)-([0-9]+)-link$`)
 
 // ResolveBase turns a profile symlink (~/.nix-profile, /nix/var/nix/profiles/system)

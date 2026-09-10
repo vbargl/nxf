@@ -52,6 +52,27 @@ func TestFindElementByStorePath(t *testing.T) {
 	}
 }
 
+func TestFindElementByNewDerivationName(t *testing.T) {
+	els, err := ParseElements([]byte(`{"elements":{
+		"gui.daily":{"active":true,"priority":5,"storePaths":["/nix/store/ddd-gui.daily"]},
+		"terminal.daily":{"active":true,"priority":5,"storePaths":["/nix/store/eee-terminal.daily"]}
+	}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := FindElement(els, "gui.daily")
+	if !ok || e.Name != "gui.daily" {
+		t.Fatalf("gui.daily -> %#v ok=%v", e, ok)
+	}
+	e, ok = FindElement(els, "terminal.daily")
+	if !ok || e.Name != "terminal.daily" {
+		t.Fatalf("terminal.daily -> %#v ok=%v", e, ok)
+	}
+	if _, ok = FindElement(els, "daily"); ok {
+		t.Fatal("bare daily must not match gui.daily or terminal.daily")
+	}
+}
+
 func TestAttrPathName(t *testing.T) {
 	cases := map[string]string{
 		`profileConfigurations.x86_64-linux."gui.daily"`: "gui.daily",

@@ -115,6 +115,26 @@ func TestSelectDeleteRequiresExactlyOne(t *testing.T) {
 	}
 }
 
+func TestJSONList(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 35, 51, 0, time.UTC)
+	got := JSONList([]Generation{
+		{Number: 38, Time: now, Current: true},
+		{Number: 37, Time: now.Add(-time.Hour), Current: false},
+	})
+	if len(got) != 2 {
+		t.Fatalf("JSONList len = %d", len(got))
+	}
+	if got[0].Number != 38 || got[0].Time != "2026-09-09T12:35:51Z" || !got[0].Current {
+		t.Errorf("newest = %+v", got[0])
+	}
+	if got[1].NixosVersion != "" || got[1].KernelVersion != "" {
+		t.Errorf("os fields should be empty: %+v", got[1])
+	}
+	if empty := JSONList(nil); empty == nil || len(empty) != 0 {
+		t.Errorf("JSONList(nil) = %#v, want empty non-nil", empty)
+	}
+}
+
 func itoa(n int) string {
 	return []string{"0", "1", "2", "3", "4", "5"}[n]
 }

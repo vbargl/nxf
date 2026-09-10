@@ -10,9 +10,9 @@ import (
 	"github.com/vbargl/nxf/internal/paths"
 )
 
-// Element is one `nix profile list --json` entry. Name is nix's element key
-// (last attr-path segment, so "gui.daily" and "terminal.daily" both become
-// "daily" / "daily-1"). Match nxf profile names via StorePaths instead.
+// Element is one `nix profile list --json` entry. For nxf profiles installed
+// by store path, Name equals the derivation name (the nxf profile name).
+// Older flake-ref installs used the last attr-path segment (`daily`).
 type Element struct {
 	Name        string
 	Active      bool
@@ -72,14 +72,16 @@ func ListElements() ([]Element, error) {
 }
 
 // FindElement locates the nix profile element for an nxf profile name by
-// matching the derivation suffix `profile-<name>` on a store path. Attr-path
-// matching is a fallback for older installs whose drv name wasn't set.
+// the store-path drv name (`gui.daily`, or the legacy `profile-gui.daily`).
+// Attr-path matching is a fallback for older flake-ref installs.
 func FindElement(elements []Element, profileName string) (Element, bool) {
-	drv := names.DerivationName(profileName)
+	want := map[string]bool{
+		names.DerivationName(profileName):       true,
+		names.LegacyDerivationName(profileName): true,
+	}
 	for _, e := range elements {
 		for _, p := range e.StorePaths {
-			base := filepath.Base(p)
-			if base == drv || strings.HasSuffix(base, "-"+drv) {
+			if want[storeDrvName(p)] {
 				return e, true
 			}
 		}
@@ -90,6 +92,17 @@ func FindElement(elements []Element, profileName string) (Element, bool) {
 		}
 	}
 	return Element{}, false
+}
+
+// storeDrvName is the derivation name in a store path
+// (`/nix/store/<hash>-gui.daily` → `gui.daily`).
+func storeDrvName(p string) string {
+	base := filepath.Base(p)
+	i := strings.Index(base, "-")
+	if i < 0 {
+		return base
+	}
+	return base[i+1:]
 }
 
 // attrPathName extracts the nxf profile name from a flake attr path.

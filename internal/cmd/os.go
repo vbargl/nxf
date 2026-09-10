@@ -55,15 +55,18 @@ func newOSModeCommand(mode, short string) *cobra.Command {
 }
 
 func newOSGenerationsCommand() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	c := &cobra.Command{
 		Use:     "generations",
 		Aliases: []string{"list", "history"},
 		Short:   "List NixOS system generations",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return os.Generations()
+			return os.Generations(asJSON)
 		},
 	}
+	bindJSONFlag(c, &asJSON)
+	return c
 }
 
 func newOSRollbackCommand() *cobra.Command {

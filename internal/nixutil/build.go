@@ -89,13 +89,10 @@ func runNixTree(args ...string) error {
 	return nixErr
 }
 
-// ProfileAdd installs ref, which callers (see internal/profile) pass as the
-// original flake reference rather than an already-resolved store path: `nix
-// profile add` only records "Flake attribute"/"Original flake URL"/"Locked
-// flake URL" provenance (visible in `nix profile list`) when given a flake
-// installable, not a bare store path. The referenced derivation was already
-// built by an earlier nixutil.Build/BuildMany call, so nix finds it already
-// realized in the store and this is still a plain, near-instant command.
+// ProfileAdd installs ref. Callers pass an already-built store path so the
+// element name is the derivation name (`gui.daily`) rather than the last
+// flake attr-path segment (`daily`). Flake provenance is recorded by nxf
+// itself (refs.json), not by nix.
 func ProfileAdd(ref string, priority *int) error {
 	var extra []string
 	if priority != nil {

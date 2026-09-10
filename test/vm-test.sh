@@ -93,6 +93,8 @@ section "reset baseline"
 for p in pkgs-only with-unit with-units with-config empty; do
   vm --user 1000 --group 100 --env "HOME=$HOME_DIR" --env "PATH=/run/current-system/sw/bin" \
     nix profile remove "profile-$p" >/dev/null 2>&1
+  vm --user 1000 --group 100 --env "HOME=$HOME_DIR" --env "PATH=/run/current-system/sw/bin" \
+    nix profile remove "$p" >/dev/null 2>&1
 done
 vm rm -rf "$HOME_DIR/.local/state/nxf" "$HOME_DIR/.config/systemd/user" "$HOME_DIR/.config/nxf-demo" >/dev/null 2>&1
 out=$(nxf profile list 2>&1); rc=$?
@@ -213,7 +215,7 @@ else
 fi
 assert_not_contains "$out" 'running activation script for "with-config"' "re-add with-config: activation script NOT re-run (path unchanged)"
 after=$(vm nix profile list 2>&1)
-assert_not_contains "$after" "profile-with-config-1" "re-add does not create a disambiguated duplicate element"
+assert_not_contains "$after" "with-config-1" "re-add does not create a disambiguated duplicate element"
 
 section "with-config: remove (activate hook has no teardown - config file expected to remain)"
 out=$(nxf profile remove with-config 2>&1); rc=$?
@@ -263,10 +265,10 @@ before=$(vm nix profile list 2>&1)
 out=$(nxf profile add "$PROFILES_DIR#pkgs-only" 2>&1); rc=$?
 assert_rc "$rc" 0 "re-add pkgs-only exits 0"
 after=$(vm nix profile list 2>&1)
-assert_not_contains "$after" "profile-pkgs-only-1" "re-add does not create a disambiguated duplicate element"
-n=$(printf '%s' "$after" | grep -c '^Name:.*profile-pkgs-only')
-if [[ "$n" == "1" ]]; then pass "exactly one profile-pkgs-only element after re-add"; else
-  fail "exactly one profile-pkgs-only element after re-add (found $n)"; echo "$after"
+assert_not_contains "$after" "pkgs-only-1" "re-add does not create a disambiguated duplicate element"
+n=$(printf '%s' "$after" | grep -c '^Name:.*pkgs-only')
+if [[ "$n" == "1" ]]; then pass "exactly one pkgs-only element after re-add"; else
+  fail "exactly one pkgs-only element after re-add (found $n)"; echo "$after"
 fi
 out=$(nxf profile remove pkgs-only 2>&1); rc=$?
 assert_rc "$rc" 0 "remove pkgs-only after re-add exits 0"
@@ -299,6 +301,7 @@ assert_contains "$out" "not installed" "remove never-added: error says it is not
 section "profile sync: reconciles drift left by a plain (non-nxf) nix profile remove"
 nxf profile add "$PROFILES_DIR#with-unit" >/dev/null 2>&1
 "${EXEC_BASE[@]}" -- nix profile remove "profile-with-unit" >/dev/null 2>&1
+"${EXEC_BASE[@]}" -- nix profile remove "with-unit" >/dev/null 2>&1
 assert_exists "unit symlink still present right after the bypass removal (sync hasn't run yet)" \
   -e "$HOME_DIR/.config/systemd/user/nxf-with-unit-greeter.service"
 out=$(nxf profile sync 2>&1); rc=$?

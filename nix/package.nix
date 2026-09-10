@@ -10,7 +10,7 @@ buildGoModule rec {
   pname = "nxf";
   # Bump on every change to this repo (semver: patch for fixes, minor for
   # new commands/flags, major for breaking CLI changes).
-  version = "0.7.0";
+  version = "0.8.0";
 
   src = ../.;
   # go.mod has a real dependency (spf13/cobra), so this must be a real

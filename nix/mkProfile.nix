@@ -27,9 +27,11 @@
 #     "priority": <int> | null
 #   }
 #
-# The derivation `name` MUST be `profile-<name>`: nxf matches `nix profile`
-# elements against that store-path suffix (nix's own element *key* is the
-# last attr-path segment and is not unique for dotted names).
+# The derivation `name` MUST equal the nxf profile name (`gui.daily`, not
+# `profile-gui.daily`). nxf installs the built store path (not the flake
+# attr), so `nix profile list` uses that drv name as the element key.
+# Flake-ref installs would name both `gui.daily` and `terminal.daily` as
+# `daily` / `daily-1` (last attr-path segment).
 name:
 {
   # One-line summary shown by `nix flake show` / `nix eval .#profileConfigurations.<system>.<name>.meta.description`.
@@ -149,7 +151,7 @@ let
   );
 in
 pkgs.symlinkJoin {
-  name = "profile-${name}";
+  inherit name;
   meta.description = description;
   paths = packages ++ [
     (pkgs.runCommand "nxf-${name}-dir" { } ''

@@ -213,8 +213,8 @@ func installPlans(plans []planned) error {
 		if e, ok := nixutil.FindElement(elements, p.name); ok {
 			nixutil.ProfileRemoveQuiet(e.Name)
 		}
-		if err := nixutil.ProfileAdd(p.expanded, prio); err != nil {
-			return fmt.Errorf("nix profile add %s: %w", p.expanded, err)
+		if err := nixutil.ProfileAdd(p.newPath, prio); err != nil {
+			return fmt.Errorf("nix profile add %s: %w", p.name, err)
 		}
 		rememberAfterAdd(p.name, p.expanded)
 		if els, err := nixutil.ListElements(); err == nil {

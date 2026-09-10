@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/vbargl/nxf/internal/apply"
@@ -17,7 +18,7 @@ import (
 	"github.com/vbargl/nxf/internal/ui"
 )
 
-const systemProfile = "/nix/var/nix/profiles/system"
+var systemProfile = "/nix/var/nix/profiles/system"
 
 // Run builds ref's system closure, prints an nvd diff against
 // /run/current-system, then (unless mode is "build" or --dry-run) asks
@@ -116,32 +117,134 @@ type generationJSON struct {
 }
 
 // Generations lists NixOS system generations.
-func Generations() error {
-	if data, err := nixosRebuildJSON("list-generations"); err == nil {
-		var list []generationJSON
-		if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
-			for _, g := range list {
-				mark := " "
-				if g.Current {
-					mark = ui.CurrentMarker()
-				}
-				fmt.Printf("  %4d  %s  %s  kernel %s  %s\n", g.Generation, g.Date, g.NixosVersion, g.KernelVersion, mark)
-			}
-			return nil
-		}
-	}
-	list, err := gens.List(systemProfile)
+func Generations(asJSON bool) error {
+	items, err := collectOSGenerations()
 	if err != nil {
-		return fmt.Errorf("listing system generations: %w", err)
+		return err
 	}
-	for _, g := range list {
-		mark := " "
-		if g.Current {
-			mark = ui.CurrentMarker()
+	if asJSON {
+		b, err := json.MarshalIndent(struct {
+			Generations []gens.JSONGeneration `json:"generations"`
+		}{items}, "", "  ")
+		if err != nil {
+			return err
 		}
-		fmt.Printf("  %4d  %s  %s\n", g.Number, g.Time.Format("2006-01-02 15:04"), mark)
+		fmt.Println(string(b))
+		return nil
 	}
+	if len(items) == 0 {
+		fmt.Println("no system generations")
+		return nil
+	}
+	fmt.Print(formatOSTable(items))
 	return nil
+}
+
+func formatOSTable(items []gens.JSONGeneration) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "#\tBUILT\tNIXOS\tKERNEL")
+	for _, g := range items {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", genNum(g), formatGenTime(g.Time), shortNixos(g.NixosVersion), g.KernelVersion)
+	}
+	_ = w.Flush()
+	return b.String()
+}
+
+func genNum(g gens.JSONGeneration) string {
+	if g.Current {
+		return fmt.Sprintf(">%3d", g.Number)
+	}
+	return fmt.Sprintf(" %3d", g.Number)
+}
+
+func shortNixos(v string) string {
+	parts := strings.Split(v, ".")
+	if len(parts) == 4 && len(parts[2]) == 8 && isDigits(parts[2]) {
+		return parts[0] + "." + parts[1] + "." + parts[3]
+	}
+	return v
+}
+
+func isDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
+}
+
+func formatGenTime(rfc3339 string) string {
+	t, err := time.Parse(time.RFC3339, rfc3339)
+	if err != nil {
+		return rfc3339
+	}
+	return t.Local().Format("2006-01-02 15:04")
+}
+
+func collectOSGenerations() ([]gens.JSONGeneration, error) {
+	list, err := gens.List(systemProfile)
+	if err == nil {
+		out := make([]gens.JSONGeneration, 0, len(list))
+		for _, g := range list {
+			nixosVer, kernelVer := generationExtras(g.Path)
+			out = append(out, gens.JSONGeneration{
+				Number:        g.Number,
+				Time:          g.Time.UTC().Format(time.RFC3339),
+				Current:       g.Current,
+				NixosVersion:  nixosVer,
+				KernelVersion: kernelVer,
+			})
+		}
+		return out, nil
+	}
+
+	data, rebuildErr := nixosRebuildJSON("list-generations")
+	if rebuildErr != nil {
+		return nil, fmt.Errorf("listing system generations: %w", err)
+	}
+	var rebuild []generationJSON
+	if uerr := json.Unmarshal(data, &rebuild); uerr != nil || len(rebuild) == 0 {
+		return nil, fmt.Errorf("listing system generations: %w", err)
+	}
+	out := make([]gens.JSONGeneration, 0, len(rebuild))
+	for _, g := range rebuild {
+		out = append(out, gens.JSONGeneration{
+			Number:        g.Generation,
+			Time:          parseRebuildDate(g.Date),
+			Current:       g.Current,
+			NixosVersion:  g.NixosVersion,
+			KernelVersion: g.KernelVersion,
+		})
+	}
+	return out, nil
+}
+
+func generationExtras(store string) (nixosVer, kernelVer string) {
+	if b, err := os.ReadFile(filepath.Join(store, "nixos-version")); err == nil {
+		nixosVer = strings.TrimSpace(string(b))
+	}
+	entries, err := os.ReadDir(filepath.Join(store, "kernel-modules", "lib", "modules"))
+	if err != nil {
+		return nixosVer, kernelVer
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return nixosVer, e.Name()
+		}
+	}
+	return nixosVer, kernelVer
+}
+
+func parseRebuildDate(date string) string {
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", date, time.Local); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	if t, err := time.Parse(time.RFC3339, date); err == nil {
+		return t.UTC().Format(time.RFC3339)
+	}
+	return date
 }
 
 func nixosRebuildJSON(mode string) ([]byte, error) {

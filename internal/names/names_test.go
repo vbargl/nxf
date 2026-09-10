@@ -30,7 +30,10 @@ func TestCheck(t *testing.T) {
 }
 
 func TestDerivationName(t *testing.T) {
-	if got := DerivationName("gui.daily"); got != "profile-gui.daily" {
+	if got := DerivationName("gui.daily"); got != "gui.daily" {
 		t.Errorf("DerivationName(gui.daily) = %q", got)
+	}
+	if got := LegacyDerivationName("gui.daily"); got != "profile-gui.daily" {
+		t.Errorf("LegacyDerivationName(gui.daily) = %q", got)
 	}
 }

@@ -90,15 +90,13 @@ Install with `nxf profile add --approve .#gui.daily` (expands to
 `profileConfigurations.<currentSystem>."gui.daily"`). Dotted names such as
 `gui.daily` are one attribute, not a nested path.
 
-`nix profile list` names packages after the last attr-path segment, so two
-profiles `gui.daily` and `terminal.daily` both show up as `daily` /
-`daily-1`. nxf does **not** use that name: `nxf profile list` / `remove` /
-`upgrade` always use the name you typed (`gui.daily`). Matching is by the
-derivation suffix `profile-<name>` on the store path.
+nxf installs the built store path (not the flake attr), so `nix profile
+list` shows `gui.daily` / `terminal.daily` — the derivation name, which
+equals the nxf profile name.
 
 ### Contract
 
-`mkProfile` writes a derivation named `profile-<name>` containing:
+`mkProfile` writes a derivation named `<name>` containing:
 
 | Path | Purpose |
 |---|---|
@@ -130,7 +128,7 @@ derivation suffix `profile-<name>` on the store path.
   need it there. Units from the manifest are always stopped/unlinked on
   teardown.
 - `priority`: default `nix profile add --priority` (CLI `--priority` wins).
-- Derivation `name` must stay `profile-<name>`.
+- Derivation `name` must equal the nxf profile name (`gui.daily`).
 - Profile names: letters, digits, `.`, `_`, `-`; must start with a letter or
   digit; no `/`, no `..`.
 
@@ -152,8 +150,11 @@ nxf os rollback [--to N] [--dry-run] [--approve]
 nxf os clean --keep 3 | --keep-since 3d | --older-than 1w | --delete 10,11
 ```
 
-`list` is one profile per line; `-v` prints units, binaries, `.desktop`
-files, and other XDG dirs from that profile's store path.
+`list` is a table (NAME / BINS / UNITS / DESKTOP / XDG, plus HOOKS if any).
+`-v` prints each profile as a card: name, flake (short rev), non-default
+priority, then labeled store/bins/desktop/xdg/units. `nxf os list` is a
+generation table; `>` marks the current generation. `--json` dumps the same
+data.
 
 Phases on mutate: **evaluate / build** → **plan** (nvd diff) → confirm →
 **activate**.

@@ -49,18 +49,43 @@ func nixAttrSetLiteral(names []string) string {
 // reference at all ("registry lookups are not allowed") even though `nix
 // build`/`nix eval` resolve one just fine - so BuildMany must resolve it
 // itself first. Harmless (a no-op) when flake is already a direct URL.
-func resolveFlakeURL(flake string) (string, error) {
+// FlakeMeta is the identity `nix flake metadata --json` reports.
+type FlakeMeta struct {
+	OriginalURL string
+	ResolvedURL string
+	LockedURL   string
+}
+
+// FlakeMetadata resolves flake (registry, path, or URL) to original/locked URLs.
+func FlakeMetadata(flake string) (FlakeMeta, error) {
 	out, err := execCommand("nix", "flake", "metadata", flake, "--json").Output()
 	if err != nil {
-		return "", fmt.Errorf("resolving flake %s: %w", flake, err)
+		return FlakeMeta{}, fmt.Errorf("resolving flake %s: %w", flake, err)
 	}
-	var meta struct {
+	var raw struct {
+		OriginalURL string `json:"originalUrl"`
 		ResolvedURL string `json:"resolvedUrl"`
+		URL         string `json:"url"`
 	}
-	if err := json.Unmarshal(out, &meta); err != nil {
-		return "", fmt.Errorf("parsing flake metadata for %s: %w", flake, err)
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return FlakeMeta{}, fmt.Errorf("parsing flake metadata for %s: %w", flake, err)
 	}
-	return meta.ResolvedURL, nil
+	return FlakeMeta{
+		OriginalURL: raw.OriginalURL,
+		ResolvedURL: raw.ResolvedURL,
+		LockedURL:   raw.URL,
+	}, nil
+}
+
+func resolveFlakeURL(flake string) (string, error) {
+	meta, err := FlakeMetadata(flake)
+	if err != nil {
+		return "", err
+	}
+	if meta.ResolvedURL != "" {
+		return meta.ResolvedURL, nil
+	}
+	return meta.LockedURL, nil
 }
 
 // BuildMany builds every profile in names under
