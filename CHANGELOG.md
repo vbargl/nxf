@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1
 
 - `nxf profile upgrade --all` builds every profile from the same flake in
   one `nix-fast-build` (parallel). Plan is one line per unchanged profile,
