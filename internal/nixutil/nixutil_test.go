@@ -83,6 +83,17 @@ func TestProfileRemoveQuietArgs(t *testing.T) {
 	}
 }
 
+func TestProfileRollbackArgs(t *testing.T) {
+	calls := stubExec(t, "")
+	if err := ProfileRollback(); err != nil {
+		t.Fatalf("ProfileRollback: unexpected error: %v", err)
+	}
+	want := []call{{name: "nix", args: []string{"profile", "rollback"}}}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Errorf("ProfileRollback calls = %#v, want %#v", *calls, want)
+	}
+}
+
 func TestRunNixTreeWithoutNom(t *testing.T) {
 	setUseNom(t, false)
 	calls := stubExec(t, "")

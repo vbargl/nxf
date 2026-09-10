@@ -15,7 +15,7 @@ HOME_DIR=/home/vbargl
 # Real D-Bus user session bus, via lingering (see below) rather than an
 # actual interactive login - lets systemd-unit tests exercise real
 # `systemctl --user` enable/restart/disable, not just nxf's no-session skip
-# path (see systemd.go's hasUserSession check).
+# path (see systemd.go's hasUserSession).
 EXEC_BASE=(incus exec "$VM" --user 1000 --group 100 \
   --env "HOME=$HOME_DIR" --env "PATH=/run/current-system/sw/bin" \
   --env "XDG_RUNTIME_DIR=/run/user/1000" \

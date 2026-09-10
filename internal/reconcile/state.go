@@ -36,6 +36,11 @@ func loadAppliedStates(dir string) (map[string]Manifest, error) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", path, err)
 		}
+		// Skip JSON that isn't a profile snapshot (empty name) so a
+		// stray file in this directory can never be torn down as profile "".
+		if m.Name == "" {
+			continue
+		}
 		states[m.Name] = m
 	}
 	return states, nil

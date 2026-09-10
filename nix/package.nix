@@ -10,12 +10,14 @@ buildGoModule rec {
   pname = "nxf";
   # Bump on every change to this repo (semver: patch for fixes, minor for
   # new commands/flags, major for breaking CLI changes).
-  version = "0.5.3";
+  version = "0.6.0";
 
   src = ../.;
   # go.mod has a real dependency (spf13/cobra), so this must be a real
   # vendor hash rather than null - update it whenever go.mod/go.sum change.
   vendorHash = "sha256-7K17JaXFsjf163g5PXCb5ng2gYdotnZ2IDKk8KFjNj0=";
+
+  env.CGO_ENABLED = "0";
 
   # Embed nvd's, nom's, and nix-fast-build's store paths so `nxf os`/`nxf
   # profile` diffing and build-progress display don't depend on any of them

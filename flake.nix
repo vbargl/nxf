@@ -15,6 +15,11 @@
       forAllSystems = f: nixpkgs.lib.genAttrs systems f;
     in
     {
+      # Consumer flakes call this as:
+      #   mkProfile = inputs.nxf.lib.mkProfile { inherit pkgs lib; };
+      #   mkProfile "dev.default" { packages = [ pkgs.git ]; }
+      lib.mkProfile = import ./nix/mkProfile.nix;
+
       packages = forAllSystems (
         system:
         let
@@ -25,5 +30,12 @@
           default = self.packages.${system}.nxf;
         }
       );
+
+      # buildGoModule runs `go test ./...` during the build; this check
+      # is that package, so `nix flake check` covers the unit suite.
+      # test/vm-test.sh is local-only (needs a dedicated incus VM).
+      checks = forAllSystems (system: {
+        nxf = self.packages.${system}.nxf;
+      });
     };
 }

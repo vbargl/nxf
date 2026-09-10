@@ -99,6 +99,13 @@ func ProfileRemoveQuiet(name string) {
 	_ = cmd.Run()
 }
 
+// ProfileRollback restores the previous nix profile generation. Used when
+// a remove-then-add sequence fails after the remove has already taken
+// effect, so the user is not left with the package gone.
+func ProfileRollback() error {
+	return RunNix("profile", "rollback")
+}
+
 // Build builds ref (progress goes through nom when enabled, see
 // runNixTree) and returns the resulting store path so callers can diff it
 // against a prior state. Uses a throwaway --out-link instead of

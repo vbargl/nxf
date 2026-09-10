@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/vbargl/nxf/internal/paths"
 )
@@ -14,12 +15,29 @@ import (
 // session.
 var execCommand = exec.Command
 
-// systemctl requires a real systemd --user session (D-Bus session bus) to be
-// reachable. Units are only ever run through here because a profile
-// explicitly registered them under systemdUnits (see lib/mkProfile.nix) -
-// that registration is the opt-in, so a missing session is a real error
-// rather than something to silently degrade past.
+// hasUserSession reports whether a systemd --user D-Bus session is reachable.
+// Overridden in tests. A missing session (root, bare container, no lingering)
+// is not a hard error: unit files are still installed, but enable/start/
+// restart/disable are skipped with a warning.
+var hasUserSession = defaultHasUserSession
+
+func defaultHasUserSession() bool {
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" {
+		return true
+	}
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(runtimeDir, "bus"))
+	return err == nil
+}
+
 func systemctl(args ...string) error {
+	if !hasUserSession() {
+		fmt.Fprintf(os.Stderr, "nxf: warning: no systemd user session available; skipping systemctl --user %s\n", strings.Join(args, " "))
+		return nil
+	}
 	cmd := execCommand("systemctl", append([]string{"--user"}, args...)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

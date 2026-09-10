@@ -13,8 +13,8 @@ import (
 	"sort"
 )
 
-// Manifest mirrors the JSON written by lib/mkProfile.nix into
-// <profile>/share/github.com/vbargl/nxf/profiles/<name>/nxf.json.
+// Manifest mirrors the JSON written by nix/mkProfile.nix into
+// <profile>/share/nxf/profiles/<name>/nxf.json.
 type Manifest struct {
 	Name        string            `json:"name"`
 	Units       map[string]string `json:"units"`
@@ -24,12 +24,12 @@ type Manifest struct {
 
 // autoStart reports whether nxf should enable/start (and later restart) unit
 // on its own, as opposed to only installing the unit file and leaving
-// enable/start to the user (see manualUnits in lib/mkProfile.nix).
+// enable/start to the user (see manualUnits in nix/mkProfile.nix).
 func (m Manifest) autoStart(unit string) bool {
 	return !slices.Contains(m.ManualUnits, unit)
 }
 
-// Discover walks profileLink/share/github.com/vbargl/nxf/profiles/*/nxf.json and returns the
+// Discover walks profileLink/share/nxf/profiles/*/nxf.json and returns the
 // manifest of every profile currently merged into the nix profile.
 func Discover(profileLink string) ([]Manifest, error) {
 	base := filepath.Join(profileLink, "share", "nxf", "profiles")
@@ -64,6 +64,9 @@ func Discover(profileLink string) ([]Manifest, error) {
 		var m Manifest
 		if err := json.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("parsing %s: %w", path, err)
+		}
+		if m.Name == "" {
+			continue
 		}
 		manifests = append(manifests, m)
 	}

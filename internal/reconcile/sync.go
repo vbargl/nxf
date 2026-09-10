@@ -27,6 +27,14 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	desktopEntriesDir, err := paths.DesktopEntriesDir()
+	if err != nil {
+		return err
+	}
+	desktopStateFile, err := paths.DesktopEntriesStateFile()
+	if err != nil {
+		return err
+	}
 
 	desired, err := Discover(profileLink)
 	if err != nil {
@@ -39,6 +47,9 @@ func Run() error {
 
 	desiredByName := map[string]Manifest{}
 	for _, m := range desired {
+		if m.Name == "" {
+			continue
+		}
 		desiredByName[m.Name] = m
 	}
 
@@ -46,6 +57,9 @@ func Run() error {
 	// deactivation via a fresh apply is not needed (no deactivate hook in
 	// the manifest today - only activation), then drop the state snapshot.
 	for name, prev := range previous {
+		if name == "" {
+			continue
+		}
 		if _, stillPresent := desiredByName[name]; stillPresent {
 			continue
 		}
@@ -99,24 +113,5 @@ func Run() error {
 		}
 	}
 
-	refreshDesktopDatabase()
-
-	return nil
-}
-
-// refreshDesktopDatabase rebuilds KDE's application launcher cache, best
-// effort. Nix profile generations are swapped by relinking ~/.nix-profile to
-// a new store path rather than mutating the old one in place, which breaks
-// any inotify watch KDE's kded had on ~/.nix-profile/share/applications - so
-// without this, newly added/removed .desktop entries from a profile change
-// never show up in the launcher until something else (e.g. a session
-// restart) happens to trigger a rebuild. Silently does nothing where
-// kbuildsycoca6 isn't installed (not every nxf user runs KDE).
-func refreshDesktopDatabase() {
-	path, err := exec.LookPath("kbuildsycoca6")
-	if err != nil {
-		return
-	}
-	cmd := exec.Command(path, "--noincremental")
-	_ = cmd.Run()
+	return syncDesktopEntries(profileLink, desktopEntriesDir, desktopStateFile)
 }

@@ -48,6 +48,29 @@ func XDGStateHome() (string, error) {
 	return filepath.Join(home, ".local", "state"), nil
 }
 
+func XDGDataHome() (string, error) {
+	if p := os.Getenv("XDG_DATA_HOME"); p != "" {
+		return p, nil
+	}
+	home, err := HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "share"), nil
+}
+
+// DesktopEntriesDir is the standard per-user XDG applications directory -
+// unlike ~/.nix-profile/share/applications, it's never itself replaced by a
+// symlink swap, so every desktop environment's file watcher reacts correctly
+// to entries appearing/disappearing here (see reconcile.syncDesktopEntries).
+func DesktopEntriesDir() (string, error) {
+	data, err := XDGDataHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(data, "applications"), nil
+}
+
 func SystemdUserUnitDir() (string, error) {
 	config, err := XDGConfigHome()
 	if err != nil {
@@ -64,11 +87,24 @@ func AppliedStateDir() (string, error) {
 	return filepath.Join(state, "nxf", "applied"), nil
 }
 
+// DesktopEntriesStateFile records the .desktop names nxf last mirrored into
+// DesktopEntriesDir, keyed to their store-path targets. It lives next to
+// (not inside) AppliedStateDir so loadAppliedStates never treats it as a
+// profile snapshot.
+func DesktopEntriesStateFile() (string, error) {
+	state, err := XDGStateHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(state, "nxf", "desktop-entries.json"), nil
+}
+
 // ProfileRefsFile records, per installed profile name, the flake it was
-// installed from (see internal/profile's rememberRef) - the source `nxf
-// profile upgrade` rebuilds from, since profiles are installed as plain
-// built store paths (see nixutil.ProfileAdd) and so carry no flake-ref
-// metadata of their own for `nix profile upgrade` to work from directly.
+// installed from (see internal/profile's rememberRef) - the convenience ref
+// (e.g. a relative path or registry name) `nxf profile upgrade` rebuilds
+// from, since only the fully-qualified ref actually passed to nix profile
+// add (see nixutil.ProfileAdd) is visible in `nix profile list`, not the
+// shorthand the user originally typed.
 func ProfileRefsFile() (string, error) {
 	state, err := XDGStateHome()
 	if err != nil {

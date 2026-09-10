@@ -35,8 +35,9 @@ func nixAttrSetLiteral(names []string) string {
 	var b strings.Builder
 	b.WriteByte('{')
 	for _, n := range names {
-		escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(n)
-		fmt.Fprintf(&b, "%q = null; ", escaped)
+		// Go's %q is a double-quoted string with the same escapes Nix
+		// string literals use (\ and "), so this is valid Nix as-is.
+		fmt.Fprintf(&b, "%q = null; ", n)
 	}
 	b.WriteByte('}')
 	return b.String()

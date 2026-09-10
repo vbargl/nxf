@@ -67,7 +67,7 @@ func TestBuildManyArgs(t *testing.T) {
 
 	want := map[string]string{
 		"terminal.admintools": "/nix/store/aaa-profile-terminal.admintools",
-		"media":                "/nix/store/bbb-profile-media",
+		"media":               "/nix/store/bbb-profile-media",
 	}
 	for name, path := range want {
 		if got[name] != path {

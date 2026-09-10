@@ -4,6 +4,7 @@ package profile
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -124,10 +125,7 @@ func Add(refs []string) error {
 		}
 	}
 
-	if err := nixutil.ShowDiff(oldPath, currentProfilePath()); err != nil {
-		return err
-	}
-
+	showDiffOrWarn(oldPath, currentProfilePath())
 	return reconcile.Run()
 }
 
@@ -158,14 +156,12 @@ func addBatch(flake string, names []string, refresh bool) error {
 		return err
 	}
 	for _, name := range names {
-		// See addSingle for why this is cleared before re-adding.
-		nixutil.ProfileRemoveQuiet(profileElementName(name))
 		// Install by flake ref, not the store path BuildMany returned - see
 		// nixutil.ProfileAdd. The derivation's already built, so this just
 		// registers it.
 		ref := fmt.Sprintf("%s#profileConfigurations.%s.%q", flake, system, name)
-		if err := nixutil.ProfileAdd(ref); err != nil {
-			return fmt.Errorf("nix profile add %s: %w", ref, err)
+		if err := replaceProfile(profileElementName(name), ref); err != nil {
+			return err
 		}
 		rememberRef(name, flake)
 	}
@@ -185,21 +181,11 @@ func addSingle(ref string, refresh bool) error {
 		return err
 	}
 
-	// `nix profile add` never replaces an existing element - re-adding a
-	// name that's already installed (e.g. re-running add after a rebuild)
-	// just appends a second element disambiguated as "profile-<name>-1",
-	// and a later `nxf profile remove <name>` then only clears one of the
-	// two duplicates. Clear out any prior element for this name first so
-	// add is idempotent: same effect whether this is the first install or
-	// a re-install. Silent/best-effort since "nothing to remove yet" is
-	// the common case (first-ever add) and isn't an error.
-	nixutil.ProfileRemoveQuiet(profileElementName(name))
-
 	// Install by flake ref, not the store path Build returned - see
 	// nixutil.ProfileAdd. The derivation's already built, so this just
 	// registers it.
-	if err := nixutil.ProfileAdd(expanded); err != nil {
-		return fmt.Errorf("nix profile add %s: %w", expanded, err)
+	if err := replaceProfile(profileElementName(name), expanded); err != nil {
+		return err
 	}
 
 	flake, _, _ := splitConvenienceRef(ref)
@@ -212,9 +198,37 @@ func addSingle(ref string, refresh bool) error {
 // profileElementName maps nxf's short profile name (what `nxf profile list`
 // prints, and what a user types) to the identifier `nix profile remove`
 // actually matches against - the profile derivation's own name, which
-// lib/mkProfile.nix always sets to "profile-<name>".
+// nix/mkProfile.nix always sets to "profile-<name>".
 func profileElementName(name string) string {
 	return "profile-" + name
+}
+
+// replaceProfile removes any existing element for name then adds ref.
+// `nix profile add` never replaces an existing element - re-adding a name
+// that's already installed just appends a second element disambiguated as
+// "profile-<name>-1". Clearing first keeps add idempotent. If add fails
+// after a remove that actually changed the profile, roll back so the
+// previous generation is restored rather than leaving the package gone.
+func replaceProfile(elementName, ref string) error {
+	before := currentProfilePath()
+	nixutil.ProfileRemoveQuiet(elementName)
+	if err := nixutil.ProfileAdd(ref); err != nil {
+		if currentProfilePath() != before {
+			if rbErr := nixutil.ProfileRollback(); rbErr != nil {
+				fmt.Fprintf(os.Stderr, "nxf: warning: rolling back after failed add: %v\n", rbErr)
+			}
+		}
+		return fmt.Errorf("nix profile add %s: %w", ref, err)
+	}
+	return nil
+}
+
+// showDiffOrWarn prints an nvd diff but does not fail the calling command:
+// a diff tool error must not skip reconcile after a successful add/remove.
+func showDiffOrWarn(oldPath, newPath string) {
+	if err := nixutil.ShowDiff(oldPath, newPath); err != nil {
+		fmt.Fprintf(os.Stderr, "nxf: warning: %v\n", err)
+	}
 }
 
 // Remove removes every name in names, then shows a single combined diff and
@@ -229,10 +243,7 @@ func Remove(names []string) error {
 		forgetRef(name)
 	}
 
-	if err := nixutil.ShowDiff(oldPath, currentProfilePath()); err != nil {
-		return err
-	}
-
+	showDiffOrWarn(oldPath, currentProfilePath())
 	return reconcile.Run()
 }
 
@@ -293,10 +304,7 @@ func Upgrade(names []string, all, refresh bool) error {
 		}
 	}
 
-	if err := nixutil.ShowDiff(oldPath, currentProfilePath()); err != nil {
-		return err
-	}
-
+	showDiffOrWarn(oldPath, currentProfilePath())
 	return reconcile.Run()
 }
 

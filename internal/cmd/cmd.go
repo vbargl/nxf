@@ -14,7 +14,7 @@ import (
 func New() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "nxf",
-		Short:         "Manages nix profiles and NixOS system generations for this repo",
+		Short:         "Manages nix profiles and NixOS system generations",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

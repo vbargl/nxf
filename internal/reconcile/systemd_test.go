@@ -17,11 +17,16 @@ func stubExec(t *testing.T) *[]call {
 	t.Helper()
 	calls := &[]call{}
 	orig := execCommand
+	origSession := hasUserSession
+	hasUserSession = func() bool { return true }
 	execCommand = func(name string, args ...string) *exec.Cmd {
 		*calls = append(*calls, call{name: name, args: args})
 		return exec.Command("true")
 	}
-	t.Cleanup(func() { execCommand = orig })
+	t.Cleanup(func() {
+		execCommand = orig
+		hasUserSession = origSession
+	})
 	return calls
 }
 
@@ -120,3 +125,16 @@ func TestRemoveUnitDisablesAndReloads(t *testing.T) {
 	}
 }
 
+func TestSystemctlSkipsWhenNoUserSession(t *testing.T) {
+	calls := stubExec(t)
+	orig := hasUserSession
+	hasUserSession = func() bool { return false }
+	t.Cleanup(func() { hasUserSession = orig })
+
+	if err := systemctl("enable", "--now", "nxf-with-unit-greeter.service"); err != nil {
+		t.Fatalf("systemctl with no session: unexpected error: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("systemctl with no session calls = %#v, want none", *calls)
+	}
+}
