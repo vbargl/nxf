@@ -1,0 +1,171 @@
+//! Tests for src/install.rs: installing from an installer, with stand-ins for
+//! the disks, the mount point and nixos-install. Nothing touches the machine.
+
+mod common;
+
+use std::path::PathBuf;
+
+use common::{append, assert_contains, assert_lacks, fixture, git, write_script, Fixture};
+use serde_json::Value;
+
+/// A fixture in a stand-in installer: the target is a directory, the disk
+/// script creates it, and nixos-install records its call and links a system.
+fn installer() -> (Fixture, PathBuf) {
+    let mut fx = fixture();
+    let root = fx.dir.join("mnt");
+    let disko = fx.dir.join("disko");
+    write_script(
+        &disko,
+        &format!(
+            "#!/bin/sh\necho 'wiping /dev/vda'\necho disko >> '{0}/steps'\nmkdir -p '{1}'\n",
+            fx.dir.display(),
+            root.display()
+        ),
+    );
+    write_script(
+        &fx.dir.join("bin/nixos-install"),
+        &format!(
+            r#"#!/usr/bin/env bash
+echo "nixos-install $*" >> '{dir}/steps'
+[[ -z ${{NXF_TEST_INSTALL_FAILS:-}} ]] || {{ echo 'error: builder failed' >&2; exit 1; }}
+mkdir -p '{root}/nix/store/abc-nixos-system' '{root}/nix/var/nix/profiles'
+ln -sfn '{root}/nix/store/abc-nixos-system' '{root}/nix/var/nix/profiles/system'
+"#,
+            dir = fx.dir.display(),
+            root = root.display()
+        ),
+    );
+    fx.set("NXF_INSTALL_ROOT", &root);
+    fx.set("NXF_DISKO", &disko);
+    fx.set("NXF_INSTALLER", "yes");
+    (fx, root)
+}
+
+fn steps(fx: &Fixture) -> Vec<String> {
+    std::fs::read_to_string(fx.dir.join("steps"))
+        .map(|steps| steps.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Install partitions, installs from the copied flake, makes the host key and
+/// records the installation; the flake becomes the machine's /etc/nixos.
+#[test]
+fn installs() {
+    let (fx, root) = installer();
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
+    result.ok();
+    let home = root.join("etc/nixos");
+    assert_eq!(
+        steps(&fx),
+        [
+            "disko".to_string(),
+            format!(
+                "nixos-install --root {} --flake {}#{} --no-root-passwd --no-channel-copy",
+                root.display(),
+                home.display(),
+                common::hostname()
+            )
+        ]
+    );
+    // The machine's flake is the same repository, with its history and no remote.
+    assert_eq!(git(&home, &["rev-parse", "HEAD"]), fx.head());
+    assert_eq!(git(&home, &["status", "--porcelain"]), "");
+    assert_eq!(git(&home, &["remote"]), "");
+
+    let marker: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("var/lib/nxf/installed.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(marker["tree"], fx.tree());
+    assert_eq!(marker["configuration"], common::hostname());
+    // The record names the system as the new machine will see it.
+    assert_eq!(
+        std::fs::read_link(root.join("var/lib/nxf/systems").join(fx.tree())).unwrap(),
+        PathBuf::from("/nix/store/abc-nixos-system")
+    );
+
+    let public = std::fs::read_to_string(root.join("etc/ssh/ssh_host_ed25519_key.pub")).unwrap();
+    let key: Vec<&str> = public.split_whitespace().take(2).collect();
+    assert_eq!(key[0], "ssh-ed25519");
+    assert!(root.join("etc/ssh/ssh_host_ed25519_key").exists());
+    let out = &result.stdout;
+    assert_contains(out, "[1/3] Partitioning the disks\n");
+    assert_contains(out, "    wiping /dev/vda\n");
+    assert_contains(out, "[2/3] Installing the system\n  ✓ Installed\n    Flake     /etc/nixos\n    System    /nix/store/abc-nixos-system\n");
+    assert!(
+        out.ends_with(&format!(
+            "\n✓ NixOS installed\n  Host key  {}\n  Restart the machine to start it.\n",
+            key.join(" ")
+        )),
+        "{out}"
+    );
+}
+
+/// An already mounted target is not partitioned, and an existing host key is kept.
+#[test]
+fn mounted() {
+    let (fx, root) = installer();
+    std::fs::create_dir_all(root.join("etc/ssh")).unwrap();
+    std::fs::write(
+        root.join("etc/ssh/ssh_host_ed25519_key.pub"),
+        "ssh-ed25519 AAAAexisting root@old\n",
+    )
+    .unwrap();
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--mounted"]);
+    result.ok();
+    assert_eq!(steps(&fx).len(), 1);
+    assert_lacks(&result.stdout, "Partitioning");
+    assert_contains(&result.stdout, "[1/2] Installing the system");
+    assert_contains(&result.stdout, "  Host key  ssh-ed25519 AAAAexisting\n");
+}
+
+/// Install refuses before it touches a disk: outside an installer, with
+/// uncommitted changes, without a flake, and into a target that holds something.
+#[test]
+fn refuses() {
+    let (mut fx, root) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+
+    fx.set("NXF_INSTALLER", "no");
+    let disk = fx.run(&["install", &dir]);
+    assert_ne!(disk.code, 0);
+    assert_contains(
+        &disk.stderr,
+        "✗ This system runs from a disk, and installing erases disks",
+    );
+    fx.set("NXF_INSTALLER", "yes");
+
+    let missing = fx.run(&["install", fx.dir.to_str().unwrap()]);
+    assert_ne!(missing.code, 0);
+    assert_contains(&missing.stderr, "has no flake.nix");
+
+    append(&fx.checkout.join("flake.nix"), "# edited\n");
+    let dirty = fx.run(&["install", &dir]);
+    assert_ne!(dirty.code, 0);
+    assert_contains(&dirty.stderr, "has uncommitted changes");
+    git(&fx.checkout, &["checkout", "--quiet", "flake.nix"]);
+    assert!(steps(&fx).is_empty());
+
+    std::fs::create_dir_all(root.join("etc/nixos")).unwrap();
+    std::fs::write(root.join("etc/nixos/configuration.nix"), "{ }").unwrap();
+    let occupied = fx.run(&["install", &dir, "--mounted"]);
+    assert_ne!(occupied.code, 0);
+    assert_contains(&occupied.stderr, "already holds something");
+    assert!(steps(&fx).is_empty());
+}
+
+/// A failed nixos-install fails the command with what it said, and nothing
+/// is recorded as installed.
+#[test]
+fn failed_install() {
+    let (fx, root) = installer();
+    let fx = fx.with("NXF_TEST_INSTALL_FAILS", "1");
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
+    assert_ne!(result.code, 0);
+    assert_contains(
+        &result.stderr,
+        "✗ nixos-install failed\n  Command exited with status 1.\n  error: builder failed",
+    );
+    assert!(!root.join("var/lib/nxf/installed.json").exists());
+    assert_lacks(&result.stdout, "NixOS installed");
+}

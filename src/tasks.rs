@@ -128,7 +128,7 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
     if !unknown.is_empty() {
         let width = output::LABEL;
         return Err(format!(
-            "Unknown task or input: {}\n{:<width$}{}\n{:<width$}{}\n{:<width$}status, doctor, version, init, hold, release, auto-update",
+            "Unknown task or input: {}\n{:<width$}{}\n{:<width$}{}\n{:<width$}status, doctor, version, init, install, hold, release, auto-update",
             unknown.join(", "),
             "Tasks",
             names.join(", "),

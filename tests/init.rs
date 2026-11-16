@@ -315,3 +315,59 @@ fn identity_for_a_new_machine() {
         format!("nxf <nxf@{}>", hostname())
     );
 }
+
+/// Files of the machine are laid over the template and committed with it;
+/// what the template ignores stays out of the repository.
+#[test]
+fn machine_files() {
+    let fx = fixture();
+    let own = fx.dir.join("own/node-7");
+    std::fs::create_dir_all(own.join("secrets")).unwrap();
+    std::fs::write(own.join("identity.toml"), "name = \"node-7\"\n").unwrap();
+    std::fs::write(
+        own.join("configuration.nix"),
+        "{ networking.hostName = \"node-7\"; }\n",
+    )
+    .unwrap();
+    std::fs::write(own.join("secrets/token"), "s3cret\n").unwrap();
+    let target = fx.dir.join("with-files");
+    let result = fx.run(&[
+        "init",
+        target.to_str().unwrap(),
+        "--template",
+        &template(&fx, "default", "machine"),
+        "--files",
+        own.to_str().unwrap(),
+    ]);
+    result.ok();
+    assert_contains(&result.stdout, &format!("  Files     {}\n", own.display()));
+    let tracked = files(&target);
+    assert!(
+        tracked.contains(&"identity.toml".to_string()),
+        "{tracked:?}"
+    );
+    assert!(
+        !tracked.iter().any(|file| file.starts_with("secrets")),
+        "{tracked:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("secrets/token")).unwrap(),
+        "s3cret\n"
+    );
+    assert_contains(
+        &std::fs::read_to_string(target.join("configuration.nix")).unwrap(),
+        "node-7",
+    );
+    assert_eq!(git(&target, &["status", "--porcelain"]), "");
+
+    let missing = fx.run(&[
+        "init",
+        fx.dir.join("other").to_str().unwrap(),
+        "--template",
+        &template(&fx, "default", "machine"),
+        "--files",
+        "/nonexistent/files",
+    ]);
+    assert_ne!(missing.code, 0);
+    assert_contains(&missing.stderr, "is not a directory");
+}

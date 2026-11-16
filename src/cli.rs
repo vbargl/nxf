@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::{auto_update, doctor, fleet, hold, hosts, init, nixos, output, status, tasks};
+use crate::{auto_update, doctor, fleet, hold, hosts, init, install, nixos, output, status, tasks};
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
 ///
@@ -97,6 +97,20 @@ enum Cmd {
         /// Write hardware.nix with nixos-generate-config, on the machine itself.
         #[arg(long)]
         hardware: bool,
+        /// Lay the content of this directory over the template: the machine's own values.
+        #[arg(long, value_name = "DIR")]
+        files: Option<PathBuf>,
+    },
+    /// Install the machine a flake describes, from a NixOS installer on that machine.
+    Install {
+        /// The machine flake, as `nxf init` founds it.
+        dir: PathBuf,
+        /// Do not partition: the target is already mounted at /mnt.
+        #[arg(long)]
+        mounted: bool,
+        /// Restart into the new system when it is installed.
+        #[arg(long)]
+        reboot: bool,
     },
     /// Hold automatic updates back, with a reason, until released or until a time.
     Hold {
@@ -130,6 +144,7 @@ const COMMANDS: &[&str] = &[
     "doctor",
     "version",
     "init",
+    "install",
     "hold",
     "release",
     "auto-update",
@@ -253,10 +268,22 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             dir,
             template,
             hardware,
+            files,
         } => init::run(&init::Options {
             dir,
             template,
             hardware,
+            files,
+        })
+        .map(|()| true),
+        Cmd::Install {
+            dir,
+            mounted,
+            reboot,
+        } => install::run_install(&install::Options {
+            dir,
+            mounted,
+            reboot,
         })
         .map(|()| true),
         Cmd::Hold {

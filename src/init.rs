@@ -16,6 +16,8 @@ pub struct Options {
     pub dir: Option<PathBuf>,
     pub template: String,
     pub hardware: bool,
+    /// A directory whose content is laid over the unpacked template.
+    pub files: Option<PathBuf>,
 }
 
 /// A template in a local directory is named relative to where nxf was called.
@@ -37,7 +39,8 @@ fn absolute(template: &str) -> String {
 
 fn hardware(dir: &Path) -> Result<(), String> {
     let output = Command::new("nixos-generate-config")
-        .arg("--show-hardware-config")
+        // The flake describes the file systems; the disks may not be partitioned yet.
+        .args(["--show-hardware-config", "--no-filesystems"])
         .output()
         .map_err(|err| format!("cannot run nixos-generate-config: {err}"))?;
     if !output.status.success() {
@@ -103,6 +106,22 @@ pub fn run(options: &Options) -> Result<(), String> {
     if options.hardware {
         hardware(&dir)?;
         output::fact("Hardware", "hardware.nix from nixos-generate-config");
+    }
+    if let Some(files) = &options.files {
+        if !files.is_dir() {
+            return Err(format!("{} is not a directory", files.display()));
+        }
+        // The machine's own values: laid over the template, never read by nxf.
+        let copied = Command::new("cp")
+            .args(["--recursive", "--no-target-directory"])
+            .arg(files)
+            .arg(&dir)
+            .status()
+            .map_err(|err| format!("cannot run cp: {err}"))?;
+        if !copied.success() {
+            return Err(format!("cannot copy {} into the flake", files.display()));
+        }
+        output::fact("Files", &files.to_string_lossy());
     }
     let module_file = dir.join(MODULE_FILE);
     if module_file.exists() {

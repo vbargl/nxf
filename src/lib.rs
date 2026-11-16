@@ -10,6 +10,7 @@ pub mod health;
 pub mod hold;
 pub mod hosts;
 pub mod init;
+pub mod install;
 pub mod nixos;
 pub mod output;
 pub mod progress;
