@@ -126,7 +126,7 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
         .collect();
     if !unknown.is_empty() {
         return Err(format!(
-            "Unknown task or input: {}. Tasks are {}; inputs are {}; status, doctor, version and auto-update are separate commands.",
+            "Unknown task or input: {}. Tasks are {}; inputs are {}; status, doctor, version, hold, release and auto-update are separate commands.",
             unknown.join(", "),
             names.join(", "),
             inputs.join(", ")

@@ -19,6 +19,10 @@ change them here first.
   commits the lockfile only after it built, and restores it otherwise.
 - A failed update never changes the running system.
 - The machine is never rebooted by nxf.
+- Health checks come from the configuration. nxf ships none and knows nothing
+  about what they check.
+- `nxf status` is the only way results reach people: no notification
+  services, queues or channels.
 
 ## Layout
 
@@ -27,6 +31,8 @@ change them here first.
 | `src/cli.rs` | The commands and their routing; no logic |
 | `src/tasks.rs` | The task table, and planning and running tasks |
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
+| `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
+| `src/hold.rs` | The hold on automatic updates |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -50,7 +56,8 @@ change them here first.
 
 ## Commands and tasks
 
-- `status`, `doctor`, `version` and `auto-update` are commands. A command is
+- `status`, `doctor`, `version`, `hold`, `release` and `auto-update` are
+  commands. A command is
   recognised only as the first word and rejects extra arguments, so
   `nxf status update` fails instead of ignoring `update`.
 - Everything else is a list of tasks. Unknown words are an error and nothing
@@ -75,8 +82,9 @@ change them here first.
   comment that says what must hold.
 - Add or update tests with every change of behaviour.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
-  the mock nh; `NXF_SYSTEM`, `NXF_UPDATER_STATE` and `NXF_SYSTEMCTL` stand in
-  for the running system, the updater and systemd.
+  the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
+  `NXF_SYSTEMCTL` and `NXF_HEALTH_DIR` stand in for the running and the booted
+  system, the updater, systemd and the health checks.
 - Tests of live progress hold the mock nh back and assert that the output is
   there before it is released. Tests of in-place updates run in a
   pseudo-terminal and assert the final screen.

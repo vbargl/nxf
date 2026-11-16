@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::{auto_update, doctor, nixos, output, status, tasks};
+use crate::{auto_update, doctor, hold, nixos, output, status, tasks};
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
 ///
@@ -72,6 +72,20 @@ enum Cmd {
         #[arg(long)]
         system: bool,
     },
+    /// Hold automatic updates back, with a reason, until released or until a time.
+    Hold {
+        /// Why updates are held; status shows it.
+        #[arg(long)]
+        reason: String,
+        /// When the hold ends, such as 2030-01-31 or "2030-01-31 18:00".
+        #[arg(long, conflicts_with = "duration")]
+        until: Option<String>,
+        /// How long the hold lasts, such as 12h, 3d or 2w.
+        #[arg(long = "for", value_name = "DURATION")]
+        duration: Option<String>,
+    },
+    /// Release the hold, so that automatic updates continue.
+    Release,
     /// Update unattended: update inputs, switch if needed, save the results.
     AutoUpdate {
         /// Where the results are saved.
@@ -80,7 +94,15 @@ enum Cmd {
     },
 }
 
-const COMMANDS: &[&str] = &["status", "doctor", "version", "auto-update", "help"];
+const COMMANDS: &[&str] = &[
+    "status",
+    "doctor",
+    "version",
+    "hold",
+    "release",
+    "auto-update",
+    "help",
+];
 
 fn task_list() -> String {
     let mut list = String::from("Tasks:\n");
@@ -146,6 +168,31 @@ fn run_command(command: Cmd) -> Result<bool, String> {
         }
         Cmd::Version { system: false } => {
             output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
+            Ok(true)
+        }
+        Cmd::Hold {
+            reason,
+            until,
+            duration,
+        } => {
+            let until = match (until, duration) {
+                (Some(until), _) => Some(hold::time(&until)?),
+                (None, Some(duration)) => Some(hold::now() + hold::duration(&duration)?),
+                (None, None) => None,
+            };
+            if until.is_some_and(|until| until <= hold::now()) {
+                return Err("The hold would end in the past.".to_string());
+            }
+            let hold = hold::set(&reason, until)?;
+            output::line(&format!("Automatic updates are held: {}", hold.describe()));
+            Ok(true)
+        }
+        Cmd::Release => {
+            output::line(if hold::clear()? {
+                "Automatic updates continue."
+            } else {
+                "No hold is set."
+            });
             Ok(true)
         }
         Cmd::AutoUpdate { state } => auto_update::run(&state.unwrap_or_else(nixos::updater_dir)),

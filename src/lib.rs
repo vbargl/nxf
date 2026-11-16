@@ -5,6 +5,8 @@ pub mod cli;
 pub mod doctor;
 pub mod flake;
 pub mod git;
+pub mod health;
+pub mod hold;
 pub mod nixos;
 pub mod output;
 pub mod progress;

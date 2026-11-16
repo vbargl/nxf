@@ -7,32 +7,91 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{output, status};
+use crate::{hold, nixos, output, status};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
 }
 
+fn outcome(task: &str, outcome: &str, detail: String) -> Outcome {
+    Outcome {
+        task: task.to_string(),
+        inputs: Vec::new(),
+        outcome: outcome.to_string(),
+        detail,
+    }
+}
+
+/// Checks the health of the system just switched to. An unhealthy system is
+/// replaced by the previous one, and its source is not tried again.
+fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
+    let failed = match health::check() {
+        Health::Unchecked => return None,
+        Health::Healthy => return Some(outcome("health", "done", String::new())),
+        Health::Unhealthy(failed) => failed,
+    };
+    if let Some(tree) = tree {
+        if let Err(err) = nixos::mark_bad(tree, &failed) {
+            return Some(outcome("health", "failed", format!("{failed} | {err}")));
+        }
+    }
+    output::capture();
+    let returned = nixos::activate("switch", previous);
+    output::release();
+    let effect = match returned {
+        Ok(_) => format!("Returned to {}.", previous.display()),
+        Err(err) => format!(
+            "Could not return to {}: {}",
+            previous.display(),
+            err.replace('\n', " | ")
+        ),
+    };
+    Some(outcome("health", "failed", format!("{failed} | {effect}")))
+}
+
 fn decide() -> Result<Vec<Outcome>, String> {
+    hold::forget_ended();
+    if let Some(hold) = hold::active() {
+        return Ok(vec![outcome(
+            "update",
+            "skipped",
+            format!("held: {}", hold.describe()),
+        )]);
+    }
     // A lockfile left by an interrupted run is not work in progress; update restores it.
     let foreign = status::compare()?
         .changes
         .iter()
         .any(|file| file != "flake.lock");
     if foreign {
-        return Ok(vec![Outcome {
-            task: "update".to_string(),
-            inputs: Vec::new(),
-            outcome: "skipped".to_string(),
-            detail: "the checkout has uncommitted changes".to_string(),
-        }]);
+        return Ok(vec![outcome(
+            "update",
+            "skipped",
+            "the checkout has uncommitted changes".to_string(),
+        )]);
     }
     // Every input that builds is committed; the others stay as they were.
     let mut results = tasks::run(&words(&["update"]), true)?;
     // Whatever is committed now has been built, by this run or an earlier one.
-    if !status::compare()?.matches {
-        results.extend(tasks::run(&words(&["switch"]), true)?);
+    let checkout = status::compare()?;
+    if checkout.matches {
+        return Ok(results);
+    }
+    if let Some(reason) = checkout.tree.as_deref().and_then(nixos::bad) {
+        results.push(outcome(
+            "switch",
+            "skipped",
+            format!("this revision failed its health check ({reason}); waiting for a newer one"),
+        ));
+        return Ok(results);
+    }
+    let switched = tasks::run(&words(&["switch"]), true)?;
+    let activated = !switched.iter().any(Outcome::failed);
+    results.extend(switched);
+    if activated {
+        results.extend(verify(checkout.tree.as_deref(), &checkout.running));
     }
     Ok(results)
 }

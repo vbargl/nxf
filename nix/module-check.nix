@@ -30,6 +30,8 @@ let
       enable = true;
       gitCredentialsFile = "/run/secrets/git-credentials";
       nixConfigFile = "/run/secrets/nix.conf";
+      healthChecks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
+      healthTimeout = 600;
     };
   };
 
@@ -57,6 +59,7 @@ pkgs.runCommand "nxf-module-check"
     rootTimer = unit root "nxf-auto-update.timer";
     userService = unit user "nxf-auto-update.service";
     userTimer = unit user "nxf-auto-update.timer";
+    healthCheck = root.environment.etc."nxf/health.d/10-units".source;
     passAsFile = [
       "rootService"
       "rootTimer"
@@ -77,6 +80,12 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" '"GIT_CONFIG_KEY_0=safe.directory"'
     has "$rootServicePath" '"GIT_CONFIG_VALUE_1=store --file=/run/secrets/git-credentials"'
     has "$rootServicePath" '"NIX_CONFIG=!include /run/secrets/nix.conf"'
+    has "$rootServicePath" '"NXF_HEALTH_TIMEOUT=600"'
+    has "$rootServicePath" '"NXF_HEALTH_INTERVAL=10"'
+    has "$rootServicePath" 'X-StopOnRemoval=false'
+    has "$rootServicePath" 'X-RestartIfChanged=false'
+    test -x "$healthCheck"
+    has "$healthCheck" 'systemctl --failed --no-legend'
     lacks "$rootServicePath" '/run/wrappers'
     has "$rootTimerPath" 'OnCalendar=*-*-* 00/6:00:00'
     has "$rootTimerPath" 'RandomizedDelaySec=1h'

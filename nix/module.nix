@@ -140,6 +140,36 @@ in
         '';
       };
 
+      healthChecks = lib.mkOption {
+        type = lib.types.attrsOf lib.types.lines;
+        default = { };
+        example = lib.literalExpression ''
+          {
+            "10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
+            "20-k3s" = "systemctl is-active --quiet k3s";
+          }
+        '';
+        description = ''
+          Shell scripts that must all succeed after an automatic switch. They
+          are those of the new configuration, run in name order, and are
+          repeated until all pass or `healthTimeout` runs out. Then the
+          previous system is activated again and the revision is not tried
+          again until a newer one comes.
+        '';
+      };
+
+      healthTimeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 300;
+        description = "Seconds the health checks have to pass.";
+      };
+
+      healthInterval = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 10;
+        description = "Seconds between two rounds of health checks.";
+      };
+
       timeout = lib.mkOption {
         type = lib.types.str;
         default = "3h";
@@ -155,8 +185,27 @@ in
     })
 
     (lib.mkIf auto.enable {
+      environment.etc = lib.mapAttrs' (
+        name: script:
+        lib.nameValuePair "nxf/health.d/${name}" {
+          source = pkgs.writeShellScript "nxf-health-${name}" ''
+            # The update started before the switch; use the new system's tools.
+            export PATH=${
+              lib.makeBinPath [
+                config.systemd.package
+                pkgs.coreutils
+              ]
+            }:/run/current-system/sw/bin:$PATH
+            ${script}
+          '';
+        }
+      ) auto.healthChecks;
+
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";
+        # The switch this service performs must not stop or restart it.
+        restartIfChanged = false;
+        unitConfig.X-StopOnRemoval = false;
         wants = [ "network-online.target" ];
         after = [ "network-online.target" ];
         path = [
@@ -172,6 +221,8 @@ in
           NXF_FLAKE = cfg.flake;
           # Build records every user's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
+          NXF_HEALTH_TIMEOUT = toString auto.healthTimeout;
+          NXF_HEALTH_INTERVAL = toString auto.healthInterval;
           # Unattended: never ask, never hang.
           GIT_TERMINAL_PROMPT = "0";
           GIT_SSH_COMMAND = "${pkgs.openssh}/bin/ssh -o BatchMode=yes -o ConnectTimeout=30";

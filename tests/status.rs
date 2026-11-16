@@ -417,3 +417,79 @@ fn json() {
     );
     assert_contains(&fx.run(&["status"]).stdout, "Automatic update summary");
 }
+
+/// A system with a kernel directory, standing in for a NixOS system.
+fn system_with(
+    dir: &std::path::Path,
+    name: &str,
+    kernel: &str,
+    initrd: &str,
+) -> std::path::PathBuf {
+    let system = dir.join(name);
+    std::fs::create_dir_all(&system).unwrap();
+    std::fs::write(system.join("kernel"), kernel).unwrap();
+    std::fs::write(system.join("initrd"), initrd).unwrap();
+    system
+}
+
+/// Status says when the running system needs a restart to use its kernel or
+/// initrd, and stays quiet when only other things changed.
+#[test]
+fn restart_needed() {
+    let mut fx = fixture();
+    let booted = system_with(&fx.dir, "booted", "6.1", "initrd-1");
+    let same = system_with(&fx.dir, "same-kernel", "6.1", "initrd-1");
+    // Two systems share a kernel when they link to the same store path.
+    for part in ["kernel", "initrd"] {
+        std::fs::remove_file(same.join(part)).unwrap();
+        std::os::unix::fs::symlink(booted.join(part), same.join(part)).unwrap();
+    }
+    fx.set("NXF_BOOTED", &booted);
+    fx.set("NXF_SYSTEM", &same);
+    let parse = |text: &str| -> Value { serde_json::from_str(text).unwrap() };
+    assert_lacks(&fx.run(&["status"]).stdout, "Restart needed");
+    assert_eq!(
+        parse(&fx.run(&["status", "--json"]).stdout)["rebootRequired"],
+        false
+    );
+
+    for (name, kernel, initrd) in [
+        ("new-kernel", "6.2", "initrd-1"),
+        ("new-initrd", "6.1", "initrd-2"),
+    ] {
+        fx.set("NXF_SYSTEM", system_with(&fx.dir, name, kernel, initrd));
+        let status = fx.run(&["status"]);
+        status.ok();
+        assert_contains(
+            &status.stdout,
+            "  ! Restart needed: the kernel or initrd changed since the machine booted.",
+        );
+        assert_eq!(
+            parse(&fx.run(&["status", "--json"]).stdout)["rebootRequired"],
+            true
+        );
+    }
+
+    // Without a booted system to compare with, nothing is claimed.
+    fx.set("NXF_BOOTED", fx.dir.join("missing"));
+    assert_lacks(&fx.run(&["status"]).stdout, "Restart needed");
+}
+
+/// The JSON status names the running revision and the last update for monitoring.
+#[test]
+fn json_monitoring() {
+    let system = &fake_systems().one;
+    let fx = fixture().with("NXF_SYSTEM", system);
+    let parse = |text: &str| -> Value { serde_json::from_str(text).unwrap() };
+    let unknown = parse(&fx.run(&["status", "--json"]).stdout);
+    assert_eq!(unknown["revision"], Value::Null);
+    assert_eq!(unknown["lastUpdate"], Value::Null);
+    assert_eq!(unknown["hold"], Value::Null);
+    assert_eq!(unknown["bad"], Value::Null);
+    fx.record_build(system);
+    fx.save_update(failed_update(7, "a: no route"));
+    let known = parse(&fx.run(&["status", "--json"]).stdout);
+    assert_eq!(known["revision"], fx.head());
+    assert_eq!(known["lastUpdate"]["time"], 7);
+    assert_eq!(known["lastUpdate"]["results"][0]["outcome"], "failed");
+}

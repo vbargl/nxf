@@ -28,6 +28,26 @@ pub fn running() -> PathBuf {
     expand(&var("NXF_SYSTEM").unwrap_or_else(|| PathBuf::from("/run/current-system")))
 }
 
+/// The system the machine booted. NXF_BOOTED stands in for it in tests.
+pub fn booted() -> PathBuf {
+    var("NXF_BOOTED").unwrap_or_else(|| PathBuf::from("/run/booted-system"))
+}
+
+/// Whether the running system has another kernel, initrd or kernel modules
+/// than the booted one, which only a reboot brings into use.
+pub fn reboot_required() -> bool {
+    let (booted, running) = (booted(), running());
+    ["kernel", "initrd", "kernel-modules"].iter().any(|part| {
+        match (
+            std::fs::canonicalize(booted.join(part)),
+            std::fs::canonicalize(running.join(part)),
+        ) {
+            (Ok(before), Ok(now)) => before != now,
+            _ => false,
+        }
+    })
+}
+
 /// The host name nh selects the configuration by.
 pub fn hostname() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
@@ -236,6 +256,26 @@ pub fn update_result() -> Result<Option<Value>, String> {
         .collect::<String>();
     result["id"] = Value::String(id);
     Ok(Some(result))
+}
+
+fn bad_mark(tree: &str) -> PathBuf {
+    updater_dir().join("bad").join(tree)
+}
+
+/// Marks the source with the given key as unhealthy, with the reason.
+pub fn mark_bad(tree: &str, reason: &str) -> Result<(), String> {
+    let mark = bad_mark(tree);
+    let dir = updater_dir().join("bad");
+    std::fs::create_dir_all(&dir)
+        .and_then(|()| std::fs::write(&mark, format!("{reason}\n")))
+        .map_err(|err| format!("cannot write {}: {err}", mark.display()))
+}
+
+/// Why the source with the given key is marked as unhealthy, if it is.
+pub fn bad(tree: &str) -> Option<String> {
+    std::fs::read_to_string(bad_mark(tree))
+        .ok()
+        .map(|reason| reason.trim().to_string())
 }
 
 /// Remembers that the source with the given key built a system.

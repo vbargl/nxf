@@ -2,6 +2,7 @@
   lib,
   rustPlatform,
   makeWrapper,
+  coreutils,
   dix,
   git,
   nh,
@@ -35,6 +36,7 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     wrapProgram $out/bin/nxf --suffix PATH : ${
       lib.makeBinPath [
+        coreutils
         dix
         git
         nh

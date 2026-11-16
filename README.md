@@ -18,6 +18,8 @@ changes to the flake itself.
 | `nxf doctor` | Check that nxf can work on this machine |
 | `nxf version` | Print the version of nxf |
 | `nxf version --system` | Print the running system's flake commit |
+| `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
+| `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
 | `nxf <task>...` | Run tasks, see below |
 | `nxf --json <task>...` | Run tasks quietly and print each one's result as JSON, for scripts |
@@ -104,8 +106,12 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   the exit code is non-zero.
 - `nxf status --json` prints `checkout`, `changes` (tracked files with
   uncommitted changes), `inputs`, `running`, `built` (the system built from
-  the committed checkout, or null) and `matches`. It does not mark the update
-  summary as read.
+  the committed checkout, or null) and `matches`. For monitoring it also
+  prints `revision` (the flake commit of the running system, or null),
+  `rebootRequired`, `hold` (`reason`, `since`, `until`, or null), `bad` (why
+  the checkout failed its health check, or null) and `lastUpdate` (the time
+  and task results of the last automatic update, or null). It does not mark
+  the update summary as read.
 
 ## Status
 
@@ -126,6 +132,14 @@ Nothing is evaluated or built, so status returns at once. Builds with
 uncommitted changes are not recorded, and a record disappears when its system
 is garbage-collected. A system built some other way, such as a plain
 `nixos-rebuild`, shows `nixos-version --configuration-revision` instead.
+
+Below the first line, status says when something needs attention:
+
+- `Restart needed`: the kernel, the initrd or the kernel modules of the
+  running system differ from those of the booted system. nxf never reboots
+  the machine.
+- `Automatic updates are held`, with the reason and the end of the hold.
+- `The checkout failed its health check`, with what the failing checks said.
 
 `nxf status` also prints the latest unread automatic update summary: the task
 results in `/var/lib/nxf/update.json`, and the result of
@@ -180,15 +194,17 @@ machines that do not have them on `PATH`.
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:
 
-1. If files other than `flake.lock` have uncommitted changes, the run does
-   nothing and reports `skipped`.
+1. If updates are held, or files other than `flake.lock` have uncommitted
+   changes, the run does nothing and reports `skipped`.
 2. `update` handles the inputs one at a time, as described above. A broken or
    unreachable input does not block the others.
-3. If the committed flake is not what runs, `switch` builds and activates it.
-   The machine is never rebooted; a new kernel takes effect at the next
-   reboot.
-4. The results are saved to `/var/lib/nxf/update.json`, and the service fails
-   if any task failed.
+3. If the committed flake is not what runs, `switch` builds and activates it:
+   a live switch of everything. The machine is never rebooted; a new kernel
+   takes effect at the next reboot, and status says that one is needed.
+4. After the switch, the [health checks](#health-checks) run.
+5. The results are saved to `/var/lib/nxf/update.json`, and the service fails
+   if any task failed. `nxf status` shows them once to each user; there is no
+   other notification.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
@@ -199,7 +215,53 @@ machines that do not have them on `PATH`.
 | `gitIdentity` | `nxf <nxf@host>` for root | Identity of the lockfile commits |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
+| `healthChecks` | none | Scripts that must succeed after a switch |
+| `healthTimeout` | `300` | Seconds the checks have to pass |
+| `healthInterval` | `10` | Seconds between two rounds of checks |
 | `timeout` | `3h` | Longest run |
+
+### Health checks
+
+The configuration supplies the checks; nxf has none of its own. Each entry of
+`healthChecks` is a shell script, and modules can add their own entries:
+
+```nix
+services.nxf.autoUpdate.healthChecks = {
+  "10-units" = ''test -z "$(systemctl --failed --no-legend)"'';
+  "20-k3s" = "systemctl is-active --quiet k3s";
+};
+```
+
+The scripts become executables in `/etc/nxf/health.d`. After an automatic
+switch nxf runs those of the new configuration in name order, and repeats the
+round every `healthInterval` seconds until all pass or `healthTimeout` runs
+out. A check that needs time, such as a node that becomes ready after a few
+minutes, just fails until then.
+
+If checks still fail at the end:
+
+- nxf activates the previous system again;
+- the revision is marked as bad in `/var/lib/nxf/bad/<tree>`, with what the
+  failing checks said;
+- the run fails and reports `health: failed`;
+- later runs skip the switch until a newer revision is committed. The bad
+  revision stays in the repository, because it built.
+
+Tasks run by hand, such as `nxf switch`, run no health checks.
+
+### Holding updates
+
+```sh
+nxf hold --reason "waiting for the vendor fix"         # until released
+nxf hold --reason "release week" --for 3d              # m, h, d or w
+nxf hold --reason "release week" --until "2030-01-31 18:00"
+nxf release
+```
+
+A hold stops the automatic update: the run reports `skipped` with the reason.
+The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
+only root or the update user can set or release it. `nxf status` shows it. A
+hold with an end stops holding at that time. Tasks run by hand are not held.
 
 ### As root
 
@@ -242,16 +304,6 @@ sudo systemctl start nxf-auto-update.service   # update now
 sudo systemctl stop nxf-auto-update.timer      # hold until the next boot or activation
 nxf status                                     # the latest outcome
 ```
-
-## Planned
-
-These are not implemented yet:
-
-- A health check after the switch, with a return to the previous generation,
-  a mark on the bad revision, and no further attempt until a newer one comes.
-- More machine-readable state for monitoring: the running revision, the result
-  of the last update, and whether a reboot is needed for a new kernel or
-  initrd.
 
 ## Development
 

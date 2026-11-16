@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::nixos::Remembered;
 use crate::output::{self, Style};
 use crate::text::plain;
-use crate::{flake, git, nixos};
+use crate::{flake, git, hold, nixos};
 
 /// Prints the latest unread summary, then acknowledges this exact snapshot for
 /// the invoking user. The updater's result is shared and is never modified.
@@ -218,6 +218,14 @@ pub fn report(options: &Options) -> Result<(), String> {
             "running": status.running,
             "built": status.built,
             "matches": status.matches,
+            "revision": status.running_commit,
+            "rebootRequired": nixos::reboot_required(),
+            "hold": hold::active().map(|hold| hold.to_json()),
+            "bad": status.tree.as_deref().and_then(nixos::bad),
+            "lastUpdate": nixos::update_result()
+                .ok()
+                .flatten()
+                .map(|result| result["update"].clone()),
         });
         output::line(&serde_json::to_string_pretty(&comparison).unwrap_or_default());
         return Ok(());
@@ -241,6 +249,21 @@ pub fn report(options: &Options) -> Result<(), String> {
         if status.built.is_none() {
             output::effect("The checkout has not been built yet.");
         }
+    }
+    if nixos::reboot_required() {
+        output::effect("! Restart needed: the kernel or initrd changed since the machine booted.");
+    }
+    if let Some(hold) = hold::active() {
+        output::effect(&format!(
+            "! Automatic updates are held: {}",
+            plain(&hold.describe())
+        ));
+    }
+    if let Some(reason) = status.tree.as_deref().and_then(nixos::bad) {
+        output::effect(&format!(
+            "! The checkout failed its health check and is not activated automatically: {}",
+            plain(&reason)
+        ));
     }
     output::line("");
 
