@@ -1,0 +1,13 @@
+//! nxf keeps a NixOS machine's local flake updated.
+
+pub mod auto_update;
+pub mod cli;
+pub mod doctor;
+pub mod flake;
+pub mod git;
+pub mod nixos;
+pub mod output;
+pub mod progress;
+pub mod status;
+pub mod tasks;
+pub mod text;

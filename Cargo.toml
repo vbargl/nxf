@@ -1,0 +1,22 @@
+[package]
+name = "nxf"
+version = "0.1.0"
+edition = "2021"
+description = "Keeps a NixOS machine's local flake updated: update inputs, build, commit or restore the lock, switch"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vbargl/nxf"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
+os_pipe = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[dev-dependencies]
+vt100 = "0.15"
+
+[profile.release]
+strip = true
