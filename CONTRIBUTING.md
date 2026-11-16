@@ -24,6 +24,10 @@ change them here first.
   files, identities, presets or cluster. What is specific to one environment
   enters through general interfaces only: the options of the module, the
   health checks, and a template given by reference.
+- Remote work is nxf running itself on each machine over ssh. Only commands
+  that read state or hold updates take `--config`; nothing changes several
+  machines at once. The hosts file stays a list of SSH destinations: nxf reads
+  `hosts.<name>.ssh` and must keep ignoring everything else.
 - `nxf init` does not edit the files of a template. It adds `nxf.nix` and
   reports whether the configuration imports the module.
 - Health checks come from the configuration. nxf ships none and knows nothing
@@ -40,6 +44,8 @@ change them here first.
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
 | `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
 | `src/hold.rs` | The hold on automatic updates |
+| `src/hosts.rs` | The hosts file: SSH destinations, with everything else ignored |
+| `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh |
 | `src/init.rs` | Founding a machine flake from a template |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
@@ -112,8 +118,8 @@ change them here first.
 - Add or update tests with every change of behaviour.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
-  `NXF_SYSTEMCTL` and `NXF_HEALTH_DIR` stand in for the running and the booted
-  system, the updater, systemd and the health checks.
+  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR` and `NXF_SSH` stand in for the running and
+  the booted system, the updater, systemd, the health checks and ssh.
 - Tests of live progress hold the mock nh back and assert that the output is
   there before it is released. Tests of in-place updates run in a
   pseudo-terminal and assert the final screen.

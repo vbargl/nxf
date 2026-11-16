@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::{auto_update, doctor, hold, init, nixos, output, status, tasks};
+use crate::{auto_update, doctor, fleet, hold, hosts, init, nixos, output, status, tasks};
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
 ///
@@ -48,6 +48,14 @@ struct RunArgs {
     words: Vec<String>,
 }
 
+/// The machines a command runs on instead of this one.
+#[derive(clap::Args)]
+struct Machines {
+    /// Run on every machine of this hosts file, over ssh, instead of here.
+    #[arg(long, value_name = "FILE")]
+    config: Option<PathBuf>,
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Show the running system's flake commit and inputs, compared with the checkout.
@@ -63,14 +71,21 @@ enum Cmd {
         json: bool,
         /// Show only these flake inputs.
         inputs: Vec<String>,
+        #[command(flatten)]
+        machines: Machines,
     },
     /// Check that nxf can work on this machine.
-    Doctor,
+    Doctor {
+        #[command(flatten)]
+        machines: Machines,
+    },
     /// Print the version of nxf, or with --system the running system's flake commit.
     Version {
         /// Print the flake commit of the running system.
         #[arg(long)]
         system: bool,
+        #[command(flatten)]
+        machines: Machines,
     },
     /// Found a machine flake from a template, as a Git repository without a remote.
     Init {
@@ -94,9 +109,14 @@ enum Cmd {
         /// How long the hold lasts, such as 12h, 3d or 2w.
         #[arg(long = "for", value_name = "DURATION")]
         duration: Option<String>,
+        #[command(flatten)]
+        machines: Machines,
     },
     /// Release the hold, so that automatic updates continue.
-    Release,
+    Release {
+        #[command(flatten)]
+        machines: Machines,
+    },
     /// Update unattended: update inputs, switch if needed, save the results.
     AutoUpdate {
         /// Where the results are saved.
@@ -165,6 +185,10 @@ fn run_tasks(args: RunArgs) -> ExitCode {
     }
 }
 
+fn words(words: &[&str]) -> Vec<String> {
+    words.iter().map(|word| word.to_string()).collect()
+}
+
 fn run_command(command: Cmd) -> Result<bool, String> {
     match command {
         Cmd::Status {
@@ -172,21 +196,58 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             detailed,
             json,
             inputs,
-        } => status::report(&status::Options {
-            checkedout,
-            detailed,
-            json,
-            inputs,
-        })
-        .map(|()| true),
-        Cmd::Doctor => doctor::report().map(|()| true),
-        Cmd::Version { system: true } => {
-            output::line(&status::running_commit()?);
-            Ok(true)
-        }
-        Cmd::Version { system: false } => {
-            output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
-            Ok(true)
+            machines,
+        } => match machines.config {
+            Some(file) => {
+                if checkedout || detailed || !inputs.is_empty() {
+                    return Err(
+                        "With --config, status shows one row for each machine\nOnly --json can be added."
+                            .to_string(),
+                    );
+                }
+                Ok(fleet::status(&file, &hosts::load(&file)?, json))
+            }
+            None => status::report(&status::Options {
+                checkedout,
+                detailed,
+                json,
+                inputs,
+            })
+            .map(|()| true),
+        },
+        Cmd::Doctor { machines } => match machines.config {
+            Some(file) => Ok(fleet::each(
+                &file,
+                &hosts::load(&file)?,
+                &words(&["doctor"]),
+                "Checks passed",
+                "Checks failed",
+            )),
+            None => doctor::report().map(|()| true),
+        },
+        Cmd::Version { system, machines } => {
+            let args = if system {
+                words(&["version", "--system"])
+            } else {
+                words(&["version"])
+            };
+            match machines.config {
+                Some(file) => Ok(fleet::each(
+                    &file,
+                    &hosts::load(&file)?,
+                    &args,
+                    "Answered",
+                    "No answer",
+                )),
+                None if system => {
+                    output::line(&status::running_commit()?);
+                    Ok(true)
+                }
+                None => {
+                    output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
+                    Ok(true)
+                }
+            }
         }
         Cmd::Init {
             dir,
@@ -202,6 +263,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             reason,
             until,
             duration,
+            machines,
         } => {
             let until = match (until, duration) {
                 (Some(until), _) => Some(hold::time(&until)?),
@@ -211,11 +273,34 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             if until.is_some_and(|until| until <= hold::now()) {
                 return Err("The hold would end in the past.".to_string());
             }
+            if let Some(file) = machines.config {
+                // The end is one point in time, whatever each machine's clock zone is.
+                let mut args = vec!["hold".to_string(), "--reason".to_string(), reason];
+                if let Some(until) = until {
+                    args.extend(["--until".to_string(), format!("@{until}")]);
+                }
+                return Ok(fleet::each(
+                    &file,
+                    &hosts::load(&file)?,
+                    &args,
+                    "Automatic updates are held",
+                    "Not held",
+                ));
+            }
             let hold = hold::set(&reason, until)?;
             output::line(&format!("Automatic updates are held: {}", hold.describe()));
             Ok(true)
         }
-        Cmd::Release => {
+        Cmd::Release { machines } => {
+            if let Some(file) = machines.config {
+                return Ok(fleet::each(
+                    &file,
+                    &hosts::load(&file)?,
+                    &words(&["release"]),
+                    "Automatic updates continue",
+                    "Not released",
+                ));
+            }
             output::line(if hold::clear()? {
                 "Automatic updates continue."
             } else {

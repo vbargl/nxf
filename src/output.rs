@@ -305,6 +305,12 @@ pub fn success(text: &str) {
     line(&styled(&format!("✓ {text}"), Style::GreenBold));
 }
 
+/// The one outcome of a run that worked but found something to attend to.
+pub fn caution(text: &str) {
+    line("");
+    line(&styled(&format!("! {text}"), Style::YellowBold));
+}
+
 /// The one outcome of a failed run.
 pub fn failure(text: &str) {
     line_err("");

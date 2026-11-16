@@ -6,7 +6,7 @@
 { config, ... }:
 {
   # Directory of the machine flake: a local Git repository with a
-  # `flake.lock` and a `nixosConfigurations.<host>` output.
+  # `flake.lock` and one configuration under `nixosConfigurations`.
   # services.nxf.flake = "/etc/nixos";
 
   services.nxf.autoUpdate = {

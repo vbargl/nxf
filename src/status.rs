@@ -26,7 +26,7 @@ fn human(bytes: u64) -> String {
 }
 
 /// How long ago a time was, for people.
-fn age(time: u64) -> String {
+pub fn age(time: u64) -> String {
     let seconds = hold::now().saturating_sub(time);
     let (count, unit) = match seconds {
         0..=59 => return "just now".to_string(),

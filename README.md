@@ -19,6 +19,7 @@ changes to the flake itself.
 | `nxf version` | Print the version of nxf |
 | `nxf version --system` | Print the running system's flake commit |
 | `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
+| `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
@@ -236,6 +237,60 @@ The flake provides the package and a NixOS module:
 `services.nxf.autoUpdate.enable` does the same and adds the timer. The package
 alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git and Nix for
 machines that do not have them on `PATH`.
+
+## Several machines
+
+`status`, `hold`, `release`, `version` and `doctor` take `--config <file>` and
+then run on every machine of a hosts file instead of this one:
+
+```sh
+nxf status --config hosts.toml       # the state of every machine
+nxf hold --config hosts.toml --reason "bad update" --for 3d
+nxf release --config hosts.toml
+```
+
+```
+hosts.toml · 3 machines
+
+  ✓ node-1    75821d9f0c1a  updated 2 hours ago
+  ! node-2    75821d9f0c1a  updated 2 hours ago  restart needed
+  ! node-3    41c0a7e33b02  updated 3 days ago  held: bad update (until 2030-01-31 18:00)
+
+! 2 of 3 machines need attention
+```
+
+One command shows which revision every machine runs, when it last updated and
+what needs attention, and one command holds automatic updates on all of them,
+so that a bad update does not spread. A hold with an end ends at the same
+moment on every machine. Tasks such as `switch` do not take `--config`: nxf
+never changes several machines with one command.
+
+nxf runs itself on each machine with the system's `ssh`, in batch mode, all
+machines at once. It uses your SSH configuration, keys and `known_hosts`, and
+needs nxf installed on the machines. A machine that does not answer is a
+failed row and makes the command fail. `nxf status --config <file> --json`
+prints one entry for each machine: its `status --json`, or an `error`.
+`hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
+the update user.
+
+### The hosts file
+
+```toml
+[hosts.node-1.ssh]
+address = "10.0.0.11"
+user = "root"        # default
+port = 22            # default: what ssh decides
+
+[hosts.node-1.k3s]   # not nxf's; ignored
+role = "server"
+```
+
+nxf knows a list of SSH destinations and nothing about what the machines form
+together. It reads `hosts.<name>.ssh` and ignores every other key and section
+on every level, so another tool can keep its own data in the same file. A
+name is unique by the form of the file. One file is one set of machines;
+there are no groups, so another selection is another file. The format follows
+the file name: `.toml`, `.json`, `.yaml` or `.yml`.
 
 ## Founding a machine flake
 
