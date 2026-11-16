@@ -103,23 +103,19 @@ fn update_named_input() {
     );
     assert_eq!(fx.porcelain(), "");
     let out = &result.stdout;
-    assert_contains(out, "Commit    ");
-    assert_contains(out, &format!("→ {}", fx.short("a")));
-    assert_lacks(out, "  b  ");
+    // One row for the input: its state, its name in the label column, the change.
+    assert_contains(
+        out,
+        &format!(
+            "\n  ✓ a         {} → {}\n    Commit    ",
+            &a[..12],
+            fx.short("a")
+        ),
+    );
+    assert_lacks(out, "b         ");
     assert_lacks(out, "@nix ");
     assert_lacks(out, "warning: updating lock file");
-    let reading = out
-        .find(&format!(
-            "Reading inputs from {}/flake.lock",
-            fx.checkout.display()
-        ))
-        .expect("the lockfile is named");
-    let selected = out.find("Inputs    a").expect("the inputs are listed");
-    let checking = out
-        .find("Checking input a")
-        .expect("the input is announced");
-    assert!(reading < selected && selected < checking);
-    assert_lacks(out, "Checking input b");
+    assert_lacks(out, "Checking input a");
 }
 
 /// An unchanged update says so and creates no commit.
@@ -134,7 +130,7 @@ fn update_unchanged() {
     assert_contains(
         &result.stdout,
         &format!(
-            "    Checking input a\n      {}  unchanged\n    Checking input b\n      {}  unchanged",
+            "Checking input updates\n  · a         {}   unchanged\n  · b         {}   unchanged\n\n✓ All",
             fx.short("a"),
             fx.short("b")
         ),
@@ -142,7 +138,8 @@ fn update_unchanged() {
     assert_eq!(fx.head(), before);
 }
 
-/// Each input's result stays directly beneath its heading in a real terminal.
+/// On a terminal the input in progress is shown and then replaced by its
+/// one row, so the finished screen has one row for each input.
 #[test]
 fn input_results_terminal() {
     let mut fx = fixture();
@@ -150,17 +147,18 @@ fn input_results_terminal() {
     fx.set("TERM", "xterm");
     let result = fx.terminal(100, &["update"]);
     result.ok();
-    let plain = nxf::text::strip_ansi(&result.stdout);
-    let lines: Vec<&str> = plain.lines().map(str::trim).collect();
+    assert_contains(&result.stdout, "… Checking input a");
+    let mut parser = vt100::Parser::new(60, 100, 0);
+    parser.process(result.stdout.as_bytes());
+    let screen = parser.screen().contents();
+    let rows: Vec<&str> = screen.lines().map(str::trim_end).collect();
+    assert!(!screen.contains("Checking input a"), "{screen}");
     for input in ["a", "b"] {
-        let heading = format!("Checking input {input}");
-        let found: Vec<usize> = (0..lines.len())
-            .filter(|index| lines[*index] == heading)
-            .collect();
-        assert_eq!(found.len(), 1, "{plain}");
+        let expected = format!("  · {input}         {}   unchanged", fx.short(input));
         assert_eq!(
-            lines[found[0] + 1],
-            format!("{}  unchanged", fx.short(input))
+            rows.iter().filter(|row| **row == expected).count(),
+            1,
+            "{screen}"
         );
     }
 }
@@ -219,9 +217,9 @@ fn upgrade() {
     assert_eq!(
         phases,
         [
-            "[1/3] Checking input updates…",
-            "[2/3] Building configuration…",
-            "[3/3] Activating configuration…"
+            "[1/3] Checking input updates",
+            "[2/3] Building configuration",
+            "[3/3] Activating configuration"
         ]
     );
 }
@@ -237,7 +235,7 @@ fn activation_failures() {
         let result = fx.run(&[action]);
         assert_ne!(result.code, 0);
         assert_eq!(fx.nh_calls().len(), 2);
-        assert_contains(&result.stdout, "  ✓ Configuration built");
+        assert_contains(&result.stdout, "  ✓ Built\n");
         assert!(!result.stdout.lines().any(|line| line.starts_with("✓ ")));
         assert_lacks(&result.stderr, "Task failed");
         assert_contains(
@@ -270,8 +268,10 @@ fn upgrade_build_failure() {
     assert_contains(&result.stderr, "Upgrade stopped: input update failed");
     assert_contains(&result.stderr, "The lockfile was restored");
     assert_contains(&result.stderr, "    nxf update a");
-    assert_lacks(&result.stdout, "Activating configuration…");
+    assert_lacks(&result.stdout, "Activating configuration");
     assert_lacks(&result.stdout, "Upgrade applied");
+    // The cause comes first and names its input.
+    assert_contains(&result.stderr, "failed\n  a: Command exited with status 3.");
 }
 
 /// A no-change upgrade still reports the activation it performed.
@@ -283,8 +283,8 @@ fn upgrade_unchanged() {
         .with("NXF_SYSTEM", system);
     let result = fx.run(&["upgrade"]);
     result.ok();
-    assert_contains(&result.stdout, "Inputs already up to date");
-    assert_contains(&result.stdout, "System unchanged · no package changes");
+    assert_contains(&result.stdout, "   unchanged\n");
+    assert_contains(&result.stdout, "  ✓ Built, system unchanged");
     assert_contains(&result.stdout, "activation was still performed");
     assert_contains(&result.stdout, "✓ Upgrade applied");
 }
@@ -360,7 +360,7 @@ fn terminal_color() {
     result.ok();
     assert_contains(
         &result.stdout,
-        &styled("[1/3] Checking input updates…", Style::CyanBold),
+        &styled("[1/3] Checking input updates", Style::CyanBold),
     );
     assert_contains(
         &result.stdout,
@@ -368,7 +368,11 @@ fn terminal_color() {
     );
     assert_contains(
         &result.stdout,
-        &format!("{}    System", Style::Dimmed.code()),
+        &format!("    {}System", Style::Dimmed.code()),
+    );
+    assert_contains(
+        &result.stdout,
+        &format!("  {} Built", styled("✓", Style::Green)),
     );
     fx.set("NXF_TEST_NH_FAIL_ACTION", "switch");
     let failed = fx.run(&["switch"]);
@@ -377,14 +381,17 @@ fn terminal_color() {
         &failed.stderr,
         &styled("✗ Activation did not finish successfully", Style::RedBold),
     );
-    assert_contains(&failed.stderr, &styled("    nxf switch", Style::Bold));
+    assert_contains(
+        &failed.stderr,
+        &format!("    {}", styled("nxf switch", Style::Bold)),
+    );
     assert_lacks(&failed.stderr, "Task failed");
     fx.unset("NXF_TEST_NH_FAIL_ACTION");
     fx.set("NO_COLOR", "");
     let plain = fx.run(&["upgrade"]);
     plain.ok();
     assert_eq!(plain.stdout, nxf::text::strip_ansi(&plain.stdout));
-    assert_contains(&plain.stdout, "\n\n[2/3] Building configuration…");
+    assert_contains(&plain.stdout, "\n\n[2/3] Building configuration\n");
 }
 
 /// Every nh task announces its purpose and reports its resulting system.
@@ -400,14 +407,8 @@ fn progress() {
     ] {
         let result = fx.run(&[task]);
         result.ok();
-        assert_contains(&result.stdout, "Building configuration…");
-        assert_contains(
-            &result.stdout,
-            &format!(
-                "Resolving nixosConfigurations.{}.config.system.build.toplevel",
-                hostname()
-            ),
-        );
+        assert_contains(&result.stdout, "Building configuration\n  ✓ Built\n");
+        assert_contains(&result.stdout, &format!("{} · ", hostname()));
         assert_contains(
             &result.stdout,
             &format!("    System    {}", system.display()),
@@ -434,11 +435,11 @@ fn failure_stops() {
     let result = fx.run(&["build", "test"]);
     assert_ne!(result.code, 0);
     assert_eq!(fx.nh_actions(), ["build"]);
-    assert_contains(&result.stdout, "Building configuration…");
+    assert_contains(&result.stdout, "Building configuration");
     assert_contains(&result.stderr, "✗ Configuration build failed");
-    assert_contains(&result.stderr, "Activation was not started for this task.");
-    assert_lacks(&result.stdout, "✓ Configuration built");
-    assert_lacks(&result.stdout, "Activating configuration…");
+    assert_contains(&result.stderr, "Activation was not started.");
+    assert_lacks(&result.stdout, "✓ Built");
+    assert_lacks(&result.stdout, "Activating configuration");
 }
 
 /// Unknown tasks run nothing.

@@ -2,13 +2,18 @@
 
 mod common;
 
-use common::{append, assert_contains, commit, fake_systems, fixture};
+use common::{append, assert_contains, assert_lacks, commit, fake_systems, fixture};
 
 /// The status of a check in the doctor's output.
-fn status_of<'a>(output: &'a str, check: &str) -> Option<&'a str> {
+fn status_of(output: &str, check: &str) -> Option<&'static str> {
     output.lines().find_map(|line| {
         let mut columns = line.split_whitespace();
-        let status = columns.next()?;
+        let status = match columns.next()? {
+            "✓" => "ok",
+            "!" => "warn",
+            "✗" => "fail",
+            _ => return None,
+        };
         (columns.next()? == check).then_some(status)
     })
 }
@@ -30,6 +35,12 @@ fn healthy() {
         );
     }
     assert_eq!(status_of(&result.stdout, "running"), Some("warn"));
+    // One outcome ends the report.
+    assert!(
+        result.stdout.ends_with("\n\n✓ Checks passed, 1 warning\n"),
+        "{}",
+        result.stdout
+    );
 }
 
 /// A system built from the checkout is named.
@@ -54,7 +65,8 @@ fn missing_flake() {
     assert_eq!(status_of(&result.stdout, "flake"), Some("fail"));
     assert_eq!(status_of(&result.stdout, "git"), None);
     assert_contains(&result.stdout, "skipped");
-    assert_contains(&result.stderr, "1 check(s) failed.");
+    assert_contains(&result.stderr, "✗ 1 check failed");
+    assert_lacks(&result.stdout, "passed");
 }
 
 /// A flake outside Git fails, since nxf reads its history.

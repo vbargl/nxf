@@ -3,16 +3,16 @@
 mod common;
 
 use common::{fixture, hostname};
-use nxf::flake::{self, InputUpdate};
+use nxf::flake::{self, InputRow, InputUpdate};
 use serde_json::json;
 
 fn names(inputs: &[&str]) -> Vec<String> {
     inputs.iter().map(|name| name.to_string()).collect()
 }
 
-/// Input lines show revisions, sources and differences.
+/// Input rows carry revisions, sources and differences from another lock.
 #[test]
-fn input_lines() {
+fn input_rows() {
     let lock = json!({
         "root": "root",
         "version": 7,
@@ -23,30 +23,46 @@ fn input_lines() {
             "same": {"locked": {"rev": "ffffffffffffffff"}, "original": {"type": "git", "url": "https://x/y"}},
         }
     });
+    let row = |name: &str, rev: &str, url: &str, change: Option<&str>| InputRow {
+        name: name.to_string(),
+        rev: rev.to_string(),
+        url: url.to_string(),
+        change: change.map(str::to_string),
+    };
     let mut other = lock.clone();
     other["nodes"]["gh"]["locked"]["rev"] = json!("aaaaaaaaaaaaaaaa");
     assert_eq!(
-        flake::input_lines(&lock, &[], Some(&other)),
+        flake::input_rows(&lock, &[], Some(&other)),
         [
-            "  gh       0123456789ab  https://github.com/o/r  (checkout: aaaaaaaaaaaa)",
-            "  path     sha256-abcde  /src",
-            "  same     ffffffffffff  https://x/y",
-            "  follows  follows gh",
+            row(
+                "gh",
+                "0123456789ab",
+                "https://github.com/o/r",
+                Some("→ aaaaaaaaaaaa in the checkout")
+            ),
+            row("path", "sha256-abcde", "/src", None),
+            row("same", "ffffffffffff", "https://x/y", None),
+            row("follows", "follows gh", "", None),
         ]
     );
     assert_eq!(
-        flake::input_lines(&lock, &names(&["same"]), None),
-        ["  same  ffffffffffff  https://x/y"]
+        flake::input_rows(&lock, &names(&["same"]), None),
+        [row("same", "ffffffffffff", "https://x/y", None)]
     );
-    assert!(flake::input_lines(&lock, &names(&["missing"]), None).is_empty());
+    assert!(flake::input_rows(&lock, &names(&["missing"]), None).is_empty());
     let mut removed = other.clone();
     removed["nodes"]["root"]["inputs"]
         .as_object_mut()
         .unwrap()
         .shift_remove("gh");
     assert_eq!(
-        flake::input_lines(&lock, &names(&["gh"]), Some(&removed)),
-        ["  gh  0123456789ab  https://github.com/o/r  (not in the checkout)"]
+        flake::input_rows(&lock, &names(&["gh"]), Some(&removed)),
+        [row(
+            "gh",
+            "0123456789ab",
+            "https://github.com/o/r",
+            Some("not in the checkout")
+        )]
     );
 }
 

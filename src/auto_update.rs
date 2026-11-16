@@ -114,18 +114,11 @@ fn save(state: &Path, results: &[Outcome]) -> Result<(), String> {
 pub fn run(state: &Path) -> Result<bool, String> {
     let results = decide()?;
     save(state, &results)?;
-    for result in &results {
-        let name = [result.task.clone()]
-            .into_iter()
-            .chain(result.inputs.iter().cloned())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let detail = if result.detail.is_empty() {
-            String::new()
-        } else {
-            format!(". {}", result.detail)
-        };
-        output::line(&format!("{name}: {}{detail}", result.outcome));
+    let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
+    let rows = status::result_rows(&list);
+    if rows.is_empty() {
+        output::note("Nothing changed.");
     }
+    status::print_rows(&rows);
     Ok(!results.iter().any(Outcome::failed))
 }

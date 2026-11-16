@@ -160,19 +160,13 @@ fn updating_lines() {
     );
     let heading = rows
         .iter()
-        .position(|row| row == "Building configuration…")
+        .position(|row| row == "Building configuration")
         .expect("the phase heading stays");
-    let after: Vec<&str> = rows[heading + 1..]
-        .iter()
-        .map(|row| row.trim())
-        .filter(|row| !row.is_empty())
-        .collect();
-    assert!(after[0].starts_with(&common::hostname()), "{rows:#?}");
+    assert_eq!(rows[heading + 1], "  ✓ Built", "{rows:#?}");
     assert!(
-        after[1].starts_with("Resolving nixosConfigurations."),
+        rows[heading + 2].starts_with("    System    /nix/store/"),
         "{rows:#?}"
     );
-    assert_eq!(after[2], "✓ Configuration built", "{rows:#?}");
     assert!(rows
         .last()
         .unwrap()

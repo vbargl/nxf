@@ -32,7 +32,7 @@ fn unread_update() {
     fx.save_update(failed_update(1, "a: updated"));
     let first = fx.run(&["status"]);
     first.ok();
-    assert_contains(&first.stdout, "Automatic update summary");
+    assert_contains(&first.stdout, "Last automatic update");
     assert_contains(&first.stdout, "a: updated");
     for flags in [&[][..], &["--checkedout"], &["--detailed"]] {
         if flags.contains(&"--detailed") {
@@ -41,7 +41,7 @@ fn unread_update() {
         }
         let again = fx.run(&[&["status"], flags].concat());
         again.ok();
-        assert_lacks(&again.stdout, "Automatic update summary");
+        assert_lacks(&again.stdout, "Last automatic update");
     }
     let saved: Value =
         serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap())
@@ -61,8 +61,8 @@ fn latest_update() {
     assert_contains(&latest.stdout, "a: unchanged");
     assert_lacks(&latest.stdout, "old failure");
     fx.save_update(failed_update(3, "a: unchanged"));
-    assert_contains(&fx.run(&["status"]).stdout, "Automatic update summary");
-    assert_lacks(&fx.run(&["status"]).stdout, "Automatic update summary");
+    assert_contains(&fx.run(&["status"]).stdout, "Last automatic update");
+    assert_lacks(&fx.run(&["status"]).stdout, "Last automatic update");
 }
 
 /// Read tracking is per Unix user's state directory, not in shared updater data.
@@ -103,10 +103,10 @@ fn update_details() {
     }));
     let result = fx.run(&["status"]);
     result.ok();
-    assert_contains(&result.stdout, "update a: done");
+    assert_contains(&result.stdout, "\n  ✓ update a\n");
     assert_lacks(&result.stdout, "update b");
-    assert_contains(&result.stdout, "build: failed. build error");
-    assert_contains(&result.stdout, "switch: skipped. not attempted");
+    assert_contains(&result.stdout, "\n  ✗ build     build error\n");
+    assert_contains(&result.stdout, "\n  · switch    skipped, not attempted\n");
     assert_eq!(git(&fx.checkout, &["rev-list", "--count", "HEAD"]), "1");
 }
 
@@ -122,12 +122,12 @@ fn update_unit_result() {
     );
     let before_first_save = fx.run(&["status"]);
     before_first_save.ok();
-    assert_contains(&before_first_save.stdout, "Update service: timeout.");
+    assert_contains(&before_first_save.stdout, "✗ service   timeout");
     fx.save_update(failed_update(1, "saved result"));
     let failed = fx.run(&["status"]);
-    assert_contains(&failed.stdout, "Update service: timeout.");
+    assert_contains(&failed.stdout, "✗ service   timeout");
     assert_contains(&failed.stdout, "journalctl -u nxf-auto-update.service");
-    assert_lacks(&fx.run(&["status"]).stdout, "Automatic update summary");
+    assert_lacks(&fx.run(&["status"]).stdout, "Last automatic update");
 
     fx.save_update(failed_update(300, "newer saved result"));
     let recovered = fx.run(&["status"]);
@@ -152,7 +152,7 @@ fn unread_update_errors() {
     fx.save_update(failed_update(1, "repaired report"));
     write_script(&fx.systemctl, "#!/bin/sh\nexit 1\n");
     assert_contains(&fx.run(&["status"]).stdout, "repaired report");
-    assert_lacks(&fx.run(&["status"]).stdout, "Automatic update summary");
+    assert_lacks(&fx.run(&["status"]).stdout, "Last automatic update");
 }
 
 /// A system manager that never answers does not hold status up.
@@ -200,14 +200,17 @@ fn matches() {
     for flags in [&[][..], &["--checkedout"], &["--detailed"]] {
         let result = fx.run(&[&["status"], flags].concat());
         result.ok();
-        assert_contains(&result.stdout, &format!("Flake: {} init", fx.short_head()));
-        assert_contains(&result.stdout, "  a  ");
+        assert_contains(
+            &result.stdout,
+            &format!("  Flake     {} init", fx.short_head()),
+        );
+        assert_contains(&result.stdout, "\n  a         ");
         let lines: Vec<&str> = result.stdout.lines().take(2).collect();
         assert_eq!(
             lines,
             [
                 format!(
-                    "✓ Running system matches the checkout. ({})",
+                    "✓ Running system matches the checkout ({})",
                     system.display()
                 )
                 .as_str(),
@@ -230,7 +233,7 @@ fn updater() {
     std::os::unix::fs::symlink(system, systems.join(fx.tree())).unwrap();
     assert_contains(
         &fx.run(&["status"]).stdout,
-        "Running system matches the checkout.",
+        "Running system matches the checkout (",
     );
 }
 
@@ -247,22 +250,31 @@ fn diff() {
     let fx = fx.with("NXF_SYSTEM", &built.one);
     let result = fx.run(&["status"]);
     result.ok();
-    assert_contains(&result.stdout, &format!("  a  {before}"));
-    assert_contains(&result.stdout, &format!("(checkout: {})", fx.short("a")));
+    assert_contains(
+        &result.stdout,
+        &format!(
+            "\n  a         {before}  → {} in the checkout",
+            fx.short("a")
+        ),
+    );
+
     let lines: Vec<&str> = result.stdout.lines().take(2).collect();
     assert_eq!(
         lines,
         [
             format!(
-                "! Running system differs from the checkout. ({})",
+                "! Running system differs from the checkout ({})",
                 built.one.display()
             )
             .as_str(),
             ""
         ]
     );
-    assert_contains(&result.stdout, "SIZE:");
-    assert_contains(&result.stdout, "    nxf status --detailed");
+    assert_contains(
+        &result.stdout,
+        "\nChanges when switched\n  Packages  1 added, 1 removed\n  Size      ",
+    );
+    assert_contains(&result.stdout, "  Package list: nxf status --detailed");
 }
 
 /// Detailed status adds the closure size and the full package list.
@@ -280,12 +292,12 @@ fn detailed() {
     assert_eq!(
         result.stdout.lines().next().unwrap(),
         format!(
-            "! Running system differs from the checkout. ({})",
+            "! Running system differs from the checkout ({})",
             built.one.display()
         )
     );
-    assert_contains(&result.stdout, "    Closure size: ");
-    assert_contains(&result.stdout, "Checkout: ");
+    assert_contains(&result.stdout, "  Closure   ");
+    assert_contains(&result.stdout, "\nCheckout\n  Flake     ");
     assert_contains(&result.stdout, "[A.] two");
 }
 
@@ -301,8 +313,10 @@ fn not_built() {
     std::fs::remove_file(fx.systems().join(fx.tree())).unwrap();
     let fx = fx.with("NXF_SYSTEM", system);
     let result = fx.run(&["status"]);
-    assert_contains(&result.stdout, "The checkout has not been built yet.");
-    assert_contains(&result.stdout, "    nxf build");
+    assert_contains(
+        &result.stdout,
+        "  The checkout has not been built yet: nxf build",
+    );
 }
 
 /// Status reports uncommitted changes.
@@ -325,10 +339,10 @@ fn unknown_system() {
     let fx = fixture().with("NXF_SYSTEM", system);
     let result = fx.run(&["status"]);
     result.ok();
-    assert_contains(&result.stdout, "Flake: unknown");
+    assert_contains(&result.stdout, "  Flake     unknown");
     assert!(result
         .stdout
-        .starts_with("! Cannot compare the running system with the checkout."));
+        .starts_with("! Cannot compare the running system with the checkout ("));
     assert_contains(
         result.stdout.lines().next().unwrap(),
         &format!("({})", system.display()),
@@ -341,8 +355,8 @@ fn unknown_system() {
 fn filter() {
     let fx = fixture();
     let result = fx.run(&["status", "--checkedout", "b"]);
-    assert_contains(&result.stdout, "  b  ");
-    assert_lacks(&result.stdout, "  a  ");
+    assert_contains(&result.stdout, "\n  b         ");
+    assert_lacks(&result.stdout, "\n  a         ");
     let unknown = fx.run(&["status", "update"]);
     assert_ne!(unknown.code, 0);
     assert_contains(&unknown.stderr, "Unknown input: update");
@@ -363,7 +377,7 @@ fn same_system_several_commits() {
     }
     let result = fx.run(&["status"]);
     assert_contains(&result.stdout, "comment 2 (");
-    assert_contains(&result.stdout, "Running system matches the checkout.");
+    assert_contains(&result.stdout, "Running system matches the checkout (");
     append(&file, "# comment 3\n");
     commit(&fx.checkout, "comment 3");
     let later = fx.run(&["status"]);
@@ -385,7 +399,7 @@ fn same_system_prefers_checkout() {
     git(&fx.checkout, &["switch", "--quiet", "main"]);
     let result = fx.run(&["status"]);
     assert_contains(&result.stdout, " init (");
-    assert_contains(&result.stdout, "Running system matches the checkout.");
+    assert_contains(&result.stdout, "Running system matches the checkout (");
 }
 
 /// The JSON comparison is for scripts: it tells whether the committed checkout
@@ -415,7 +429,7 @@ fn json() {
         parse(&fx.run(&["status", "--json"]).stdout)["changes"],
         json!(["flake.nix"])
     );
-    assert_contains(&fx.run(&["status"]).stdout, "Automatic update summary");
+    assert_contains(&fx.run(&["status"]).stdout, "Last automatic update");
 }
 
 /// A system with a kernel directory, standing in for a NixOS system.
@@ -462,7 +476,7 @@ fn restart_needed() {
         status.ok();
         assert_contains(
             &status.stdout,
-            "  ! Restart needed: the kernel or initrd changed since the machine booted.",
+            "\n  ! Restart needed: the kernel or initrd changed since the machine booted\n",
         );
         assert_eq!(
             parse(&fx.run(&["status", "--json"]).stdout)["rebootRequired"],

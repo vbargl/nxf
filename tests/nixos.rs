@@ -6,18 +6,17 @@ mod common;
 use common::{fake_systems, hostname};
 use nxf::nixos;
 
-/// Changes summarise the dix diff between two systems.
+/// Changes summarise the dix diff between two systems as labelled facts.
 #[test]
 fn changes() {
     let built = fake_systems();
-    let lines = nixos::changes(&built.one, &built.two).unwrap();
-    let counts: Vec<&String> = lines
-        .iter()
-        .filter(|line| line.ends_with(')') && !line.contains(':'))
-        .collect();
-    assert_eq!(counts, ["ADDED (1)", "REMOVED (1)"]);
-    assert!(lines.iter().any(|line| line.starts_with("PATHS: ")));
-    assert!(lines.iter().any(|line| line.starts_with("SIZE: ")));
+    let facts = nixos::changes(&built.one, &built.two).unwrap();
+    assert_eq!(facts[0], ("Packages", "1 added, 1 removed".to_string()));
+    assert_eq!(facts[1].0, "Size");
+    assert!(facts[1].1.contains(" → "), "{}", facts[1].1);
+    assert_eq!(facts.len(), 2);
+    let same = nixos::changes(&built.one, &built.one).unwrap();
+    assert_eq!(same[0], ("Packages", "no changes".to_string()));
 }
 
 /// Size is the closure size of a system.

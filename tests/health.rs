@@ -139,7 +139,7 @@ fn unhealthy_returns_and_marks() {
 
     let status = fx.run(&["status"]);
     assert_contains(&status.stdout, "failed its health check");
-    assert_contains(&status.stdout, "health: failed. 20-k3s: k3s is not running");
+    assert_contains(&status.stdout, "✗ health    20-k3s: k3s is not running");
     let json: Value = serde_json::from_str(&fx.run(&["status", "--json"]).stdout).unwrap();
     assert_eq!(json["bad"], "20-k3s: k3s is not running");
 

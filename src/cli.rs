@@ -127,8 +127,14 @@ fn task_list() -> String {
     list
 }
 
+/// An error in the shape of every failure: the cause as the one outcome,
+/// with what helps to resolve it beneath.
 fn fail(error: &str) -> ExitCode {
-    eprintln!("error: {error}");
+    let mut lines = error.lines();
+    output::failure(lines.next().unwrap_or("Failed"));
+    for line in lines {
+        output::effect_err(line);
+    }
     ExitCode::FAILURE
 }
 

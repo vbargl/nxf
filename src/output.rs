@@ -13,6 +13,8 @@ pub enum Style {
     CyanBold,
     GreenBold,
     RedBold,
+    Green,
+    Red,
     Yellow,
     YellowBold,
     Dimmed,
@@ -25,6 +27,8 @@ impl Style {
             Style::CyanBold => "\u{1b}[1;36m",
             Style::GreenBold => "\u{1b}[1;32m",
             Style::RedBold => "\u{1b}[1;31m",
+            Style::Green => "\u{1b}[32m",
+            Style::Red => "\u{1b}[31m",
             Style::Yellow => "\u{1b}[33m",
             Style::YellowBold => "\u{1b}[1;33m",
             Style::Dimmed => "\u{1b}[2m",
@@ -140,37 +144,120 @@ pub fn line_err(text: &str) {
     emit(true, &format!("{text}\n"));
 }
 
-fn detail_to(stderr: bool, text: &str) {
-    for row in text.lines() {
-        emit(
-            stderr,
-            &format!("{}\n", styled(&format!("    {row}"), Style::Dimmed)),
-        );
+/// The width of the label column that facts share.
+pub const LABEL: usize = 10;
+
+/// What a row reports. The mark and its colour carry the state, so that the
+/// hierarchy also reads without colour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Done,
+    Failed,
+    Attention,
+    /// Nothing happened: unchanged or skipped.
+    Quiet,
+}
+
+impl Mark {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Mark::Done => "✓",
+            Mark::Failed => "✗",
+            Mark::Attention => "!",
+            Mark::Quiet => "·",
+        }
+    }
+
+    fn style(self) -> Style {
+        match self {
+            Mark::Done => Style::Green,
+            Mark::Failed => Style::Red,
+            Mark::Attention => Style::Yellow,
+            Mark::Quiet => Style::Dimmed,
+        }
+    }
+
+    pub fn styled(self) -> String {
+        styled(self.symbol(), self.style())
     }
 }
 
-pub fn detail(text: &str) {
-    detail_to(false, text);
+pub fn dim(text: &str) -> String {
+    styled(text, Style::Dimmed)
 }
 
-pub fn detail_err(text: &str) {
-    detail_to(true, text);
+fn indented(stderr: bool, indent: usize, text: &str) {
+    emit(stderr, &format!("{:indent$}{text}\n", ""));
 }
 
+/// The context of a run: where and on what it works. Supporting text.
+pub fn context(text: &str) {
+    line(&dim(text));
+}
+
+/// A section of a report: a bold heading with a muted note.
+pub fn section(text: &str, note: &str) {
+    line("");
+    let note = if note.is_empty() {
+        String::new()
+    } else {
+        dim(&format!(" · {note}"))
+    };
+    line(&format!("{}{note}", styled(text, Style::Bold)));
+}
+
+/// A fact: a label in the shared column and its value.
+pub fn fact(label: &str, value: &str) {
+    indented(false, 2, &format!("{label:<LABEL$}{value}"));
+}
+
+/// A row with its state: what happened to one thing.
+pub fn row(mark: Mark, text: &str) {
+    let text = if mark == Mark::Quiet {
+        dim(text)
+    } else {
+        text.to_string()
+    };
+    indented(false, 2, &format!("{} {text}", mark.styled()));
+}
+
+/// A supporting fact beneath a row.
+pub fn sub(label: &str, value: &str) {
+    indented(false, 4, &dim(&format!("{label:<LABEL$}{value}")));
+}
+
+/// A statement about the outcome, in plain weight.
 pub fn effect(text: &str) {
-    line(&format!("  {text}"));
+    indented(false, 2, text);
 }
 
 pub fn effect_err(text: &str) {
-    line_err(&format!("  {text}"));
+    indented(true, 2, text);
 }
 
+/// Supporting text beneath an outcome.
+pub fn note(text: &str) {
+    indented(false, 2, &dim(text));
+}
+
+pub fn note_err(text: &str) {
+    indented(true, 2, &dim(text));
+}
+
+/// A command to run, set apart by weight.
 pub fn command(text: &str) {
-    line(&styled(&format!("    {text}"), Style::Bold));
+    indented(false, 4, &styled(text, Style::Bold));
 }
 
 pub fn command_err(text: &str) {
-    line_err(&styled(&format!("    {text}"), Style::Bold));
+    indented(true, 4, &styled(text, Style::Bold));
+}
+
+/// Temporary rows of progress and streamed tool output.
+pub fn detail(text: &str) {
+    for row in text.lines() {
+        indented(false, 4, &dim(row));
+    }
 }
 
 /// Sets how many phases already ran and how many the run has in total.
@@ -180,7 +267,7 @@ pub fn phases(done: usize, total: usize) {
     screen.phases = total;
 }
 
-/// An append-only phase log: active headings stand out; completed work is quiet.
+/// A phase of work: the active heading of an append-only log.
 pub fn start(text: &str) {
     let prefix = {
         let mut screen = screen();
@@ -192,25 +279,45 @@ pub fn start(text: &str) {
         }
     };
     line("");
-    line(&styled(&format!("{prefix}{text}…"), Style::CyanBold));
+    line(&styled(&format!("{prefix}{text}"), Style::CyanBold));
 }
 
-pub fn done(text: &str) {
-    effect(&format!("✓ {text}"));
+/// Shows what is in progress until `settle` replaces it. On a terminal only:
+/// an append-only log gets the finished row instead.
+pub fn pending(text: &str) -> bool {
+    if !live() {
+        return false;
+    }
+    indented(false, 2, &dim(&format!("… {text}")));
+    true
 }
 
+/// Erases the row `pending` printed.
+pub fn settle(pending: bool) {
+    if pending {
+        emit(false, "\u{1b}[1A\r\u{1b}[2K");
+    }
+}
+
+/// The one outcome of a successful run.
 pub fn success(text: &str) {
     line("");
     line(&styled(&format!("✓ {text}"), Style::GreenBold));
 }
 
+/// The one outcome of a failed run.
 pub fn failure(text: &str) {
     line_err("");
     line_err(&styled(&format!("✗ {text}"), Style::RedBold));
 }
 
 pub fn warning(text: &str) {
-    line_err(&styled(&format!("  ! {text}"), Style::Yellow));
+    indented(true, 2, &styled(&format!("! {text}"), Style::Yellow));
+}
+
+/// Something that needs attention, beneath a verdict.
+pub fn attention(text: &str) {
+    indented(false, 2, &styled(&format!("! {text}"), Style::Yellow));
 }
 
 pub fn verdict(text: &str, system: &str, matches: bool) {
@@ -222,7 +329,7 @@ pub fn verdict(text: &str, system: &str, matches: bool) {
     line(&format!(
         "{} {}",
         styled(&format!("{mark} {text}"), style),
-        styled(&format!("({system})"), Style::Dimmed)
+        dim(&format!("({system})"))
     ));
 }
 

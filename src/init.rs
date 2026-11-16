@@ -97,22 +97,22 @@ pub fn run(options: &Options) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|err| format!("cannot create {shown}: {err}"))?;
 
     output::start("Founding the machine flake");
-    output::detail(&format!("Directory {shown}"));
+    output::fact("Directory", &dir.to_string_lossy());
     let template = absolute(&options.template);
     flake::unpack(&dir, &template)
         .map_err(|err| format!("cannot unpack the template {template}:\n{err}"))?;
-    output::detail(&format!("Template  {template}"));
+    output::fact("Template", &template);
     if options.hardware {
         hardware(&dir)?;
-        output::detail("Hardware  hardware.nix from nixos-generate-config");
+        output::fact("Hardware", "hardware.nix from nixos-generate-config");
     }
     let module_file = dir.join(MODULE_FILE);
     if module_file.exists() {
-        output::detail(&format!("Module    {MODULE_FILE} of the template is kept"));
+        output::fact("Module", &format!("{MODULE_FILE} of the template is kept"));
     } else {
         std::fs::write(&module_file, MODULE)
             .map_err(|err| format!("cannot write {}: {err}", module_file.display()))?;
-        output::detail(&format!("Module    {MODULE_FILE} with the options of nxf"));
+        output::fact("Module", &format!("{MODULE_FILE} with the options of nxf"));
     }
 
     git::init(&dir)?;
@@ -127,10 +127,9 @@ pub fn run(options: &Options) -> Result<(), String> {
     if git::clean_tree(&dir).is_none() {
         git::commit_all(&dir, "flake.lock: lock the inputs")?;
     }
-    output::detail(&format!("Commit    {}", git::commit_line(&dir, "HEAD")));
-    output::done("Machine flake founded");
+    output::fact("Commit", &git::commit_line(&dir, "HEAD"));
 
-    output::line("");
+    output::section("Checks", "");
     let location = flake::Location {
         dir: dir.clone(),
         source: "nxf init",
@@ -140,15 +139,12 @@ pub fn run(options: &Options) -> Result<(), String> {
     if checks.iter().all(|check| check.level != Level::Fail) {
         checks.push(module(&dir, &host));
     }
-    doctor::print(&checks);
-    let failed = checks
-        .iter()
-        .filter(|check| check.level == Level::Fail)
-        .count();
-    if failed > 0 {
-        output::warning(&format!(
-            "{failed} check(s) failed; the flake was founded, fix them before the first build."
-        ));
+    doctor::print(&checks, 2);
+    // The flake is founded whatever the checks say; they say what is left to do.
+    output::success("Machine flake founded");
+    match doctor::verdict(&checks) {
+        Ok(passed) => output::effect(&format!("{passed}.")),
+        Err(failed) => output::attention(&format!("{failed}; fix this before the first build.")),
     }
     Ok(())
 }

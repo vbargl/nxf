@@ -7,6 +7,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
+use crate::output::Mark;
 use crate::text::strip_ansi;
 use crate::{flake, git, nixos, output};
 
@@ -125,11 +126,15 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
         .map(|word| word.as_str())
         .collect();
     if !unknown.is_empty() {
+        let width = output::LABEL;
         return Err(format!(
-            "Unknown task or input: {}. Tasks are {}; inputs are {}; status, doctor, version, init, hold, release and auto-update are separate commands.",
+            "Unknown task or input: {}\n{:<width$}{}\n{:<width$}{}\n{:<width$}status, doctor, version, init, hold, release, auto-update",
             unknown.join(", "),
+            "Tasks",
             names.join(", "),
-            inputs.join(", ")
+            "Inputs",
+            inputs.join(", "),
+            "Commands",
         ));
     }
     let wanted: Vec<&str> = defined
@@ -197,14 +202,39 @@ struct Stopped {
     build: bool,
 }
 
-/// Failures describe observed effects without promising activation rollback.
-fn stopped(run: &Run, title: &str, message: &str, retry: &str, kind: Stopped) -> Stop {
+/// The cause in a tool's error, and the exit status line that led it.
+fn cause(error: &str) -> (Vec<&str>, Option<&str>) {
+    let mut lines: Vec<&str> = error.lines().collect();
+    let exit = lines
+        .first()
+        .is_some_and(|line| line.starts_with("Command exited with status"))
+        .then(|| lines.remove(0));
+    (lines, exit)
+}
+
+/// Reports a failure: the cause first, what it means for the run in muted
+/// text, then the command to retry. It does not promise an activation rollback.
+fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped) -> Stop {
     let title = if run.upgrade {
         format!("Upgrade stopped: {}", title.to_lowercase())
     } else {
         title.to_string()
     };
     output::failure(&title);
+    let mut exits: Vec<&str> = Vec::new();
+    for error in causes {
+        let (lines, exit) = cause(error);
+        if lines.is_empty() {
+            output::effect_err(error);
+        }
+        for line in lines {
+            output::effect_err(line);
+        }
+        exits.extend(exit.filter(|exit| !exits.contains(exit)));
+    }
+    for exit in exits {
+        output::note_err(exit);
+    }
     if !run.update_commit.is_empty() {
         output::effect_err(&format!(
             "Input updates were committed: {}.",
@@ -217,19 +247,16 @@ fn stopped(run: &Run, title: &str, message: &str, retry: &str, kind: Stopped) ->
         } else {
             "Some changes may already be active."
         });
+    } else if kind.build {
+        output::note_err("Activation was not started. Later tasks were not run.");
     } else {
-        if kind.build {
-            output::effect_err("Activation was not started for this task.");
-        }
-        output::effect_err("Later tasks were not run.");
+        output::note_err("The lockfile was restored for these inputs. Later tasks were not run.");
     }
     output::line_err("");
-    output::detail_err(message);
-    output::line_err("");
     output::effect_err(if kind.activation {
-        "Inspect the diagnostics above before retrying:"
+        "Inspect the diagnostics before retrying:"
     } else {
-        "Resolve the error above, then retry:"
+        "Retry after fixing the error:"
     });
     output::command_err(retry);
     Stop::Reported
@@ -237,8 +264,9 @@ fn stopped(run: &Run, title: &str, message: &str, retry: &str, kind: Stopped) ->
 
 struct InputResult {
     name: String,
-    outcome: &'static str,
-    detail: String,
+    mark: Mark,
+    /// The failure of the update, when there was one.
+    error: Option<String>,
     summary: String,
 }
 
@@ -256,7 +284,7 @@ fn update_input(dir: &Path, input: &str) -> Result<InputResult, String> {
         }
         Ok(())
     };
-    let failure = attempt().err();
+    let error = attempt().err();
     if git::changed(dir, "flake.lock") {
         git::restore(dir, "flake.lock")?;
     }
@@ -265,28 +293,28 @@ fn update_input(dir: &Path, input: &str) -> Result<InputResult, String> {
         .into_iter()
         .next();
     let name = input.to_string();
-    Ok(if let Some(detail) = failure {
+    Ok(if error.is_some() {
         InputResult {
             name,
-            outcome: "failed",
-            detail,
-            summary: "failed; lockfile restored".to_string(),
+            mark: Mark::Failed,
+            error,
+            summary: "failed, lockfile restored".to_string(),
         }
     } else if before == after {
         InputResult {
             name,
-            outcome: "unchanged",
-            detail: String::new(),
+            mark: Mark::Quiet,
+            error: None,
             summary: format!(
-                "{}  unchanged",
+                "{}   unchanged",
                 change.map(|change| change.after).unwrap_or_default()
             ),
         }
     } else {
         InputResult {
             name,
-            outcome: "updated",
-            detail: String::new(),
+            mark: Mark::Done,
+            error: None,
             summary: match change {
                 Some(change) if change.changed => format!("{} → {}", change.before, change.after),
                 _ => "lockfile updated".to_string(),
@@ -303,51 +331,67 @@ fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
         git::restore(dir, "flake.lock")?;
         output::warning("flake.lock had uncommitted changes; they were restored.");
     }
-    output::detail(&format!("Reading inputs from {}/flake.lock", dir.display()));
     let before = flake::lock(dir)?;
     let selected = if inputs.is_empty() {
         flake::root_inputs(&before)
     } else {
         inputs.to_vec()
     };
-    output::detail(&format!("Inputs    {}", selected.join(", ")));
+    // Input names share the label column, widened for long names.
+    let width = selected
+        .iter()
+        .map(|name| name.chars().count() + 2)
+        .max()
+        .unwrap_or(0)
+        .max(output::LABEL);
     let mut results = Vec::new();
     for input in &selected {
-        output::detail(&format!("Checking input {input}"));
-        let result = update_input(dir, input)?;
-        output::detail(&format!("  {}", result.summary));
+        let pending = output::pending(&format!("Checking input {input}"));
+        let result = update_input(dir, input);
+        output::settle(pending);
+        let result = result?;
+        output::row(
+            result.mark,
+            &format!("{:<width$}{}", result.name, result.summary),
+        );
         results.push(result);
     }
     let unchanged = flake::lock(dir)? == before;
-    output::detail(&if unchanged {
-        "No lockfile commit needed".to_string()
-    } else {
-        format!("Commit    {}", git::commit_line(dir, "HEAD"))
-    });
+    if !unchanged {
+        output::sub("Commit", &git::commit_line(dir, "HEAD"));
+    }
     let failed: Vec<&InputResult> = results
         .iter()
-        .filter(|result| result.outcome == "failed")
+        .filter(|result| result.mark == Mark::Failed)
         .collect();
     if !failed.is_empty() {
-        let mut message: Vec<String> = failed
+        let causes: Vec<String> = failed
             .iter()
-            .map(|result| format!("{}: {}", result.name, result.detail))
+            .map(|result| {
+                let error = result.error.as_deref().unwrap_or_default();
+                let (lines, exit) = cause(error);
+                // The first line of the cause names its input.
+                match lines.split_first() {
+                    Some((first, rest)) => exit
+                        .map(str::to_string)
+                        .into_iter()
+                        .chain([format!("{}: {first}", result.name)])
+                        .chain(rest.iter().map(|line| line.to_string()))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    None => format!("{}: {error}", result.name),
+                }
+            })
             .collect();
-        message.push("The lockfile was restored for these inputs.".to_string());
         let names: Vec<&str> = failed.iter().map(|result| result.name.as_str()).collect();
         return Err(stopped(
             run,
             "Input update failed",
-            &message.join("\n"),
+            &causes,
             &format!("nxf update {}", names.join(" ")),
             Stopped::default(),
         ));
     }
-    output::done(if unchanged {
-        "Inputs already up to date"
-    } else {
-        "Inputs updated"
-    });
     if run.last {
         if unchanged {
             output::success("All selected inputs are up to date");
@@ -355,7 +399,7 @@ fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
         } else {
             let count = results
                 .iter()
-                .filter(|result| result.outcome == "updated")
+                .filter(|result| result.mark == Mark::Done)
                 .count();
             let noun = if count == 1 { "input" } else { "inputs" };
             output::success(&format!("Updated {count} {noun}"));
@@ -371,18 +415,13 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
     let dir = run.dir;
     let tree = git::clean_tree(dir);
     let running = nixos::running();
-    let host = nixos::hostname();
     output::start("Building configuration");
-    output::detail(&host);
-    output::detail(&format!(
-        "Resolving nixosConfigurations.{host}.config.system.build.toplevel"
-    ));
     let retry = format!("nxf {action}");
     let built = nixos::build(dir).map_err(|err| {
         stopped(
             run,
             "Configuration build failed",
-            &err,
+            &[err],
             &retry,
             Stopped {
                 build: true,
@@ -396,25 +435,30 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
             output::warning("uncommitted changes: this build cannot be identified by nxf status.")
         }
     }
-    output::done("Configuration built");
-    if built == running {
-        output::detail("System unchanged · no package changes");
-    } else if running.exists() {
+    let unchanged = built == running;
+    output::row(
+        Mark::Done,
+        if unchanged {
+            "Built, system unchanged"
+        } else {
+            "Built"
+        },
+    );
+    output::sub("System", &built.to_string_lossy());
+    if !unchanged && running.exists() {
         match nixos::changes(&running, &built) {
-            Ok(lines) => lines.iter().for_each(|line| output::detail(line)),
-            Err(err) => output::detail(&format!("Package summary unavailable: {err}")),
+            Ok(facts) => facts
+                .iter()
+                .for_each(|(label, value)| output::sub(label, value)),
+            Err(err) => output::sub("Packages", &format!("summary unavailable: {err}")),
         }
     }
-    output::detail(&format!("System    {}", built.display()));
     if action != "build" {
         output::start(if action == "boot" {
             "Configuring next boot"
         } else {
             "Activating configuration"
         });
-        if action == "test" {
-            output::detail("Boot default will not be changed");
-        }
         nixos::activate(action, &built).map_err(|err| {
             stopped(
                 run,
@@ -423,7 +467,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
                 } else {
                     "Activation did not finish successfully"
                 },
-                &err,
+                &[err],
                 &retry,
                 Stopped {
                     activation: true,
@@ -432,21 +476,21 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
                 },
             )
         })?;
-        output::done(if action == "boot" {
-            "Boot default configured"
-        } else {
-            "Configuration activated"
-        });
-        if action == "switch" {
-            output::detail("Boot default updated");
-        }
+        output::row(
+            Mark::Done,
+            match action {
+                "test" => "Activated until reboot, boot default not changed",
+                "boot" => "Boot default configured",
+                _ => "Activated, boot default updated",
+            },
+        );
     }
     if run.last {
         output::success(if run.upgrade {
             "Upgrade applied"
         } else {
             match action {
-                "build" if built == running => "Configuration built; system unchanged",
+                "build" if unchanged => "Configuration built; system unchanged",
                 "build" => "Configuration built",
                 "test" => "Configuration active until reboot",
                 "boot" => "Next boot configured",
@@ -459,8 +503,8 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
             "boot" => "The current system continues running.",
             _ => "Active now and configured for the next boot.",
         });
-        if matches!(action, "test" | "switch") && built == running {
-            output::detail("The system path is unchanged; activation was still performed.");
+        if matches!(action, "test" | "switch") && unchanged {
+            output::note("The system path is unchanged; activation was still performed.");
         }
     }
     Ok(())
@@ -498,7 +542,7 @@ fn diagnostics(stderr: &str) -> String {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .take_while(|line| {
-            !line.starts_with("Resolve the error") && !line.starts_with("Inspect the diagnostics")
+            !line.starts_with("Retry after fixing") && !line.starts_with("Inspect the diagnostics")
         })
         .collect::<Vec<_>>()
         .join(" | ")
@@ -516,7 +560,7 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
     let mut outcomes = Vec::new();
     if !quiet {
         output::line("");
-        output::detail(&format!("{}  {}", nixos::hostname(), dir.display()));
+        output::context(&format!("{} · {}", nixos::hostname(), dir.display()));
     }
     for (index, task) in chosen.iter().enumerate() {
         let inputs: &[String] = if task.takes_inputs { &plan.inputs } else { &[] };

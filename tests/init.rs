@@ -41,10 +41,15 @@ fn template(fx: &Fixture, host: &str, name: &str) -> String {
     format!("{}#{name}", templates(fx, host).display())
 }
 
-fn status_of<'a>(output: &'a str, check: &str) -> Option<&'a str> {
+fn status_of(output: &str, check: &str) -> Option<&'static str> {
     output.lines().find_map(|line| {
         let mut columns = line.split_whitespace();
-        let status = columns.next()?;
+        let status = match columns.next()? {
+            "✓" => "ok",
+            "!" => "warn",
+            "✗" => "fail",
+            _ => return None,
+        };
         (columns.next()? == check).then_some(status)
     })
 }
@@ -100,7 +105,13 @@ fn founds_a_flake() {
             result.stdout
         );
     }
-    assert_contains(&result.stdout, "✓ Machine flake founded");
+    assert!(
+        result
+            .stdout
+            .ends_with("\n✓ Machine flake founded\n  All checks passed.\n"),
+        "{}",
+        result.stdout
+    );
 
     // The founded flake is one nxf works with.
     let founded = fx.with("NXF_FLAKE", &target);
@@ -200,7 +211,10 @@ fn for_another_host() {
     let unnamed = fx.run(&["init", other.to_str().unwrap(), "--template", &node]);
     unnamed.ok();
     assert_eq!(status_of(&unnamed.stdout, "host"), Some("fail"));
-    assert_contains(&unnamed.stderr, "1 check(s) failed; the flake was founded");
+    assert_contains(
+        &unnamed.stdout,
+        "✓ Machine flake founded\n  ! 1 check failed; fix this before the first build.",
+    );
     assert_eq!(git(&other, &["status", "--porcelain"]), "");
 }
 

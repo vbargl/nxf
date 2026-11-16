@@ -81,6 +81,25 @@ change them here first.
 - `auto-update` only decides which task comes next from the task results. Put
   logic into the tasks.
 
+## Output
+
+- Four levels, each with one indentation and one style: the outcome (column
+  0, bold and coloured, once, last), phase and section headings (column 0,
+  bold), facts (indented by 2, plain), and support (muted). Use the functions
+  of `src/output.rs`; do not print with other indentation or styles.
+- What matters most is plain or stronger; what merely accompanies it is muted.
+  The cause of a failure is never muted.
+- One run has one outcome line. Do not repeat it as a phase result.
+- Labels are capitalised words without a colon, padded to `output::LABEL`.
+  Names that sit in the label column, such as inputs, widen it together.
+- State is a mark, and colour only repeats the mark. The output must read the
+  same with `NO_COLOR`.
+- A row says what happened to one thing. Do not announce work that a row will
+  report; show it with `output::pending` while it runs.
+- Reformat what other tools print into facts; do not pass their layout on.
+- Errors of the command line have the shape of every failure: the cause as
+  the outcome, then facts that help to resolve it.
+
 ## Tests
 
 - `just test` runs all tests; `just check` also runs the formatter, the lints

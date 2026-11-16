@@ -171,10 +171,21 @@ pub fn input_updates(before: &Value, after: &Value, only: &[String]) -> Vec<Inpu
         .collect()
 }
 
-/// Lines describing root inputs, all or only the given ones, with their
-/// revisions and sources. With another lock, marks inputs that differ from it.
-pub fn input_lines(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<String> {
-    let rows: Vec<[String; 4]> = root_inputs(lock)
+/// A root input as status shows it.
+#[derive(Debug, PartialEq, Eq)]
+pub struct InputRow {
+    pub name: String,
+    pub rev: String,
+    /// Where the input comes from; empty for an input that follows another.
+    pub url: String,
+    /// How the other lock differs: its revision, or that it lacks the input.
+    pub change: Option<String>,
+}
+
+/// Root inputs, all or only the given ones, with their revisions and
+/// sources. With another lock, says which inputs differ from it.
+pub fn input_rows(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<InputRow> {
+    root_inputs(lock)
         .into_iter()
         .filter(|name| only.is_empty() || only.contains(name))
         .map(|name| {
@@ -188,34 +199,21 @@ pub fn input_lines(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<
                 _ => String::new(),
             };
             let change = match other {
-                None => String::new(),
+                None => None,
                 Some(other) if !root_inputs(other).contains(&name) => {
-                    "  (not in the checkout)".to_string()
+                    Some("not in the checkout".to_string())
                 }
                 Some(other) => {
                     let next = input_rev(other, &name);
-                    if next == rev {
-                        String::new()
-                    } else {
-                        format!("  (checkout: {next})")
-                    }
+                    (next != rev).then(|| format!("→ {next} in the checkout"))
                 }
             };
-            [name, rev, url, change]
-        })
-        .collect();
-    let width = |column: usize| {
-        rows.iter()
-            .map(|row| row[column].chars().count())
-            .max()
-            .unwrap_or(0)
-    };
-    let (names, revs) = (width(0), width(1));
-    rows.iter()
-        .map(|[name, rev, url, change]| {
-            format!("  {name:<names$}  {rev:<revs$}  {url}{change}")
-                .trim_end()
-                .to_string()
+            InputRow {
+                name,
+                rev,
+                url,
+                change,
+            }
         })
         .collect()
 }

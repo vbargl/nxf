@@ -66,9 +66,44 @@ in the repository.
 
 ## Output
 
-The terminal output is the log; no log files are written. The current phase
-gets a bold cyan heading. Completed phases stay in scrollback with a quiet
-check mark. Raw Nix, Git and nh output stays hidden during successful tasks.
+The terminal output is the log; no log files are written. Raw Nix, Git and nh
+output stays hidden during successful tasks.
+
+```
+ash-twin · /etc/nixos
+
+[1/3] Checking input updates
+  ✓ nixpkgs   ab40acb1b3b0 → ca6fc441d5a6
+  · presets   ab40acb1b3b0   unchanged
+    Commit    75821d9 flake.lock: update nixpkgs (0 seconds ago)
+
+[2/3] Building configuration
+  ✓ Built
+    System    /nix/store/…-nixos-system-ash-twin
+    Packages  3 changed, 1 added, 1 removed
+    Size      9.31 GiB → 9.36 GiB (+52.1 MiB)
+
+[3/3] Activating configuration
+  ✓ Activated, boot default updated
+
+✓ Upgrade applied
+  Active now and configured for the next boot.
+```
+
+Every line is on one of four levels, each with one indentation and one style:
+
+| Level | Looks like | Holds |
+| --- | --- | --- |
+| Outcome | Column 0, bold, coloured | The one result of the run, always last |
+| Phase or section | Column 0, bold | The heading of a block |
+| Fact | Indented by 2, plain | A row with its state, or a label and its value |
+| Support | Muted | Details beneath a row, times, sources, notes |
+
+Labels and the names of inputs share one column. A mark carries the state of a
+row: `✓` done, `✗` failed, `!` needs attention, `·` nothing happened. Colour
+only repeats the state: green, red and yellow for the marks, blue for the
+phase headings. Without colour the levels still read from the marks, the
+indentation and the blank lines.
 
 Build progress comes from Nix's structured activity events. On a terminal, two
 rows update in place: the derivation count, and the current package with its
@@ -78,11 +113,15 @@ terminal width. A new input or derivation and the first builder line appear at
 once; later log lines and counts are limited to one update per second. The two
 rows are cleared when each tool exits. Counts are never guessed.
 
-One bold green outcome ends a successful run. A failure prints a bold red
-summary, the effects of earlier work, the last eight diagnostic lines of the
-failing tool, and a recovery command on its own line. A failed build does not
-start activation. An activation failure may leave partial changes, so nxf does
-not claim that it rolled back.
+One green outcome ends a successful run. A failure ends with a red one,
+followed by the cause in plain text, what it means for the run in muted text,
+and the command to retry on its own line. The cause is the last diagnostic
+lines of the failing tool, at most eight. A failed build does not start
+activation. An activation failure may leave partial changes, so nxf does not
+claim that it rolled back.
+
+On a terminal, the input being checked is shown until its row replaces it.
+Redirected output gets each row when it is finished.
 
 Colour and in-place updates are used on terminals only. Redirected output,
 `TERM=dumb`, `NO_COLOR` (also when empty) and `CLICOLOR=0` give append-only

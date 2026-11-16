@@ -45,8 +45,7 @@ fn updates_and_switches() {
         outcomes(&report),
         [pair("update", "done"), pair("switch", "done")]
     );
-    assert_contains(&result.stdout, "update: done");
-    assert_contains(&result.stdout, "switch: done");
+    assert_contains(&result.stdout, "  ✓ update\n  ✓ switch\n");
 }
 
 /// Nothing new and a running system that matches: nothing is built or activated.
@@ -98,7 +97,10 @@ fn failed_build_is_restored() {
         report["results"][0]["detail"].as_str().unwrap(),
         "a: Command exited with status 3.",
     );
-    assert_contains(&fx.run(&["status"]).stdout, "update: failed");
+    assert_contains(
+        &fx.run(&["status"]).stdout,
+        "  ✗ update    a: Command exited with status 3.",
+    );
 }
 
 /// The run does nothing while other files have uncommitted changes, but a
@@ -138,6 +140,6 @@ fn shared_state() {
     fx.unset("NXF_STATE");
     assert_contains(
         &fx.run(&["status"]).stdout,
-        "Running system matches the checkout.",
+        "Running system matches the checkout (",
     );
 }

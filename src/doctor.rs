@@ -4,6 +4,7 @@ use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
+use crate::output::Mark;
 use crate::status::system_commit;
 use crate::{flake, git, nixos, output};
 
@@ -12,16 +13,6 @@ pub enum Level {
     Ok,
     Warn,
     Fail,
-}
-
-impl Level {
-    fn label(self) -> &'static str {
-        match self {
-            Level::Ok => "ok",
-            Level::Warn => "warn",
-            Level::Fail => "fail",
-        }
-    }
 }
 
 pub struct Check {
@@ -236,27 +227,56 @@ pub fn checks() -> Vec<Check> {
     results
 }
 
-/// Prints one line for each check.
-pub fn print(results: &[Check]) {
+/// Prints one row for each check. Only the state has colour; what passed is
+/// supporting text, what did not stands out.
+pub fn print(results: &[Check], indent: usize) {
     for result in results {
+        let (mark, message) = match result.level {
+            Level::Ok => (Mark::Done, output::dim(&result.message)),
+            Level::Warn => (Mark::Attention, result.message.clone()),
+            Level::Fail => (Mark::Failed, result.message.clone()),
+        };
         output::line(&format!(
-            "{:<6}{:<10}{}",
-            result.level.label(),
+            "{:indent$}{} {:<width$}{message}",
+            "",
+            mark.styled(),
             result.name,
-            result.message
+            width = output::LABEL
         ));
+    }
+}
+
+fn counted(count: usize, noun: &str) -> String {
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {noun}{plural}")
+}
+
+/// The one outcome of the checks: `Err` when a check failed.
+pub fn verdict(results: &[Check]) -> Result<String, String> {
+    let count = |level: Level| {
+        results
+            .iter()
+            .filter(|result| result.level == level)
+            .count()
+    };
+    let (failed, warned) = (count(Level::Fail), count(Level::Warn));
+    let warnings = if warned > 0 {
+        format!(", {}", counted(warned, "warning"))
+    } else {
+        String::new()
+    };
+    if failed > 0 {
+        Err(format!("{} failed{warnings}", counted(failed, "check")))
+    } else if warned > 0 {
+        Ok(format!("Checks passed{warnings}"))
+    } else {
+        Ok("All checks passed".to_string())
     }
 }
 
 pub fn report() -> Result<(), String> {
     let results = checks();
-    print(&results);
-    let failed = results
-        .iter()
-        .filter(|result| result.level == Level::Fail)
-        .count();
-    if failed > 0 {
-        return Err(format!("{failed} check(s) failed."));
-    }
+    print(&results, 0);
+    output::success(&verdict(&results)?);
     Ok(())
 }

@@ -111,23 +111,20 @@ pub fn diff(old: &Path, new: &Path) -> Command {
     dix
 }
 
-fn is_count(line: &str) -> bool {
-    // "CHANGED (12)"
-    let Some((word, count)) = line.split_once(" (") else {
-        return false;
-    };
-    let Some(count) = count.strip_suffix(')') else {
-        return false;
-    };
-    !word.is_empty()
+/// A count line of dix, such as "CHANGED (12)", as "12 changed".
+fn count(line: &str) -> Option<String> {
+    let (word, count) = line.split_once(" (")?;
+    let count = count.strip_suffix(')')?;
+    let valid = !word.is_empty()
         && word.bytes().all(|byte| byte.is_ascii_uppercase())
         && !count.is_empty()
-        && count.bytes().all(|byte| byte.is_ascii_digit())
+        && count.bytes().all(|byte| byte.is_ascii_digit());
+    valid.then(|| format!("{count} {}", word.to_lowercase()))
 }
 
-/// The changed, added and removed package counts and the path and size
-/// totals between two systems, without the package lines.
-pub fn changes(old: &Path, new: &Path) -> Result<Vec<String>, String> {
+/// What changes between two systems, as labelled facts: the changed, added
+/// and removed package counts, and the closure size.
+pub fn changes(old: &Path, new: &Path) -> Result<Vec<(&'static str, String)>, String> {
     let output = Command::new("dix")
         .arg("--color=never")
         .arg("diff")
@@ -139,11 +136,20 @@ pub fn changes(old: &Path, new: &Path) -> Result<Vec<String>, String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter(|line| is_count(line) || line.starts_with("PATHS:") || line.starts_with("SIZE:"))
-        .map(str::to_string)
-        .collect())
+    let text = String::from_utf8_lossy(&output.stdout);
+    let counts: Vec<String> = text.lines().filter_map(count).collect();
+    let mut facts = vec![(
+        "Packages",
+        if counts.is_empty() {
+            "no changes".to_string()
+        } else {
+            counts.join(", ")
+        },
+    )];
+    if let Some(size) = text.lines().find_map(|line| line.strip_prefix("SIZE:")) {
+        facts.push(("Size", size.trim().replace("->", "→")));
+    }
+    Ok(facts)
 }
 
 /// The closure size of a system in bytes.
