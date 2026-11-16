@@ -15,7 +15,6 @@ pub const MODULE_FILE: &str = "nxf.nix";
 pub struct Options {
     pub dir: Option<PathBuf>,
     pub template: String,
-    pub host: Option<String>,
     pub hardware: bool,
 }
 
@@ -93,7 +92,6 @@ pub fn run(options: &Options) -> Result<(), String> {
             "{shown} is not empty; nxf init only founds a new machine flake."
         ));
     }
-    let host = options.host.clone().unwrap_or_else(nixos::hostname);
     std::fs::create_dir_all(&dir).map_err(|err| format!("cannot create {shown}: {err}"))?;
 
     output::start("Founding the machine flake");
@@ -117,7 +115,7 @@ pub fn run(options: &Options) -> Result<(), String> {
 
     git::init(&dir)?;
     if git::identity(&dir).is_none() {
-        git::set_identity(&dir, "nxf", &format!("nxf@{host}"))?;
+        git::set_identity(&dir, "nxf", &format!("nxf@{}", nixos::hostname()))?;
     }
     // Nix reads only tracked files of a Git flake.
     git::commit_all(&dir, "Found the machine flake")?;
@@ -135,9 +133,11 @@ pub fn run(options: &Options) -> Result<(), String> {
         source: "nxf init",
     };
     let mut checks = vec![doctor::tools()];
-    checks.extend(doctor::checkout(&location, &host));
+    checks.extend(doctor::checkout(&location));
     if checks.iter().all(|check| check.level != Level::Fail) {
-        checks.push(module(&dir, &host));
+        if let Ok(configuration) = flake::configuration(&dir) {
+            checks.push(module(&dir, &configuration));
+        }
     }
     doctor::print(&checks, 2);
     // The flake is founded whatever the checks say; they say what is left to do.

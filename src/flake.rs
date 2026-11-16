@@ -66,6 +66,37 @@ pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
+/// The name nxf expects the machine's configuration to have.
+pub const CONFIGURATION: &str = "default";
+
+/// Chooses the configuration nxf works with: the one named `default`, or the
+/// only one. Several without that name are not supported by design.
+pub fn choose(names: &[String]) -> Result<String, String> {
+    if names.iter().any(|name| name == CONFIGURATION) {
+        return Ok(CONFIGURATION.to_string());
+    }
+    match names {
+        [] => Err("The flake has no nixosConfigurations.".to_string()),
+        [only] => Ok(only.clone()),
+        several => Err(format!(
+            "The flake has {} nixosConfigurations and none is named {CONFIGURATION}\n{:<10}{}\nnxf works with one configuration for each flake; name it {CONFIGURATION} or keep only one.",
+            several.len(),
+            "Found",
+            several.join(", ")
+        )),
+    }
+}
+
+/// The configuration of a flake directory that nxf works with.
+pub fn configuration(dir: &Path) -> Result<String, String> {
+    choose(&configurations(dir).map_err(|err| {
+        format!(
+            "Cannot evaluate nixosConfigurations of {}\n{err}",
+            dir.display()
+        )
+    })?)
+}
+
 /// The lockfile of a flake directory.
 pub fn lock(dir: &Path) -> Result<Value, String> {
     let file = dir.join("flake.lock");

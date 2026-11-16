@@ -67,7 +67,7 @@ pub fn tools() -> Check {
 }
 
 /// Checks of the checkout, ending at the first one later checks depend on.
-pub fn checkout(location: &flake::Location, host: &str) -> Vec<Check> {
+pub fn checkout(location: &flake::Location) -> Vec<Check> {
     let dir = &location.dir;
     let shown = dir.display();
     let origin = if location.source == "default" {
@@ -144,22 +144,29 @@ pub fn checkout(location: &flake::Location, host: &str) -> Vec<Check> {
     results.push(match flake::configurations(dir) {
         Err(_) => check(
             Level::Fail,
-            "host",
+            "config",
             "cannot evaluate nixosConfigurations of the flake".to_string(),
         ),
-        Ok(hosts) if hosts.iter().any(|known| known == host) => check(
-            Level::Ok,
-            "host",
-            format!("nixosConfigurations.{host} exists"),
-        ),
-        Ok(hosts) => check(
-            Level::Fail,
-            "host",
-            format!(
-                "nixosConfigurations has no {host}; it has {}",
-                hosts.join(", ")
+        Ok(names) => match flake::choose(&names) {
+            Ok(name) if name == flake::CONFIGURATION => {
+                check(Level::Ok, "config", format!("nixosConfigurations.{name}"))
+            }
+            Ok(name) => check(
+                Level::Ok,
+                "config",
+                format!("nixosConfigurations.{name}, the only configuration"),
             ),
-        ),
+            Err(_) => check(
+                Level::Fail,
+                "config",
+                format!(
+                    "{} configurations ({}) and none is named {}; nxf works with one",
+                    names.len(),
+                    names.join(", "),
+                    flake::CONFIGURATION
+                ),
+            ),
+        },
     });
     results
 }
@@ -217,7 +224,7 @@ fn running(dir: Option<&Path>) -> Check {
 
 /// Runs all checks; a failure makes the doctor exit non-zero.
 pub fn checks() -> Vec<Check> {
-    let checkout = checkout(&flake::location(), &nixos::hostname());
+    let checkout = checkout(&flake::location());
     let passed = checkout.iter().all(|result| result.level != Level::Fail);
     let dir = passed.then(|| flake::location().dir);
     let mut results = vec![tools()];

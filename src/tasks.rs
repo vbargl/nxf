@@ -177,6 +177,8 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
 /// What a task needs to know about the run it is part of.
 struct Run<'a> {
     dir: &'a Path,
+    /// The configuration of the flake that is built.
+    configuration: &'a str,
     last: bool,
     upgrade: bool,
     /// The commit an earlier update task made, if any.
@@ -271,12 +273,12 @@ struct InputResult {
 }
 
 /// Leaves the lockfile committed or restored, never changed.
-fn update_input(dir: &Path, input: &str) -> Result<InputResult, String> {
+fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputResult, String> {
     let before = flake::lock(dir)?;
     let attempt = || -> Result<(), String> {
         flake::update(dir, &[input.to_string()])?;
         if git::changed(dir, "flake.lock") {
-            let system = nixos::build(dir)?;
+            let system = nixos::build(dir, configuration)?;
             git::commit_file(dir, "flake.lock", &format!("flake.lock: update {input}"))?;
             if let Some(tree) = git::clean_tree(dir) {
                 nixos::remember(&tree, &system)?;
@@ -347,7 +349,7 @@ fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
     let mut results = Vec::new();
     for input in &selected {
         let pending = output::pending(&format!("Checking input {input}"));
-        let result = update_input(dir, input);
+        let result = update_input(dir, run.configuration, input);
         output::settle(pending);
         let result = result?;
         output::row(
@@ -417,7 +419,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
     let running = nixos::running();
     output::start("Building configuration");
     let retry = format!("nxf {action}");
-    let built = nixos::build(dir).map_err(|err| {
+    let built = nixos::build(dir, run.configuration).map_err(|err| {
         stopped(
             run,
             "Configuration build failed",
@@ -554,6 +556,7 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
     let dir = flake::checkout()?;
     let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?))?;
     let chosen: Vec<&Task> = plan.tasks.iter().filter_map(|name| task(name)).collect();
+    let configuration = flake::configuration(&dir)?;
     let total: usize = chosen.iter().map(|task| task.phases).sum();
     let mut offset = 0;
     let mut update_commit = String::new();
@@ -567,6 +570,7 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
         let before = flake::lock(&dir)?;
         let context = Run {
             dir: &dir,
+            configuration: &configuration,
             last: index + 1 == chosen.len(),
             upgrade: given.iter().any(|word| word == "upgrade"),
             update_commit: &update_commit,

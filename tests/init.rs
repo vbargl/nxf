@@ -96,7 +96,7 @@ fn founds_a_flake() {
         "Found the machine flake\nflake.lock: lock the inputs"
     );
     for check in [
-        "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "host", "module",
+        "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "config", "module",
     ] {
         assert_eq!(
             status_of(&result.stdout, check),
@@ -186,36 +186,24 @@ fn template_without_module() {
     assert_eq!(git(&target, &["status", "--porcelain"]), "");
 }
 
-/// A flake for another machine is founded anywhere, as on an operator's
-/// computer, and checked for that host.
+/// A flake is founded anywhere, as on an operator's computer: the name of
+/// its one configuration does not have to be this machine's.
 #[test]
-fn for_another_host() {
+fn any_configuration_name() {
     let fx = fixture();
-    let target = fx.dir.join("staging/node-7");
-    let node = template(&fx, "node-7", "machine");
-    let result = fx.run(&[
-        "init",
-        target.to_str().unwrap(),
-        "--template",
-        &node,
-        "--host",
-        "node-7",
-    ]);
-    result.ok();
-    assert_eq!(status_of(&result.stdout, "host"), Some("ok"));
-    assert_eq!(status_of(&result.stdout, "module"), Some("ok"));
-    assert_contains(&result.stdout, "nixosConfigurations.node-7 exists");
-
-    // Without --host the same template is founded, and the missing host is reported.
-    let other = fx.dir.join("staging/unnamed");
-    let unnamed = fx.run(&["init", other.to_str().unwrap(), "--template", &node]);
-    unnamed.ok();
-    assert_eq!(status_of(&unnamed.stdout, "host"), Some("fail"));
-    assert_contains(
-        &unnamed.stdout,
-        "✓ Machine flake founded\n  ! 1 check failed; fix this before the first build.",
-    );
-    assert_eq!(git(&other, &["status", "--porcelain"]), "");
+    for name in ["default", "node-7"] {
+        let target = fx.dir.join("staging").join(name);
+        let result = fx.run(&[
+            "init",
+            target.to_str().unwrap(),
+            "--template",
+            &template(&fx, name, "machine"),
+        ]);
+        result.ok();
+        assert_eq!(status_of(&result.stdout, "config"), Some("ok"));
+        assert_eq!(status_of(&result.stdout, "module"), Some("ok"));
+        assert_contains(&result.stdout, &format!("nixosConfigurations.{name}"));
+    }
 }
 
 /// Without a directory the flake is founded where nxf looks for it, and a
@@ -320,17 +308,10 @@ fn identity_for_a_new_machine() {
     std::fs::write(fx.dir.join("gitconfig"), "[user]\n\tuseConfigOnly = true\n").unwrap();
     let target = fx.dir.join("fresh");
     let machine = template(&fx, "node-7", "machine");
-    fx.run(&[
-        "init",
-        target.to_str().unwrap(),
-        "--template",
-        &machine,
-        "--host",
-        "node-7",
-    ])
-    .ok();
+    fx.run(&["init", target.to_str().unwrap(), "--template", &machine])
+        .ok();
     assert_eq!(
         git(&target, &["log", "-1", "--format=%an <%ae>"]),
-        "nxf <nxf@node-7>"
+        format!("nxf <nxf@{}>", hostname())
     );
 }

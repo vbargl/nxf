@@ -554,3 +554,35 @@ fn json() {
     );
     assert_eq!(fx.locked("a"), old);
 }
+
+/// The configuration named default is built; without it the only one is, and
+/// several without that name run nothing.
+#[test]
+fn configuration() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let file = fx.checkout.join("flake.nix");
+    let single = std::fs::read_to_string(&file).unwrap();
+    let host = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
+    fx.run(&["build"]).ok();
+    assert_contains(&fx.nh_calls()[0], &format!("# --hostname {} ", hostname()));
+
+    let several = single.replace(&host, &format!("{host} nixosConfigurations.other = {{ }};"));
+    std::fs::write(&file, &several).unwrap();
+    commit(&fx.checkout, "two configurations");
+    let ambiguous = fx.run(&["build"]);
+    assert_ne!(ambiguous.code, 0);
+    assert_contains(
+        &ambiguous.stderr,
+        "✗ The flake has 2 nixosConfigurations and none is named default",
+    );
+    assert_eq!(fx.nh_calls().len(), 1);
+
+    std::fs::write(
+        &file,
+        several.replace("nixosConfigurations.other", "nixosConfigurations.default"),
+    )
+    .unwrap();
+    commit(&fx.checkout, "a default configuration");
+    fx.run(&["build"]).ok();
+    assert_contains(&fx.nh_calls()[1], "# --hostname default ");
+}

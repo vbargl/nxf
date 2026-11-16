@@ -131,3 +131,20 @@ fn configurations() {
     let fx = fixture();
     assert_eq!(flake::configurations(&fx.checkout).unwrap(), [hostname()]);
 }
+
+/// The configuration is the one named default, then the only one.
+#[test]
+fn choose() {
+    assert_eq!(flake::choose(&names(&["default"])).unwrap(), "default");
+    assert_eq!(flake::choose(&names(&["node-7"])).unwrap(), "node-7");
+    assert_eq!(
+        flake::choose(&names(&["a", "default", "b"])).unwrap(),
+        "default"
+    );
+    assert!(flake::choose(&names(&["a", "b"]))
+        .unwrap_err()
+        .contains("none is named default"));
+    assert!(flake::choose(&[])
+        .unwrap_err()
+        .contains("no nixosConfigurations"));
+}

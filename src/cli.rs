@@ -79,9 +79,6 @@ enum Cmd {
         /// The template, as `<flake>#<name>`, like `nix flake init --template`.
         #[arg(long)]
         template: String,
-        /// The host the flake is for, when it is not this machine.
-        #[arg(long)]
-        host: Option<String>,
         /// Write hardware.nix with nixos-generate-config, on the machine itself.
         #[arg(long)]
         hardware: bool,
@@ -194,12 +191,10 @@ fn run_command(command: Cmd) -> Result<bool, String> {
         Cmd::Init {
             dir,
             template,
-            host,
             hardware,
         } => init::run(&init::Options {
             dir,
             template,
-            host,
             hardware,
         })
         .map(|()| true),

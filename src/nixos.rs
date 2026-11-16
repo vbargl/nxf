@@ -74,13 +74,14 @@ pub fn updater_dir() -> PathBuf {
 }
 
 /// Runs nh on a flake installable or an already built store path.
-fn nh(action: &str, installable: &str) -> Result<PathBuf, String> {
+fn nh(action: &str, installable: &[&str]) -> Result<PathBuf, String> {
     let state = state_dir();
     std::fs::create_dir_all(&state)
         .map_err(|err| format!("cannot create {}: {err}", state.display()))?;
     let result = state.join("result");
     let mut nh = Command::new("nh");
-    nh.args(["os", action, installable])
+    nh.args(["os", action])
+        .args(installable)
         .args(["--no-nom", "--diff", "never", "--quiet"])
         .args(["--log-format", "internal-json", "--print-build-logs"])
         .arg("--out-link")
@@ -95,13 +96,20 @@ fn nh(action: &str, installable: &str) -> Result<PathBuf, String> {
 }
 
 /// Builds the flake. The `#` distinguishes its directory from a store path.
-pub fn build(flake: &Path) -> Result<PathBuf, String> {
-    nh("build", &format!("{}#", flake.display()))
+pub fn build(flake: &Path, configuration: &str) -> Result<PathBuf, String> {
+    nh(
+        "build",
+        &[
+            &format!("{}#", flake.display()),
+            "--hostname",
+            configuration,
+        ],
+    )
 }
 
 /// Runs test, boot or switch on a built system.
 pub fn activate(action: &str, system: &Path) -> Result<PathBuf, String> {
-    nh(action, &system.to_string_lossy())
+    nh(action, &[&system.to_string_lossy()])
 }
 
 /// The command printing the full package diff between two systems.

@@ -25,7 +25,7 @@ fn healthy() {
     let result = fx.run(&["doctor"]);
     result.ok();
     for check in [
-        "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "host", "state",
+        "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "config", "state",
     ] {
         assert_eq!(
             status_of(&result.stdout, check),
@@ -92,20 +92,36 @@ fn uncommitted() {
     assert_eq!(status_of(&result.stdout, "changes"), Some("warn"));
 }
 
-/// A flake without this host's configuration fails.
+/// The configuration is the one named default, or the only one; several
+/// without that name fail.
 #[test]
-fn unknown_host() {
+fn configuration() {
     let fx = fixture();
     let file = fx.checkout.join("flake.nix");
-    let text = std::fs::read_to_string(&file)
-        .unwrap()
-        .replace(&format!("\"{}\"", common::hostname()), "\"elsewhere\"");
-    std::fs::write(&file, text).unwrap();
-    commit(&fx.checkout, "other host");
-    let result = fx.run(&["doctor"]);
-    assert_ne!(result.code, 0);
-    assert_eq!(status_of(&result.stdout, "host"), Some("fail"));
-    assert_contains(&result.stdout, "it has elsewhere");
+    let single = std::fs::read_to_string(&file).unwrap();
+    let host = format!("nixosConfigurations.\"{}\" = {{ }};", common::hostname());
+    assert!(single.contains(&host));
+    let only = fx.run(&["doctor"]);
+    assert_eq!(status_of(&only.stdout, "config"), Some("ok"));
+    assert_contains(&only.stdout, "the only configuration");
+
+    let several = single.replace(&host, &format!("{host} nixosConfigurations.other = {{ }};"));
+    std::fs::write(&file, &several).unwrap();
+    commit(&fx.checkout, "two configurations");
+    let ambiguous = fx.run(&["doctor"]);
+    assert_ne!(ambiguous.code, 0);
+    assert_eq!(status_of(&ambiguous.stdout, "config"), Some("fail"));
+    assert_contains(&ambiguous.stdout, "none is named default");
+
+    std::fs::write(
+        &file,
+        several.replace("nixosConfigurations.other", "nixosConfigurations.default"),
+    )
+    .unwrap();
+    commit(&fx.checkout, "a default configuration");
+    let named = fx.run(&["doctor"]);
+    named.ok();
+    assert_contains(&named.stdout, "config    nixosConfigurations.default\n");
 }
 
 /// A read-only checkout fails, as update could not commit.

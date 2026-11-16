@@ -51,6 +51,14 @@ through `upgrade`, so one of those must be given. A name that is neither a
 task nor an input is an error, and a task name wins over an input of the same
 name.
 
+## One configuration
+
+A machine flake holds the configuration of one machine. nxf builds
+`nixosConfigurations.default`. When the flake has no configuration of that
+name and exactly one of another name, nxf builds that one, so a flake that
+names its configuration after the machine also works. Several configurations
+without one named `default` are an error: nxf does not choose between them.
+
 ## The lockfile is committed or restored
 
 `update` never leaves the lockfile changed. Each input is updated on its own,
@@ -197,7 +205,7 @@ and reading status never starts a build, an activation or a retry.
   commit, and has a lockfile;
 - `writable`, `identity`: `update` can write and commit the lockfile;
 - `changes`: no uncommitted changes, whose builds would not be remembered;
-- `host`: the flake has a configuration for this host name, as nh selects;
+- `config`: the flake has the one configuration nxf works with;
 - `state`: builds can be remembered;
 - `running`: the running system was built by nxf or the updater.
 
@@ -213,7 +221,7 @@ The flake provides the package and a NixOS module:
   inputs.nxf.url = "github:vbargl/nxf";
 
   outputs = { nixpkgs, nxf, ... }: {
-    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+    nixosConfigurations.default = nixpkgs.lib.nixosSystem {
       modules = [
         nxf.nixosModules.default
         { services.nxf.autoUpdate.enable = true; }
@@ -233,14 +241,14 @@ machines that do not have them on `PATH`.
 
 ```sh
 nxf init --template github:example/presets#machine                  # into /etc/nixos
-nxf init ./staging/node-7 --template ./presets#machine --host node-7
+nxf init ./staging/node-7 --template ./presets#machine
 nxf init --template github:example/presets#machine --hardware
 ```
 
 nxf does the mechanics; the template supplies the content. The template is
 any flake template, named as for `nix flake init --template`, and its files
 have no meaning to nxf. All nxf needs from the result is a flake with a
-`nixosConfigurations.<host>` output.
+configuration under `nixosConfigurations`; see [One configuration](#one-configuration).
 
 1. The directory is `NXF_FLAKE` or `/etc/nixos` unless one is given. It must
    be empty or not exist; init never writes into existing content.
@@ -254,11 +262,11 @@ have no meaning to nxf. All nxf needs from the result is a flake with a
 5. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
    identity gets `nxf <nxf@host>` as its own.
-6. The checks of `nxf doctor` that concern the checkout run for the host, and
+6. The checks of `nxf doctor` that concern the checkout run, and
    `module` says whether the configuration imports the nxf module.
 
-`--host` names the machine the flake is for, so a flake can be founded on
-another computer, in any directory, and copied to the machine later.
+A flake can be founded on another computer, in any directory, and copied to
+the machine later: nothing in it has to match the computer that runs init.
 
 `nxf.nix` only has an effect when the flake imports the nxf module. The
 template does that with three lines, and keeping the `nxf` input up to date
@@ -269,7 +277,7 @@ is up to the owner of the flake, like every other input:
   inputs.nxf.url = "github:vbargl/nxf";
 
   outputs = { nixpkgs, nxf, ... }: {
-    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+    nixosConfigurations.default = nixpkgs.lib.nixosSystem {
       modules = [
         nxf.nixosModules.default
         ./nxf.nix

@@ -20,7 +20,7 @@ change them here first.
 - A failed update never changes the running system.
 - The machine is never rebooted by nxf.
 - nxf is a general tool. It requires a local Git flake with a `flake.lock`
-  and a `nixosConfigurations.<host>` output, and nothing else: no particular
+  and one configuration under `nixosConfigurations`, and nothing else: no particular
   files, identities, presets or cluster. What is specific to one environment
   enters through general interfaces only: the options of the module, the
   health checks, and a template given by reference.
