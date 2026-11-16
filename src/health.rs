@@ -105,9 +105,9 @@ pub fn check() -> Health {
     }
     let deadline = Instant::now() + seconds("NXF_HEALTH_TIMEOUT", 300);
     let interval = seconds("NXF_HEALTH_INTERVAL", 10);
-    // What each check said when it last ran to its end. A run that the
-    // deadline cut short says less than the one before it.
-    let mut reasons: Vec<(String, String)> = Vec::new();
+    // How each check ended when it last ran to its end: passed, or why not.
+    // A run that the deadline cut short says less than the one before it.
+    let mut ended: Vec<(String, Option<String>)> = Vec::new();
     loop {
         let mut failed = Vec::new();
         for check in checks() {
@@ -116,24 +116,23 @@ pub fn check() -> Health {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let Err(why) = passes(&check, deadline) else {
-                continue;
-            };
-            let known = reasons.iter().position(|(check, _)| *check == name);
-            let why = match known {
-                Some(index) if why == TIMED_OUT => reasons[index].1.clone(),
-                Some(index) => {
-                    reasons[index].1 = why.clone();
-                    why
+            let result = passes(&check, deadline).err();
+            let known = ended.iter().position(|(check, _)| *check == name);
+            let result = match (known, result.as_deref() == Some(TIMED_OUT)) {
+                (Some(index), true) => ended[index].1.clone(),
+                (Some(index), false) => {
+                    ended[index].1 = result.clone();
+                    result
                 }
-                None => {
-                    if why != TIMED_OUT {
-                        reasons.push((name.clone(), why.clone()));
-                    }
-                    why
+                (None, true) => result,
+                (None, false) => {
+                    ended.push((name.clone(), result.clone()));
+                    result
                 }
             };
-            failed.push(format!("{name}: {why}"));
+            if let Some(why) = result {
+                failed.push(format!("{name}: {why}"));
+            }
         }
         if failed.is_empty() {
             return Health::Healthy;
