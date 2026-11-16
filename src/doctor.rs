@@ -30,7 +30,7 @@ pub struct Check {
     pub message: String,
 }
 
-fn check(level: Level, name: &'static str, message: String) -> Check {
+pub fn check(level: Level, name: &'static str, message: String) -> Check {
     Check {
         level,
         name,
@@ -52,7 +52,7 @@ fn user() -> String {
     std::env::var("USER").unwrap_or_else(|_| "you".to_string())
 }
 
-fn tools() -> Check {
+pub fn tools() -> Check {
     let missing: Vec<&str> = ["nix", "nh", "git", "dix"]
         .into_iter()
         .filter(|tool| !on_path(tool))
@@ -76,8 +76,7 @@ fn tools() -> Check {
 }
 
 /// Checks of the checkout, ending at the first one later checks depend on.
-fn checkout() -> Vec<Check> {
-    let location = flake::location();
+pub fn checkout(location: &flake::Location, host: &str) -> Vec<Check> {
     let dir = &location.dir;
     let shown = dir.display();
     let origin = if location.source == "default" {
@@ -151,14 +150,13 @@ fn checkout() -> Vec<Check> {
             "uncommitted changes; builds of them are not remembered for status".to_string(),
         )
     });
-    let host = nixos::hostname();
     results.push(match flake::configurations(dir) {
         Err(_) => check(
             Level::Fail,
             "host",
             "cannot evaluate nixosConfigurations of the flake".to_string(),
         ),
-        Ok(hosts) if hosts.contains(&host) => check(
+        Ok(hosts) if hosts.iter().any(|known| known == host) => check(
             Level::Ok,
             "host",
             format!("nixosConfigurations.{host} exists"),
@@ -228,7 +226,7 @@ fn running(dir: Option<&Path>) -> Check {
 
 /// Runs all checks; a failure makes the doctor exit non-zero.
 pub fn checks() -> Vec<Check> {
-    let checkout = checkout();
+    let checkout = checkout(&flake::location(), &nixos::hostname());
     let passed = checkout.iter().all(|result| result.level != Level::Fail);
     let dir = passed.then(|| flake::location().dir);
     let mut results = vec![tools()];
@@ -238,9 +236,9 @@ pub fn checks() -> Vec<Check> {
     results
 }
 
-pub fn report() -> Result<(), String> {
-    let results = checks();
-    for result in &results {
+/// Prints one line for each check.
+pub fn print(results: &[Check]) {
+    for result in results {
         output::line(&format!(
             "{:<6}{:<10}{}",
             result.level.label(),
@@ -248,6 +246,11 @@ pub fn report() -> Result<(), String> {
             result.message
         ));
     }
+}
+
+pub fn report() -> Result<(), String> {
+    let results = checks();
+    print(&results);
     let failed = results
         .iter()
         .filter(|result| result.level == Level::Fail)

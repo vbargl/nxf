@@ -19,6 +19,13 @@ change them here first.
   commits the lockfile only after it built, and restores it otherwise.
 - A failed update never changes the running system.
 - The machine is never rebooted by nxf.
+- nxf is a general tool. It requires a local Git flake with a `flake.lock`
+  and a `nixosConfigurations.<host>` output, and nothing else: no particular
+  files, identities, presets or cluster. What is specific to one environment
+  enters through general interfaces only: the options of the module, the
+  health checks, and a template given by reference.
+- `nxf init` does not edit the files of a template. It adds `nxf.nix` and
+  reports whether the configuration imports the module.
 - Health checks come from the configuration. nxf ships none and knows nothing
   about what they check.
 - `nxf status` is the only way results reach people: no notification
@@ -33,6 +40,7 @@ change them here first.
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
 | `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
 | `src/hold.rs` | The hold on automatic updates |
+| `src/init.rs` | Founding a machine flake from a template |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -44,6 +52,8 @@ change them here first.
 | `nix/package.nix` | The package |
 | `nix/module.nix` | The NixOS module |
 | `nix/module-check.nix` | The check that evaluates the module |
+| `nix/init-module.nix` | The generator of `nix/nxf.nix` from the options of the module |
+| `nix/nxf.nix` | The module file `nxf init` writes; generated, renew it with `just generate` |
 
 - The version lives in `Cargo.toml`; the package reads it. Bump it with every
   change of behaviour.
@@ -56,8 +66,8 @@ change them here first.
 
 ## Commands and tasks
 
-- `status`, `doctor`, `version`, `hold`, `release` and `auto-update` are
-  commands. A command is
+- `status`, `doctor`, `version`, `init`, `hold`, `release` and `auto-update`
+  are commands. A command is
   recognised only as the first word and rejects extra arguments, so
   `nxf status update` fails instead of ignoring `update`.
 - Everything else is a list of tasks. Unknown words are an error and nothing

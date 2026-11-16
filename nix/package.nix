@@ -23,6 +23,7 @@ rustPlatform.buildRustPackage {
       ../Cargo.toml
       ../Cargo.lock
       ../src
+      ../nix/nxf.nix
       ../tests
     ];
   };

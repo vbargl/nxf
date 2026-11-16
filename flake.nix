@@ -16,6 +16,7 @@
       packages = each (pkgs: rec {
         nxf = pkgs.callPackage ./nix/package.nix { };
         default = nxf;
+        initModule = import ./nix/init-module.nix { inherit self nixpkgs pkgs; };
       });
 
       nixosModules.default = import ./nix/module.nix self;
@@ -23,6 +24,11 @@
       checks = each (pkgs: {
         package = self.packages.${pkgs.stdenv.hostPlatform.system}.nxf;
         module = import ./nix/module-check.nix { inherit self nixpkgs pkgs; };
+        # nix/nxf.nix is generated; `just generate` renews it.
+        init-module =
+          pkgs.runCommand "nxf-init-module-check" { } "diff --unified ${./nix/nxf.nix} ${
+            self.packages.${pkgs.stdenv.hostPlatform.system}.initModule
+          } && touch $out";
       });
 
       devShells = each (pkgs: {

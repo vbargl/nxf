@@ -15,3 +15,7 @@ check: lint test
 format:
     nix develop --command cargo fmt
     nix fmt
+
+# Renew nix/nxf.nix from the options of the module.
+generate:
+    cp --no-preserve=mode "$(nix build .#initModule --no-link --print-out-paths)" nix/nxf.nix

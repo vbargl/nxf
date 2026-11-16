@@ -109,12 +109,11 @@ in
             }
           else
             null;
-        defaultText = lib.literalExpression ''
-          for root { name = "nxf"; email = "nxf@<hostName>"; }, otherwise null
-        '';
+        defaultText = lib.literalExpression ''{ name = "nxf"; email = "nxf@''${config.networking.hostName}"; }'';
         description = ''
           The identity of the lockfile commits. With null, Git's own
-          configuration decides, as for commits the user makes by hand.
+          configuration decides, as for commits the user makes by hand; null
+          is the default when `user` is not root.
         '';
       };
 

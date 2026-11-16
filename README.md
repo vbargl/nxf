@@ -18,6 +18,7 @@ changes to the flake itself.
 | `nxf doctor` | Check that nxf can work on this machine |
 | `nxf version` | Print the version of nxf |
 | `nxf version --system` | Print the running system's flake commit |
+| `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
@@ -188,6 +189,60 @@ The flake provides the package and a NixOS module:
 `services.nxf.autoUpdate.enable` does the same and adds the timer. The package
 alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git and Nix for
 machines that do not have them on `PATH`.
+
+## Founding a machine flake
+
+```sh
+nxf init --template github:example/presets#machine                  # into /etc/nixos
+nxf init ./staging/node-7 --template ./presets#machine --host node-7
+nxf init --template github:example/presets#machine --hardware
+```
+
+nxf does the mechanics; the template supplies the content. The template is
+any flake template, named as for `nix flake init --template`, and its files
+have no meaning to nxf. All nxf needs from the result is a flake with a
+`nixosConfigurations.<host>` output.
+
+1. The directory is `NXF_FLAKE` or `/etc/nixos` unless one is given. It must
+   be empty or not exist; init never writes into existing content.
+2. The template is unpacked.
+3. With `--hardware`, `hardware.nix` is written by `nixos-generate-config`.
+   Use it on the machine itself.
+4. `nxf.nix` is added: a module file that enables automatic updates and shows
+   every option of the nxf module commented out with its default. It comes
+   from the nxf version that runs init. A template that brings its own
+   `nxf.nix` keeps it.
+5. The directory becomes a Git repository without a remote, the inputs are
+   locked, and everything is committed. A repository for which Git has no
+   identity gets `nxf <nxf@host>` as its own.
+6. The checks of `nxf doctor` that concern the checkout run for the host, and
+   `module` says whether the configuration imports the nxf module.
+
+`--host` names the machine the flake is for, so a flake can be founded on
+another computer, in any directory, and copied to the machine later.
+
+`nxf.nix` only has an effect when the flake imports the nxf module. The
+template does that with three lines, and keeping the `nxf` input up to date
+is up to the owner of the flake, like every other input:
+
+```nix
+{
+  inputs.nxf.url = "github:vbargl/nxf";
+
+  outputs = { nixpkgs, nxf, ... }: {
+    nixosConfigurations.machine = nixpkgs.lib.nixosSystem {
+      modules = [
+        nxf.nixosModules.default
+        ./nxf.nix
+        ./configuration.nix
+      ];
+    };
+  };
+}
+```
+
+A template without these lines is founded all the same; the `module` check
+then warns and names the lines to add.
 
 ## Automatic updates
 

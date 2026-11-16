@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::{auto_update, doctor, hold, nixos, output, status, tasks};
+use crate::{auto_update, doctor, hold, init, nixos, output, status, tasks};
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
 ///
@@ -72,6 +72,20 @@ enum Cmd {
         #[arg(long)]
         system: bool,
     },
+    /// Found a machine flake from a template, as a Git repository without a remote.
+    Init {
+        /// Where the flake is founded; NXF_FLAKE or /etc/nixos when not given.
+        dir: Option<PathBuf>,
+        /// The template, as `<flake>#<name>`, like `nix flake init --template`.
+        #[arg(long)]
+        template: String,
+        /// The host the flake is for, when it is not this machine.
+        #[arg(long)]
+        host: Option<String>,
+        /// Write hardware.nix with nixos-generate-config, on the machine itself.
+        #[arg(long)]
+        hardware: bool,
+    },
     /// Hold automatic updates back, with a reason, until released or until a time.
     Hold {
         /// Why updates are held; status shows it.
@@ -98,6 +112,7 @@ const COMMANDS: &[&str] = &[
     "status",
     "doctor",
     "version",
+    "init",
     "hold",
     "release",
     "auto-update",
@@ -170,6 +185,18 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
             Ok(true)
         }
+        Cmd::Init {
+            dir,
+            template,
+            host,
+            hardware,
+        } => init::run(&init::Options {
+            dir,
+            template,
+            host,
+            hardware,
+        })
+        .map(|()| true),
         Cmd::Hold {
             reason,
             until,

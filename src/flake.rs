@@ -219,3 +219,45 @@ pub fn input_lines(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<
         })
         .collect()
 }
+
+fn nix(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("nix")
+        .args(args)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|err| format!("cannot run nix: {err}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Unpacks a flake template, given as `<flake>#<name>`, into the directory.
+pub fn unpack(dir: &Path, template: &str) -> Result<(), String> {
+    nix(dir, &["flake", "init", "--template", template]).map(drop)
+}
+
+/// Writes the lockfile of the flake in the directory.
+pub fn write_lock(dir: &Path) -> Result<(), String> {
+    nix(dir, &["flake", "lock"]).map(drop)
+}
+
+/// Whether the host's configuration has the options of the nxf module.
+pub fn uses_module(dir: &Path, host: &str) -> Result<bool, String> {
+    let options = format!(
+        "{}#nixosConfigurations.\"{host}\".options.services",
+        dir.display()
+    );
+    let found = nix(
+        dir,
+        &[
+            "eval",
+            "--json",
+            &options,
+            "--apply",
+            "services: services ? nxf",
+        ],
+    )?;
+    Ok(found.trim() == "true")
+}

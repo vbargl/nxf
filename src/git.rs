@@ -120,3 +120,29 @@ pub fn commit_file(dir: &Path, file: &str, message: &str) -> Result<(), String> 
     .join("\n");
     Err(format!("git commit failed: {}", said.trim()))
 }
+
+/// Makes the directory a repository without a remote.
+pub fn init(dir: &Path) -> Result<(), String> {
+    text(dir, &["init", "--quiet", "--initial-branch", "main"]).map(drop)
+}
+
+/// Sets the identity of commits made in this repository.
+pub fn set_identity(dir: &Path, name: &str, email: &str) -> Result<(), String> {
+    text(dir, &["config", "user.name", name])?;
+    text(dir, &["config", "user.email", email]).map(drop)
+}
+
+/// Commits every file that is not ignored.
+pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
+    text(dir, &["add", "--all"])?;
+    let output = git(dir, &["commit", "--quiet", "--message", message])?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let said = [
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    ]
+    .join("\n");
+    Err(format!("git commit failed: {}", said.trim()))
+}
