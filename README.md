@@ -491,25 +491,30 @@ hold with an end stops holding at that time. Tasks run by hand are not held.
 
 ### Who runs it, and who may work with it
 
-The update always runs as root: no sudo, no personal SSH configuration. Root
-owns the flake directory and the state in `/var/lib/nxf`, and the group `nxf`
-may write them. The module creates the group; whoever is in it can work with
-nxf, with no other setting:
+The update runs as the system user `nxf`, not as root. It has a home of its
+own, `/var/lib/nxf-home`, for its SSH configuration and keys, and commits with
+the identity of `gitIdentity`. Only the switch needs root, and nh gets it with
+sudo. The module therefore lets the group `nxf` use sudo without a password:
+an unattended run cannot answer a prompt.
+
+Root owns the flake directory and the state in `/var/lib/nxf`, and the group
+`nxf` may write them. The module creates the group, and the user `nxf` is in
+it. Whoever else is in it can work with nxf, with no other setting:
 
 ```nix
 users.users.alice.extraGroups = [ "nxf" ];
 ```
 
-A member runs `update`, `build` and the other tasks on the checkout with their
-own Git identity, and holds or releases updates. `switch`, `boot` and `test`
-elevate with sudo, which nh calls, so the member must also be allowed to use
-it. Members can change what root runs, so the group is trusted like root.
+A member runs `update`, `build`, `switch` and the other tasks on the checkout
+with their own Git identity, and holds or releases updates. The group is
+trusted like root: what its members write is what the switch activates, and
+sudo asks them for no password.
 
-The module hands over only what nxf changes: the directory, `flake.lock` and
-the `.git` repository, which it sets to `core.sharedRepository = group`. Other
-files, such as `secrets/`, keep their owner and mode. nxf creates its files
-writable by the group while the checkout is, and the module makes Git trust
-the checkout, which root owns, for every user.
+The module hands over only what nxf changes: the directory, `flake.lock`, the
+`.git` repository, which it sets to `core.sharedRepository = group`, and the
+state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
+its files writable by the group while the checkout is, and the module makes
+Git trust the checkout, which root owns, for every user.
 
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
@@ -527,9 +532,10 @@ tokens in `nixConfigFile`, a nix.conf fragment:
 access-tokens = github.com=TOKEN
 ```
 
-Keep both files out of the Nix store and readable only by root, for example
-with sops-nix or agenix. Inputs over SSH also work: the service runs `ssh` in
-batch mode with root's SSH configuration and keys.
+Keep both files out of the Nix store and readable only by the user `nxf`, for
+example with sops-nix or agenix. Inputs over SSH also work: the service runs
+`ssh` in batch mode with the configuration and keys in `/var/lib/nxf-home/.ssh`,
+and the host keys it must trust in the same place.
 
 ### Operating it
 

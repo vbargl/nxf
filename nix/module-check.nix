@@ -68,6 +68,15 @@ pkgs.runCommand "nxf-module-check"
     tmpfiles = builtins.concatStringsSep "\n" root.systemd.tmpfiles.rules;
     rootGroup = builtins.toJSON (builtins.hasAttr "nxf" root.users.groups);
     commandGroup = builtins.toJSON (builtins.hasAttr "nxf" command.users.groups);
+    rootUser = root.users.users.nxf.group;
+    rootSudo = builtins.toJSON (
+      builtins.any (
+        rule: rule.groups == [ "nxf" ] && (builtins.head rule.commands).options == [ "NOPASSWD" ]
+      ) root.security.sudo.extraRules
+    );
+    commandSudo = builtins.toJSON (
+      builtins.any (rule: rule.groups == [ "nxf" ]) command.security.sudo.extraRules
+    );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
     passAsFile = [
@@ -85,7 +94,7 @@ pkgs.runCommand "nxf-module-check"
     has() { grep --quiet --fixed-strings -- "$2" "$1" || { echo "missing in $1: $2"; cat "$1"; exit 1; }; }
     lacks() { ! grep --quiet --fixed-strings -- "$2" "$1" || { echo "unexpected in $1: $2"; cat "$1"; exit 1; }; }
 
-    has "$rootServicePath" 'User=root'
+    has "$rootServicePath" 'User=nxf'
     has "$rootServicePath" 'bin/nxf auto-update'
     has "$rootServicePath" '"NXF_FLAKE=/etc/nixos"'
     has "$rootServicePath" '"NXF_STATE=/var/lib/nxf"'
@@ -100,10 +109,17 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
     has "$healthCheck" 'systemctl --failed --no-legend'
-    # Root runs it whatever the machine, and the group keeps what it writes.
+    # The group keeps what the update writes, and only the switch is elevated.
     has "$rootServicePath" 'Group=nxf'
     has "$rootServicePath" 'UMask=0002'
-    has "$rootServicePath" 'StateDirectoryMode=2775'
+    has "$rootServicePath" '"HOME=/var/lib/nxf-home"'
+    has "$rootServicePath" '/run/wrappers'
+    has "$rootServicePath" 'nxf-permissions.service'
+    lacks "$rootServicePath" 'StateDirectory'
+    has "$permissionsPath" 'chown --recursive root:nxf "$state"'
+    test "$rootUser" = nxf
+    test "$rootSudo" = true
+    test "$commandSudo" = true
     has "$tmpfilesPath" 'd /var/lib/nxf 2775 root nxf -'
     has "$permissionsUnitPath" 'Type=oneshot'
     has "$permissionsPath" 'chown root:nxf "$flake"'
@@ -121,13 +137,11 @@ pkgs.runCommand "nxf-module-check"
     has "$rootTimerPath" 'FixedRandomDelay=true'
     has "$rootTimerPath" 'Persistent=true'
 
-    has "$plainServicePath" 'User=root'
-    has "$plainServicePath" '"HOME=/root"'
+    has "$plainServicePath" 'User=nxf'
     has "$plainServicePath" '"NXF_FLAKE=/srv/machine"'
     lacks "$plainServicePath" 'GIT_COMMITTER_EMAIL'
     lacks "$plainServicePath" 'GIT_CONFIG_COUNT'
     lacks "$plainServicePath" 'NIX_CONFIG'
-    lacks "$plainServicePath" '/run/wrappers'
     has "$plainPermissionsPath" "flake=/srv/machine"
     has "$plainGitconfig" 'directory = "/srv/machine"'
     has "$plainTimerPath" 'OnCalendar=hourly'

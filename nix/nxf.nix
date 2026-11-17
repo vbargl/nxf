@@ -8,7 +8,7 @@
   # Directory of the machine flake: a local Git repository with a
   # `flake.lock` and one configuration under `nixosConfigurations`. Root
   # owns it and the group `nxf` may write it, so every member of the group
-  # can work with nxf.
+  # can work with nxf, and so can the user `nxf` that runs the update.
   # services.nxf.flake = "/etc/nixos";
 
   services.nxf.autoUpdate = {
@@ -44,7 +44,7 @@
 
     # A file in the format of git-credential-store, one
     # `https://user:token@host` line per host, for inputs fetched with Git
-    # over HTTPS. Only root must be able to read it.
+    # over HTTPS. Only the user `nxf` must be able to read it.
     # gitCredentialsFile = null;
 
     # A nix.conf fragment for the update only, such as

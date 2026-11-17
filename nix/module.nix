@@ -9,7 +9,9 @@ self:
 let
   cfg = config.services.nxf;
   auto = cfg.autoUpdate;
+  # The group, and the user of the same name that runs the update.
   group = "nxf";
+  home = "/var/lib/nxf-home";
 
   gitConfig = lib.optional (auto.gitCredentialsFile != null) {
     key = "credential.helper";
@@ -44,7 +46,7 @@ in
         Directory of the machine flake: a local Git repository with a
         `flake.lock` and one configuration under `nixosConfigurations`. Root
         owns it and the group `nxf` may write it, so every member of the group
-        can work with nxf.
+        can work with nxf, and so can the user `nxf` that runs the update.
       '';
     };
 
@@ -104,7 +106,7 @@ in
         description = ''
           A file in the format of git-credential-store, one
           `https://user:token@host` line per host, for inputs fetched with Git
-          over HTTPS. Only root must be able to read it.
+          over HTTPS. Only the user `nxf` must be able to read it.
         '';
       };
 
@@ -166,15 +168,38 @@ in
       # state of the updater. Root owns both, always.
       users.groups.${group} = { };
 
+      # The update runs as this user, not as root, with an SSH configuration and
+      # Git credentials of its own. Only the switch is elevated, with sudo, and
+      # that needs no password: nh calls sudo for it, and an unattended run
+      # cannot answer. The group is trusted like root, because what it writes
+      # is what the switch activates.
+      users.users.${group} = {
+        isSystemUser = true;
+        inherit group home;
+        createHome = true;
+        description = "nxf automatic updates";
+      };
+      security.sudo.extraRules = [
+        {
+          groups = [ group ];
+          commands = [
+            {
+              command = "ALL";
+              options = [ "NOPASSWD" ];
+            }
+          ];
+        }
+      ];
+
       # Git refuses a checkout another user owns, and root owns this one.
       programs.git.enable = lib.mkDefault true;
       programs.git.config.safe.directory = [ cfg.flake ];
 
       systemd.tmpfiles.rules = [ "d /var/lib/nxf 2775 root ${group} -" ];
 
-      # Only what nxf changes is handed over: the directory, the lockfile and
-      # the repository. The other files, such as secrets, keep their owner and
-      # mode.
+      # Only what nxf changes is handed over: the directory, the lockfile, the
+      # repository and the state. The other files, such as secrets, keep their
+      # owner and mode.
       systemd.services.nxf-permissions = {
         description = "Give the group ${group} the machine flake";
         wantedBy = [ "multi-user.target" ];
@@ -189,6 +214,12 @@ in
           RemainAfterExit = true;
         };
         script = ''
+          state=/var/lib/nxf
+          if [ -d "$state" ]; then
+            chown --recursive root:${group} "$state"
+            chmod --recursive g+rwX "$state"
+            find "$state" -type d -exec chmod g+s {} +
+          fi
           flake=${lib.escapeShellArg cfg.flake}
           [ -d "$flake" ] || exit 0
           chown root:${group} "$flake"
@@ -230,16 +261,24 @@ in
         # The switch this service performs must not stop or restart it.
         restartIfChanged = false;
         unitConfig.X-StopOnRemoval = false;
-        wants = [ "network-online.target" ];
-        after = [ "network-online.target" ];
+        wants = [
+          "network-online.target"
+          "nxf-permissions.service"
+        ];
+        after = [
+          "network-online.target"
+          "nxf-permissions.service"
+        ];
         path = [
           cfg.package
           config.nix.package
           pkgs.git
           pkgs.openssh
+          # sudo, with which nh switches.
+          "/run/wrappers"
         ];
         environment = {
-          HOME = config.users.users.root.home;
+          HOME = home;
           NXF_FLAKE = cfg.flake;
           # Build records every member's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
@@ -263,12 +302,10 @@ in
         };
         serviceConfig = {
           Type = "oneshot";
-          User = "root";
+          User = group;
           Group = group;
-          # What root writes stays writable by the group.
+          # What the update writes stays writable by the group.
           UMask = "0002";
-          StateDirectory = "nxf";
-          StateDirectoryMode = "2775";
           ExecStart = "${lib.getExe cfg.package} auto-update";
           TimeoutStartSec = auto.timeout;
           Nice = 10;
