@@ -128,6 +128,23 @@ fn host_key(root: &Path) -> Result<String, String> {
     }
 }
 
+/// The store path of the installed system, as the new machine will see it.
+/// The profile links are followed by hand: they point into the new system's
+/// own /nix/store, which is not this one.
+fn installed_system(root: &Path) -> Option<PathBuf> {
+    let profiles = root.join("nix/var/nix/profiles");
+    let mut link = profiles.join("system");
+    for _ in 0..4 {
+        let to = std::fs::read_link(&link).ok()?;
+        if to.is_absolute() {
+            // Under a stand-in root, the link may name the path with the root.
+            return Some(Path::new("/").join(to.strip_prefix(root).unwrap_or(&to)));
+        }
+        link = profiles.join(to);
+    }
+    None
+}
+
 pub fn run_install(options: &Options) -> Result<(), String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
@@ -190,18 +207,16 @@ pub fn run_install(options: &Options) -> Result<(), String> {
         .arg(format!("{}#{configuration}", home.display()))
         .args(["--no-root-passwd", "--no-channel-copy"]);
     run(&mut install, "nixos-install")?;
-    let system = std::fs::canonicalize(root.join("nix/var/nix/profiles/system")).ok();
+    let system = installed_system(&root);
     output::row(Mark::Done, "Installed");
     output::sub("Flake", "/etc/nixos");
-    if let Some(system) = &system {
-        // The path is the one inside the new system, not under the mount.
-        let inside = Path::new("/").join(system.strip_prefix(&root).unwrap_or(system));
+    if let Some(inside) = &system {
         output::sub("System", &inside.to_string_lossy());
         let records = root.join("var/lib/nxf/systems");
         std::fs::create_dir_all(&records).map_err(|err| err.to_string())?;
         let record = records.join(&tree);
         let _ = std::fs::remove_file(&record);
-        std::os::unix::fs::symlink(&inside, &record).map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(inside, &record).map_err(|err| err.to_string())?;
     }
 
     output::start("Preparing the first start");

@@ -20,6 +20,8 @@ changes to the flake itself.
 | `nxf version --system` | Print the running system's flake commit |
 | `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
 | `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
+| `nxf install <dir>` | Install the machine a flake describes, from a NixOS installer on it; see [Installing a machine](#installing-a-machine) |
+| `nxf reconcile --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
@@ -308,16 +310,21 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
 1. The directory is `NXF_FLAKE` or `/etc/nixos` unless one is given. It must
    be empty or not exist; init never writes into existing content.
 2. The template is unpacked.
-3. With `--hardware`, `hardware.nix` is written by `nixos-generate-config`.
-   Use it on the machine itself.
-4. `nxf.nix` is added: a module file that enables automatic updates and shows
+3. With `--hardware`, `hardware.nix` is written by `nixos-generate-config`,
+   without file systems: the flake describes those. Use it on the machine
+   itself.
+4. With `--files <dir>`, the content of that directory is laid over the
+   template: the machine's own values, such as its name or its secrets. nxf
+   does not read them. What the template's `.gitignore` names stays out of
+   the repository.
+5. `nxf.nix` is added: a module file that enables automatic updates and shows
    every option of the nxf module commented out with its default. It comes
    from the nxf version that runs init. A template that brings its own
    `nxf.nix` keeps it.
-5. The directory becomes a Git repository without a remote, the inputs are
+6. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
    identity gets `nxf <nxf@host>` as its own.
-6. The checks of `nxf doctor` that concern the checkout run, and
+7. The checks of `nxf doctor` that concern the checkout run, and
    `module` says whether the configuration imports the nxf module.
 
 A flake can be founded on another computer, in any directory, and copied to
@@ -346,7 +353,70 @@ is up to the owner of the flake, like every other input:
 A template without these lines is founded all the same; the `module` check
 then warns and names the lines to add.
 
+## Installing a machine
+
+### On the machine
+
+```sh
+nxf init /tmp/machine --template <flake>#<name> --hardware
+nxf install /tmp/machine
+```
+
+`nxf install` runs on the machine itself, started from a NixOS installer:
+
+1. It applies the disk layout of the configuration, which the
+   [disko](https://github.com/nix-community/disko) module describes: the
+   disks are erased, formatted and mounted. With `--mounted` it skips this and
+   uses what is mounted at `/mnt`.
+2. It copies the flake to `/etc/nixos` of the new system, as the same Git
+   repository without a remote, and runs `nixos-install` from it.
+3. It makes the SSH host key and prints it, and records the installation in
+   `/var/lib/nxf/installed.json` and which system the flake built.
+
+`--reboot` restarts into the new system. Install refuses outside an installer
+(a system that runs from a disk), with uncommitted changes in the flake, and
+into a target that already holds a flake. Inputs are fetched on the machine,
+so a private input needs its credentials in the installer.
+
+### From another computer
+
+```sh
+nxf reconcile --config hosts.toml --template <flake>#<name> --files ./machines
+```
+
+`reconcile` brings every machine of a [hosts file](#the-hosts-file) to the
+same state: installed by nxf. It asks each machine what it is, and then:
+
+| The machine is | Reconcile |
+| --- | --- |
+| installed by nxf, or runs nxf | leaves it alone |
+| a NixOS installer | installs it |
+| another system, such as Ubuntu | starts a NixOS installer from memory (kexec), then installs it |
+| not reachable | reports it and fails |
+
+The command can be repeated: machines that are installed are not touched, so
+a second run only installs what the first one could not. Installing erases
+disks, so reconcile shows the plan and asks before it erases anything; `--yes`
+confirms without a question, and without a terminal nothing is erased unless
+`--yes` is given.
+
+For each machine it installs, reconcile copies this nxf and the template to
+the machine, runs `nxf init --hardware` and `nxf install` there, restarts it,
+and waits until the new system answers with the host key the installation
+made. The flake never exists on your computer. `--files <dir>` gives each
+machine the content of `<dir>/<name>/`, laid over the template.
+
+The outcome lists the host key of every installed machine as a `known_hosts`
+line; `--known-hosts <file>` writes them into that file, replacing the key of
+the system that was there before. `--kexec-url` names another installer image.
+
+Limits: the SSH user must be root, and the machine needs a way to the
+internet for the installer image and the inputs. The first connection to a
+machine nobody has connected to accepts its host key; a key that differs from
+one you already know is refused.
+
 ## Automatic updates
+
 
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:

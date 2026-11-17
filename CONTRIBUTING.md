@@ -24,9 +24,11 @@ change them here first.
   files, identities, presets or cluster. What is specific to one environment
   enters through general interfaces only: the options of the module, the
   health checks, and a template given by reference.
-- Remote work is nxf running itself on each machine over ssh. Only commands
-  that read state or hold updates take `--config`; nothing changes several
-  machines at once. The hosts file stays a list of SSH destinations: nxf reads
+- Remote work is nxf running itself on each machine over ssh. `status`,
+  `hold`, `release`, `version` and `doctor` take `--config`; tasks never do.
+  `reconcile` is the one command that changes machines, and only those that
+  nxf has not installed: it must stay repeatable, and it must ask before it
+  erases a disk. The hosts file stays a list of SSH destinations: nxf reads
   `hosts.<name>.ssh` and must keep ignoring everything else.
 - `nxf init` does not edit the files of a template. It adds `nxf.nix` and
   reports whether the configuration imports the module.
@@ -47,6 +49,8 @@ change them here first.
 | `src/hosts.rs` | The hosts file: SSH destinations, with everything else ignored |
 | `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh |
 | `src/init.rs` | Founding a machine flake from a template |
+| `src/install.rs` | Installing from an installer: disks, nixos-install, host key, records |
+| `src/reconcile.rs` | Installing the machines of a hosts file that nxf has not installed |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -116,6 +120,9 @@ change them here first.
 - Give a test a short name that does not repeat the file name, and a doc
   comment that says what must hold.
 - Add or update tests with every change of behaviour.
+- The installation of a real machine cannot be a test here. After a change to
+  `install.rs` or `reconcile.rs`, run `nxf reconcile` against a virtual
+  machine that starts as another system, and run it a second time.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
   `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR` and `NXF_SSH` stand in for the running and

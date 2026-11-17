@@ -5,7 +5,9 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
-use crate::{auto_update, doctor, fleet, hold, hosts, init, install, nixos, output, status, tasks};
+use crate::{
+    auto_update, doctor, fleet, hold, hosts, init, install, nixos, output, reconcile, status, tasks,
+};
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
 ///
@@ -112,6 +114,27 @@ enum Cmd {
         #[arg(long)]
         reboot: bool,
     },
+    /// Bring every machine of a hosts file to the same state: installed by nxf.
+    Reconcile {
+        /// The hosts file.
+        #[arg(long, value_name = "FILE")]
+        config: PathBuf,
+        /// The template of the machine flake, as `<flake>#<name>`.
+        #[arg(long)]
+        template: String,
+        /// A directory with one directory of files for each machine, by name.
+        #[arg(long, value_name = "DIR")]
+        files: Option<PathBuf>,
+        /// Erase and install without asking.
+        #[arg(long)]
+        yes: bool,
+        /// The installer image for machines that run another system; `{arch}` is replaced.
+        #[arg(long, value_name = "URL")]
+        kexec_url: Option<String>,
+        /// A known_hosts file that gets the host keys of the installed machines.
+        #[arg(long, value_name = "FILE")]
+        known_hosts: Option<PathBuf>,
+    },
     /// Hold automatic updates back, with a reason, until released or until a time.
     Hold {
         /// Why updates are held; status shows it.
@@ -145,6 +168,7 @@ const COMMANDS: &[&str] = &[
     "version",
     "init",
     "install",
+    "reconcile",
     "hold",
     "release",
     "auto-update",
@@ -286,6 +310,27 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             reboot,
         })
         .map(|()| true),
+        Cmd::Reconcile {
+            config,
+            template,
+            files,
+            yes,
+            kexec_url,
+            known_hosts,
+        } => {
+            let machines = hosts::load(&config)?;
+            reconcile::run(
+                &reconcile::Options {
+                    file: config,
+                    template,
+                    files,
+                    yes,
+                    kexec_url,
+                    known_hosts,
+                },
+                &machines,
+            )
+        }
         Cmd::Hold {
             reason,
             until,
@@ -339,7 +384,18 @@ fn run_command(command: Cmd) -> Result<bool, String> {
     }
 }
 
+/// nxf works with flakes, whether or not the machine enables them for people.
+fn enable_flakes() {
+    let extra = "extra-experimental-features = nix-command flakes";
+    let config = match std::env::var("NIX_CONFIG") {
+        Ok(config) if !config.is_empty() => format!("{config}\n{extra}"),
+        _ => extra.to_string(),
+    };
+    std::env::set_var("NIX_CONFIG", config);
+}
+
 pub fn main() -> ExitCode {
+    enable_flakes();
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.
     let first = std::env::args().nth(1).unwrap_or_default();

@@ -288,7 +288,12 @@ pub fn pending(text: &str) -> bool {
     if !live() {
         return false;
     }
-    indented(false, 2, &dim(&format!("… {text}")));
+    // Clipped, so that the one row can be erased again.
+    let width = columns().saturating_sub(1).max(1);
+    emit(
+        false,
+        &format!("{}\n", dim(&fit(&format!("  … {text}"), width))),
+    );
     true
 }
 
