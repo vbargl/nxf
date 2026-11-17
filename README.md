@@ -273,7 +273,7 @@ needs nxf installed on the machines. A machine that does not answer is a
 failed row and makes the command fail. `nxf status --config <file> --json`
 prints one entry for each machine: its `status --json`, or an `error`.
 `hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
-the update user.
+a member of the group `nxf`.
 
 ### The hosts file
 
@@ -435,11 +435,10 @@ one you already know is refused.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
-| `user` | `root` | The user that runs the update |
 | `schedule` | `*-*-* 00/6:00:00` | systemd calendar expression |
 | `randomizedDelay` | `1h` | Latest start after the schedule |
 | `fixedDelay` | `true` | Keep the same delay on every run, different for each machine |
-| `gitIdentity` | `nxf <nxf@host>` for root | Identity of the lockfile commits |
+| `gitIdentity` | `nxf <nxf@host>` | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
 | `healthChecks` | none | Scripts that must succeed after a switch |
@@ -487,13 +486,30 @@ nxf release
 
 A hold stops the automatic update: the run reports `skipped` with the reason.
 The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
-only root or the update user can set or release it. `nxf status` shows it. A
+only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
 
-### As root
+### Who runs it, and who may work with it
 
-Root is the default and needs no interactive user: no sudo, no personal SSH
-configuration. The flake directory can belong to root or to another user.
+The update always runs as root: no sudo, no personal SSH configuration. Root
+owns the flake directory and the state in `/var/lib/nxf`, and the group `nxf`
+may write them. The module creates the group; whoever is in it can work with
+nxf, with no other setting:
+
+```nix
+users.users.alice.extraGroups = [ "nxf" ];
+```
+
+A member runs `update`, `build` and the other tasks on the checkout with their
+own Git identity, and holds or releases updates. `switch`, `boot` and `test`
+elevate with sudo, which nh calls, so the member must also be allowed to use
+it. Members can change what root runs, so the group is trusted like root.
+
+The module hands over only what nxf changes: the directory, `flake.lock` and
+the `.git` repository, which it sets to `core.sharedRepository = group`. Other
+files, such as `secrets/`, keep their owner and mode. nxf creates its files
+writable by the group while the checkout is, and the module makes Git trust
+the checkout, which root owns, for every user.
 
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
@@ -511,16 +527,9 @@ tokens in `nixConfigFile`, a nix.conf fragment:
 access-tokens = github.com=TOKEN
 ```
 
-Keep both files out of the Nix store and readable only by the update user, for
-example with sops-nix or agenix. Inputs over SSH also work: the service runs
-`ssh` in batch mode with root's SSH configuration and keys.
-
-### As a user
-
-With `user = "alice"`, everything runs as if that user ran nxf: their Git
-identity makes the commits, their `~/.ssh/config` provides hosts and keys, and
-nh elevates with sudo, which must not ask for a password. The user must own
-the flake directory.
+Keep both files out of the Nix store and readable only by root, for example
+with sops-nix or agenix. Inputs over SSH also work: the service runs `ssh` in
+batch mode with root's SSH configuration and keys.
 
 ### Operating it
 

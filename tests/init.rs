@@ -134,7 +134,6 @@ fn module_file() {
     );
     for option in [
         "# services.nxf.flake = \"/etc/nixos\";",
-        "# user = \"root\";",
         "# schedule = \"*-*-* 00/6:00:00\";",
         "# randomizedDelay = \"1h\";",
         "# fixedDelay = true;",

@@ -9,18 +9,12 @@ self:
 let
   cfg = config.services.nxf;
   auto = cfg.autoUpdate;
-  asRoot = auto.user == "root";
+  group = "nxf";
 
-  gitConfig =
-    # Root may work on a checkout another user owns.
-    lib.optional asRoot {
-      key = "safe.directory";
-      value = cfg.flake;
-    }
-    ++ lib.optional (auto.gitCredentialsFile != null) {
-      key = "credential.helper";
-      value = "store --file=${auto.gitCredentialsFile}";
-    };
+  gitConfig = lib.optional (auto.gitCredentialsFile != null) {
+    key = "credential.helper";
+    value = "store --file=${auto.gitCredentialsFile}";
+  };
 
   # Git reads configuration from numbered environment variables.
   gitConfigEnvironment = lib.listToAttrs (
@@ -48,7 +42,9 @@ in
       default = "/etc/nixos";
       description = ''
         Directory of the machine flake: a local Git repository with a
-        `flake.lock` and one configuration under `nixosConfigurations`.
+        `flake.lock` and one configuration under `nixosConfigurations`. Root
+        owns it and the group `nxf` may write it, so every member of the group
+        can work with nxf.
       '';
     };
 
@@ -57,18 +53,6 @@ in
         a timer that updates the inputs of the machine flake with nxf, commits
         each update that builds, and switches to the result
       '';
-
-      user = lib.mkOption {
-        type = lib.types.str;
-        default = "root";
-        example = "alice";
-        description = ''
-          The user that runs the update and must be able to write the flake
-          directory. Root needs nothing else. Another user works as if they
-          ran nxf themselves: with their own SSH configuration and Git
-          identity, and with sudo without a password, which nh uses to switch.
-        '';
-      };
 
       schedule = lib.mkOption {
         type = lib.types.str;
@@ -101,19 +85,15 @@ in
             };
           }
         );
-        default =
-          if asRoot then
-            {
-              name = "nxf";
-              email = "nxf@${config.networking.hostName}";
-            }
-          else
-            null;
+        default = {
+          name = "nxf";
+          email = "nxf@${config.networking.hostName}";
+        };
         defaultText = lib.literalExpression ''{ name = "nxf"; email = "nxf@''${config.networking.hostName}"; }'';
         description = ''
-          The identity of the lockfile commits. With null, Git's own
-          configuration decides, as for commits the user makes by hand; null
-          is the default when `user` is not root.
+          The identity of the lockfile commits of the automatic update. With
+          null, Git's own configuration decides. The commits that members of
+          the group make by hand carry their own identity.
         '';
       };
 
@@ -124,7 +104,7 @@ in
         description = ''
           A file in the format of git-credential-store, one
           `https://user:token@host` line per host, for inputs fetched with Git
-          over HTTPS. Only the update user must be able to read it.
+          over HTTPS. Only root must be able to read it.
         '';
       };
 
@@ -181,6 +161,51 @@ in
     (lib.mkIf (cfg.enable || auto.enable) {
       environment.systemPackages = [ cfg.package ];
       environment.variables.NXF_FLAKE = cfg.flake;
+
+      # Whoever is in this group works with nxf: they write the flake and the
+      # state of the updater. Root owns both, always.
+      users.groups.${group} = { };
+
+      # Git refuses a checkout another user owns, and root owns this one.
+      programs.git.enable = lib.mkDefault true;
+      programs.git.config.safe.directory = [ cfg.flake ];
+
+      systemd.tmpfiles.rules = [ "d /var/lib/nxf 2775 root ${group} -" ];
+
+      # Only what nxf changes is handed over: the directory, the lockfile and
+      # the repository. The other files, such as secrets, keep their owner and
+      # mode.
+      systemd.services.nxf-permissions = {
+        description = "Give the group ${group} the machine flake";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "local-fs.target" ];
+        path = [
+          pkgs.coreutils
+          pkgs.findutils
+          pkgs.git
+        ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+        };
+        script = ''
+          flake=${lib.escapeShellArg cfg.flake}
+          [ -d "$flake" ] || exit 0
+          chown root:${group} "$flake"
+          chmod 2775 "$flake"
+          if [ -e "$flake/flake.lock" ]; then
+            chown root:${group} "$flake/flake.lock"
+            chmod 664 "$flake/flake.lock"
+          fi
+          if [ -d "$flake/.git" ]; then
+            chown --recursive root:${group} "$flake/.git"
+            chmod --recursive g+rwX "$flake/.git"
+            find "$flake/.git" -type d -exec chmod g+s {} +
+            # New objects and refs of any member stay usable by the others.
+            git -C "$flake" config core.sharedRepository group
+          fi
+        '';
+      };
     })
 
     (lib.mkIf auto.enable {
@@ -212,13 +237,11 @@ in
           config.nix.package
           pkgs.git
           pkgs.openssh
-        ]
-        # sudo, with which nh switches for an unprivileged user.
-        ++ lib.optional (!asRoot) "/run/wrappers";
+        ];
         environment = {
-          HOME = config.users.users.${auto.user}.home;
+          HOME = config.users.users.root.home;
           NXF_FLAKE = cfg.flake;
-          # Build records every user's `nxf status` can read.
+          # Build records every member's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
           NXF_HEALTH_TIMEOUT = toString auto.healthTimeout;
           NXF_HEALTH_INTERVAL = toString auto.healthInterval;
@@ -240,9 +263,12 @@ in
         };
         serviceConfig = {
           Type = "oneshot";
-          User = auto.user;
+          User = "root";
+          Group = group;
+          # What root writes stays writable by the group.
+          UMask = "0002";
           StateDirectory = "nxf";
-          StateDirectoryMode = "0755";
+          StateDirectoryMode = "2775";
           ExecStart = "${lib.getExe cfg.package} auto-update";
           TimeoutStartSec = auto.timeout;
           Nice = 10;

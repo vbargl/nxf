@@ -6,17 +6,13 @@
 { config, ... }:
 {
   # Directory of the machine flake: a local Git repository with a
-  # `flake.lock` and one configuration under `nixosConfigurations`.
+  # `flake.lock` and one configuration under `nixosConfigurations`. Root
+  # owns it and the group `nxf` may write it, so every member of the group
+  # can work with nxf.
   # services.nxf.flake = "/etc/nixos";
 
   services.nxf.autoUpdate = {
     enable = true;
-
-    # The user that runs the update and must be able to write the flake
-    # directory. Root needs nothing else. Another user works as if they
-    # ran nxf themselves: with their own SSH configuration and Git
-    # identity, and with sudo without a password, which nh uses to switch.
-    # user = "root";
 
     # When the update starts, as a systemd calendar expression.
     # schedule = "*-*-* 00/6:00:00";
@@ -41,14 +37,14 @@
     # Seconds between two rounds of health checks.
     # healthInterval = 10;
 
-    # The identity of the lockfile commits. With null, Git's own
-    # configuration decides, as for commits the user makes by hand; null
-    # is the default when `user` is not root.
+    # The identity of the lockfile commits of the automatic update. With
+    # null, Git's own configuration decides. The commits that members of
+    # the group make by hand carry their own identity.
     # gitIdentity = { name = "nxf"; email = "nxf@${config.networking.hostName}"; };
 
     # A file in the format of git-credential-store, one
     # `https://user:token@host` line per host, for inputs fetched with Git
-    # over HTTPS. Only the update user must be able to read it.
+    # over HTTPS. Only root must be able to read it.
     # gitCredentialsFile = null;
 
     # A nix.conf fragment for the update only, such as

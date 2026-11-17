@@ -59,6 +59,18 @@ pub fn is_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
 
+/// Makes what nxf creates writable by the group when the directory is: the
+/// group shares the checkout, and the next member must be able to change the
+/// lockfile and the Git objects this run writes. Returns whether it did.
+pub fn share_with_group(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let shared = std::fs::metadata(dir).is_ok_and(|meta| meta.permissions().mode() & 0o020 != 0);
+    if shared {
+        unsafe { libc::umask(0o002) };
+    }
+    shared
+}
+
 /// Where nxf keeps its state: remembered builds and the read marker.
 pub fn state_dir() -> PathBuf {
     var("NXF_STATE").unwrap_or_else(|| {

@@ -18,7 +18,6 @@ let
   # The order of the file. Every option must be listed, so a new one cannot
   # be forgotten here.
   order = [
-    "user"
     "schedule"
     "randomizedDelay"
     "fixedDelay"
