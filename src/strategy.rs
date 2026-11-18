@@ -14,8 +14,8 @@ pub enum Strategy {
     Off,
     /// A failed update is recorded, and the run goes on as if it had not been tried.
     Flag,
-    /// A failed update ends the run: no later input is tried and nothing is switched to.
-    Panic,
+    /// As `Flag`, and the failure hook runs after the run.
+    Report,
 }
 
 impl Strategy {
@@ -23,9 +23,9 @@ impl Strategy {
         match word {
             "off" => Ok(Strategy::Off),
             "flag" => Ok(Strategy::Flag),
-            "panic" => Ok(Strategy::Panic),
+            "report" => Ok(Strategy::Report),
             other => Err(format!(
-                "unknown update strategy '{other}'; it is off, flag or panic"
+                "unknown update strategy '{other}'; it is off, flag or report"
             )),
         }
     }
@@ -41,7 +41,7 @@ pub struct Strategies {
 impl Default for Strategies {
     fn default() -> Self {
         Strategies {
-            default: Strategy::Panic,
+            default: Strategy::Report,
             inputs: Vec::new(),
         }
     }

@@ -80,7 +80,6 @@ fn decide() -> Result<Vec<Outcome>, String> {
     let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
     let mut results = tasks::run_unattended(&words(&["update"]), &strategies)?;
-    // An input that must not fail did: nothing is rolled out.
     if results.iter().any(Outcome::failed) {
         return Ok(results);
     }
@@ -126,7 +125,10 @@ pub fn run(state: &Path) -> Result<bool, String> {
     let mut results = decide()?;
     let saved = save(state, &results)?;
     // The hook reads the saved results; when it fails, that is a result too.
-    if results.iter().any(Outcome::failed) {
+    if results
+        .iter()
+        .any(|result| result.failed() || result.reported())
+    {
         if let Some(failed) = hooks::failure(&saved) {
             results.push(outcome("hook", "failed", failed));
             save(state, &results)?;

@@ -357,7 +357,7 @@ fn said(error: &str) -> String {
         .join(" | ")
 }
 
-fn update(run: &Run, inputs: &[String], flagged: &mut Vec<Outcome>) -> Result<(), Stop> {
+fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), Stop> {
     let dir = run.dir;
     output::start("Checking input updates");
     // Never built, so never committed: left by an interrupted update.
@@ -392,29 +392,31 @@ fn update(run: &Run, inputs: &[String], flagged: &mut Vec<Outcome>) -> Result<()
             result.mark,
             &format!("{:<width$}{}", result.name, result.summary),
         );
-        let ends = result.mark == Mark::Failed && run.strategy(input) == Some(Strategy::Panic);
         results.push(result);
-        if ends {
-            // Nothing is rolled out without this input: the others wait.
-            break;
-        }
     }
     let unchanged = flake::lock(dir)? == before;
     if !unchanged {
         output::sub("Commit", &git::commit_line(dir, "HEAD"));
         keep_inputs(dir);
     }
-    let (noted, failed): (Vec<&InputResult>, Vec<&InputResult>) = results
-        .iter()
-        .filter(|result| result.mark == Mark::Failed)
-        .partition(|result| run.strategy(&result.name) == Some(Strategy::Flag));
-    // A flagged input is a record, not a failure of the run.
-    flagged.extend(noted.iter().map(|result| Outcome {
-        task: "update".to_string(),
-        inputs: vec![result.name.clone()],
-        outcome: "flagged".to_string(),
-        detail: said(result.error.as_deref().unwrap_or_default()),
-    }));
+    let mut failed: Vec<&InputResult> = Vec::new();
+    for result in results.iter().filter(|result| result.mark == Mark::Failed) {
+        // To the automatic update a failed input is a record, not a failure of the run.
+        let outcome = match run.strategy(&result.name) {
+            Some(Strategy::Flag) => "flagged",
+            Some(Strategy::Report) => "reported",
+            Some(Strategy::Off) | None => {
+                failed.push(result);
+                continue;
+            }
+        };
+        noted.push(Outcome {
+            task: "update".to_string(),
+            inputs: vec![result.name.clone()],
+            outcome: outcome.to_string(),
+            detail: said(result.error.as_deref().unwrap_or_default()),
+        });
+    }
     if !failed.is_empty() {
         let causes: Vec<String> = failed
             .iter()
@@ -569,7 +571,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
 pub struct Outcome {
     pub task: String,
     pub inputs: Vec<String>,
-    /// `done`, `unchanged`, `failed`, or the updater's `skipped` and `flagged`.
+    /// `done`, `unchanged`, `failed`, or the updater's `skipped`, `flagged` and `reported`.
     pub outcome: String,
     pub detail: String,
 }
@@ -577,6 +579,11 @@ pub struct Outcome {
 impl Outcome {
     pub fn failed(&self) -> bool {
         self.outcome == "failed"
+    }
+
+    /// An input the automatic update could not update, and is to report.
+    pub fn reported(&self) -> bool {
+        self.outcome == "reported"
     }
 
     pub fn to_json(&self) -> Value {
@@ -609,9 +616,9 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
 }
 
 /// Runs the tasks for the automatic update, quietly and with its strategies:
-/// an input that is off is not updated, one that is flagged adds an outcome
-/// of its own when its update fails, and the first other failure ends the
-/// update.
+/// an input that is off is not updated, and every other input whose update
+/// fails adds an outcome of its own, `flagged` or `reported`, while the update
+/// goes on.
 pub fn run_unattended(given: &[String], strategies: &Strategies) -> Result<Vec<Outcome>, String> {
     run_with(given, true, Some(strategies))
 }
@@ -644,13 +651,13 @@ fn run_with(
             update_commit: &update_commit,
             strategies,
         };
-        let mut flagged = Vec::new();
+        let mut noted = Vec::new();
         output::phases(offset, total);
         if quiet {
             output::capture();
         }
         let result = match task.name {
-            "update" => update(&context, inputs, &mut flagged),
+            "update" => update(&context, inputs, &mut noted),
             action => system(&context, action),
         };
         if let Err(Stop::Error(error)) = &result {
@@ -680,7 +687,7 @@ fn run_with(
                 String::new()
             },
         });
-        outcomes.extend(flagged);
+        outcomes.extend(noted);
         if result.is_err() {
             break;
         }

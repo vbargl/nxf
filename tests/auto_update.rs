@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{append, assert_contains, commit, fake_systems, fixture, git, hostname, Fixture};
+use common::{append, assert_contains, fake_systems, fixture, git, lose, strategies, Fixture};
 use serde_json::{json, Value};
 
 fn saved(fx: &Fixture) -> Value {
@@ -25,26 +25,6 @@ fn outcomes(report: &Value) -> Vec<(String, String)> {
 
 fn pair(task: &str, outcome: &str) -> (String, String) {
     (task.to_string(), outcome.to_string())
-}
-
-/// Sets `services.nxf.autoUpdate` of the configuration in the checkout, and
-/// commits it: nxf reads the strategies from what is committed.
-fn strategies(fx: &Fixture, settings: &str) {
-    let file = fx.checkout.join("flake.nix");
-    let text = std::fs::read_to_string(&file).unwrap();
-    let plain = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
-    assert_contains(&text, &plain);
-    let set = format!(
-        "nixosConfigurations.\"{}\" = {{ config.services.nxf.autoUpdate = {settings}; }};",
-        hostname()
-    );
-    std::fs::write(&file, text.replace(&plain, &set)).unwrap();
-    commit(&fx.checkout, "strategies");
-}
-
-/// Takes away where an input comes from: its update cannot be fetched.
-fn lose(fx: &Fixture, input: &str) {
-    std::fs::rename(fx.dir.join(input), fx.dir.join(format!("{input}.gone"))).unwrap();
 }
 
 /// A new input revision is built, committed and switched to.
@@ -113,7 +93,7 @@ fn switches_to_committed_checkout() {
 }
 
 /// An update that does not build never stays in the repository and is not
-/// switched to; the run fails and says which input to retry.
+/// switched to. It is reported, and the run does not fail.
 #[test]
 fn failed_build_is_restored() {
     let system = &fake_systems().one;
@@ -124,21 +104,24 @@ fn failed_build_is_restored() {
     fx.record_build(system);
     let (old, head) = (fx.locked("a"), fx.head());
     fx.bump(&["a"]);
-    let result = fx.run(&["auto-update"]);
-    assert_eq!(result.code, 1);
+    fx.run(&["auto-update"]).ok();
     assert_eq!(fx.locked("a"), old);
     assert_eq!(fx.head(), head);
     assert_eq!(fx.porcelain(), "");
     assert_eq!(fx.nh_actions(), ["build"]);
     let report = saved(&fx);
-    assert_eq!(outcomes(&report), [pair("update", "failed")]);
+    assert_eq!(
+        outcomes(&report),
+        [pair("update", "unchanged"), pair("update", "reported")]
+    );
+    assert_eq!(report["results"][1]["inputs"], json!(["a"]));
     assert_contains(
-        report["results"][0]["detail"].as_str().unwrap(),
-        "a: Command exited with status 3.",
+        report["results"][1]["detail"].as_str().unwrap(),
+        "Command exited with status 3.",
     );
     assert_contains(
         &fx.run(&["status"]).stdout,
-        "  ✗ update    a: Command exited with status 3.",
+        "\n  · update a  reported, Command exited with status 3.",
     );
 }
 
@@ -251,29 +234,50 @@ fn flagged_failure_goes_on() {
     assert_contains(&fx.run(&["status"]).stdout, "\n  · update a  flagged, ");
 }
 
-/// An input that fails with the strategy panic ends the run: the inputs after
-/// it are not tried, nothing is switched to, and the run fails.
+/// An input without a strategy of its own is reported when its update fails:
+/// the run goes on with the other inputs, switches, and does not fail.
 #[test]
-fn panic_ends_the_run() {
-    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
-    let b = fx.locked("b");
+fn reported_failure_goes_on() {
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", &fake_systems().one)
+        .with("NXF_SYSTEM", &fake_systems().two);
+    let (a, b) = (fx.locked("a"), fx.locked("b"));
     lose(&fx, "a");
     fx.bump(&["b"]);
     let result = fx.run(&["auto-update"]);
-    assert_eq!(result.code, 1);
-    assert_eq!(fx.locked("b"), b);
-    assert!(fx.nh_calls().is_empty());
-    assert_eq!(outcomes(&saved(&fx)), [pair("update", "failed")]);
-    // What an earlier input brought stays committed, and waits.
-    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
-    let a = fx.locked("a");
-    lose(&fx, "b");
-    fx.bump(&["a"]);
-    assert_eq!(fx.run(&["auto-update"]).code, 1);
-    assert_ne!(fx.locked("a"), a);
+    result.ok();
+    assert_eq!(fx.locked("a"), a);
+    assert_ne!(fx.locked("b"), b);
     assert_eq!(fx.porcelain(), "");
-    assert_eq!(fx.nh_actions(), ["build"]);
-    assert_eq!(outcomes(&saved(&fx)), [pair("update", "failed")]);
+    let report = saved(&fx);
+    assert_eq!(
+        outcomes(&report),
+        [
+            pair("update", "done"),
+            pair("update", "reported"),
+            pair("switch", "done")
+        ]
+    );
+    assert_eq!(report["results"][1]["inputs"], json!(["a"]));
+    assert_contains(&result.stdout, "\n  · update a  reported, ");
+    // Every input is tried, also after one that failed.
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", &fake_systems().one)
+        .with("NXF_SYSTEM", &fake_systems().two);
+    let (a, b) = (fx.locked("a"), fx.locked("b"));
+    lose(&fx, "a");
+    lose(&fx, "b");
+    fx.run(&["auto-update"]).ok();
+    assert_eq!((fx.locked("a"), fx.locked("b")), (a, b));
+    assert_eq!(
+        outcomes(&saved(&fx)),
+        [
+            pair("update", "unchanged"),
+            pair("update", "reported"),
+            pair("update", "reported"),
+            pair("switch", "done")
+        ]
+    );
 }
 
 /// The strategies are read from the committed configuration; a word that is

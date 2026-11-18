@@ -5,7 +5,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{assert_contains, fake_systems, fixture, write_script, Fixture};
+use common::{assert_contains, fake_systems, fixture, strategies, write_script, Fixture};
 use serde_json::{json, Value};
 
 const CHECK: &str = "check";
@@ -25,7 +25,7 @@ fn updating() -> Fixture {
 }
 
 /// The same, with a system that runs the checkout and an update that does
-/// not build, so that the update is the one task that fails.
+/// not build, so that the input is the one thing that goes wrong.
 fn failing() -> Fixture {
     let system = &fake_systems().one;
     let fx = updating()
@@ -126,8 +126,9 @@ fn manual_update() {
     assert_ne!(fx.locked("a"), old);
 }
 
-/// After a failed run the failure hook runs and finds the saved results in
-/// NXF_RESULTS; when it passes it adds nothing to them.
+/// After a run that could not update an input to report, the failure hook
+/// runs and finds the saved results in NXF_RESULTS; when it passes it adds
+/// nothing to them, and the run does not fail.
 #[test]
 fn failure_hook() {
     let fx = failing();
@@ -137,12 +138,39 @@ fn failure_hook() {
         FAILURE,
         &format!("cp \"$NXF_RESULTS\" {}", copy.display()),
     );
-    let result = fx.run(&["auto-update"]);
-    assert_eq!(result.code, 1);
+    fx.run(&["auto-update"]).ok();
     let seen: Value = serde_json::from_str(&std::fs::read_to_string(&copy).unwrap()).unwrap();
-    assert_eq!(seen["results"][0]["task"], "update");
-    assert_eq!(seen["results"][0]["outcome"], "failed");
-    assert_eq!(results(&fx).as_array().unwrap().len(), 1);
+    assert_eq!(seen["results"][1]["task"], "update");
+    assert_eq!(seen["results"][1]["inputs"], json!(["a"]));
+    assert_eq!(seen["results"][1]["outcome"], "reported");
+    assert_eq!(results(&fx).as_array().unwrap().len(), 2);
+}
+
+/// A flagged input that could not be updated is a record only: no hook runs.
+#[test]
+fn flagged_runs_no_hook() {
+    let system = &fake_systems().one;
+    let fx = updating()
+        .with("NXF_SYSTEM", system)
+        .with("NXF_TEST_NH_FAIL_ACTION", "build");
+    strategies(&fx, "{ inputs.a = \"flag\"; }");
+    fx.record_build(system);
+    let mark = marking(&fx);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!(results(&fx)[1]["outcome"], "flagged");
+    assert!(!mark.exists());
+}
+
+/// A task that fails runs the failure hook, and the run fails.
+#[test]
+fn failed_task_runs_the_hook() {
+    let fx = updating().with("NXF_TEST_NH_FAIL_ACTION", "switch");
+    let mark = marking(&fx);
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    let results = results(&fx);
+    assert_eq!(results[1]["task"], "switch");
+    assert_eq!(results[1]["outcome"], "failed");
+    assert!(mark.exists());
 }
 
 /// A failure hook that fails itself is a result of its own.
@@ -153,8 +181,8 @@ fn failing_hook() {
     let result = fx.run(&["auto-update"]);
     assert_eq!(result.code, 1);
     let results = results(&fx);
-    assert_eq!(results[1]["task"], "hook");
-    assert_eq!(results[1]["outcome"], "failed");
-    assert_eq!(results[1]["detail"], "cannot pause");
+    assert_eq!(results[2]["task"], "hook");
+    assert_eq!(results[2]["outcome"], "failed");
+    assert_eq!(results[2]["detail"], "cannot pause");
     assert_contains(&fx.run(&["status"]).stdout, "  ✗ hook      cannot pause");
 }

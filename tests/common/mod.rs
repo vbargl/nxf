@@ -397,6 +397,26 @@ pub fn events(records: &[serde_json::Value]) -> String {
 }
 
 #[track_caller]
+/// Sets `services.nxf.autoUpdate` of the configuration in the checkout, and
+/// commits it: nxf reads the strategies from what is committed.
+pub fn strategies(fx: &Fixture, settings: &str) {
+    let file = fx.checkout.join("flake.nix");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let plain = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
+    assert_contains(&text, &plain);
+    let set = format!(
+        "nixosConfigurations.\"{}\" = {{ config.services.nxf.autoUpdate = {settings}; }};",
+        hostname()
+    );
+    std::fs::write(&file, text.replace(&plain, &set)).unwrap();
+    commit(&fx.checkout, "strategies");
+}
+
+/// Takes away where an input comes from: its update cannot be fetched.
+pub fn lose(fx: &Fixture, input: &str) {
+    std::fs::rename(fx.dir.join(input), fx.dir.join(format!("{input}.gone"))).unwrap();
+}
+
 pub fn assert_contains(text: &str, part: &str) {
     assert!(text.contains(part), "expected <{part}> in:\n{text}");
 }
