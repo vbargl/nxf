@@ -467,7 +467,9 @@ The scripts become executables in `/etc/nxf/health.d`. After an automatic
 switch nxf runs those of the new configuration in name order, and repeats the
 round every `healthInterval` seconds until all pass or `healthTimeout` runs
 out. A check that needs time, such as a node that becomes ready after a few
-minutes, just fails until then.
+minutes, just fails until then. The two times are those of the new
+configuration too: they are in `/etc/nxf/health.conf`, which the switch
+replaces together with the scripts.
 
 If checks still fail at the end:
 

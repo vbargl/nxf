@@ -82,10 +82,12 @@ pkgs.runCommand "nxf-module-check"
     );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
+    healthSettings = root.environment.etc."nxf/health.conf".text;
     checkHook = root.environment.etc."nxf/hooks/check".source;
     failureHook = root.environment.etc."nxf/hooks/failure".source;
     plainEtc = builtins.concatStringsSep " " (builtins.attrNames plain.environment.etc);
     passAsFile = [
+      "healthSettings"
       "rootService"
       "rootTimer"
       "plainService"
@@ -109,8 +111,10 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" '"GIT_CONFIG_KEY_0=credential.helper"'
     has "$rootServicePath" '"GIT_CONFIG_VALUE_0=store --file=/run/secrets/git-credentials"'
     has "$rootServicePath" '"NIX_CONFIG=!include /run/secrets/nix.conf"'
-    has "$rootServicePath" '"NXF_HEALTH_TIMEOUT=600"'
-    has "$rootServicePath" '"NXF_HEALTH_INTERVAL=10"'
+    # The times are in /etc, which the switch replaces; the unit keeps running.
+    lacks "$rootServicePath" 'NXF_HEALTH'
+    has "$healthSettingsPath" 'timeout=600'
+    has "$healthSettingsPath" 'interval=10'
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"

@@ -10,13 +10,21 @@ fn switching() -> Fixture {
     let systems = fake_systems();
     let mut fx = fixture()
         .with("NXF_SYSTEM", &systems.one)
-        .with("NXF_TEST_BUILD", &systems.two)
-        .with("NXF_HEALTH_TIMEOUT", "3")
-        .with("NXF_HEALTH_INTERVAL", "0");
+        .with("NXF_TEST_BUILD", &systems.two);
     let checks = fx.dir.join("health.d");
     std::fs::create_dir_all(&checks).unwrap();
     fx.set("NXF_HEALTH_DIR", checks);
+    settings(&fx, 3);
     fx
+}
+
+/// The times the configuration gives its checks, with no pause between rounds.
+fn settings(fx: &Fixture, timeout: u64) {
+    std::fs::write(
+        fx.dir.join("health.conf"),
+        format!("timeout={timeout}\ninterval=0\n"),
+    )
+    .unwrap();
 }
 
 fn check(fx: &Fixture, name: &str, script: &str) {
@@ -173,13 +181,28 @@ fn unhealthy_returns_and_marks() {
 /// A check that hangs is stopped when the time runs out.
 #[test]
 fn hanging_check() {
-    let mut fx = switching();
-    fx.set("NXF_HEALTH_TIMEOUT", "1");
+    let fx = switching();
+    settings(&fx, 1);
     check(&fx, "hangs", "exec sleep 60");
     let started = std::time::Instant::now();
     assert_eq!(fx.run(&["auto-update"]).code, 1);
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
     assert_contains(&results(&fx)[2].2, "hangs: timed out");
+}
+
+/// The times are those of the configuration switched to, like the checks.
+/// The environment of the run is that of the system before the switch.
+#[test]
+fn times_of_the_new_configuration() {
+    let fx = switching()
+        .with("NXF_HEALTH_TIMEOUT", "300")
+        .with("NXF_HEALTH_INTERVAL", "10");
+    settings(&fx, 1);
+    check(&fx, "fails", "exit 1");
+    let started = std::time::Instant::now();
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+    assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
 }
 
 /// A failed switch is not followed by a health check or a return.

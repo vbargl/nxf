@@ -21,13 +21,11 @@ const GIT_ENV: [(&str, &str); 6] = [
 ];
 
 /// Variables of the caller's environment that would change what nxf does.
-const INHERITED: [&str; 15] = [
+const INHERITED: [&str; 13] = [
     "NXF_BOOTED",
     "NXF_HOOKS_DIR",
     "NXF_HOOK_TIMEOUT",
     "NXF_HEALTH_DIR",
-    "NXF_HEALTH_TIMEOUT",
-    "NXF_HEALTH_INTERVAL",
     "NO_COLOR",
     "CLICOLOR",
     "CLICOLOR_FORCE",

@@ -306,6 +306,13 @@ in
             '';
           }
         ) auto.healthChecks
+        // lib.optionalAttrs (auto.healthChecks != { }) {
+          # nxf reads the times after the switch, so those of the new system count.
+          "nxf/health.conf".text = ''
+            timeout=${toString auto.healthTimeout}
+            interval=${toString auto.healthInterval}
+          '';
+        }
         // hook "check" auto.checkHook
         // hook "failure" auto.failureHook;
 
@@ -335,8 +342,6 @@ in
           NXF_FLAKE = cfg.flake;
           # Build records every member's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
-          NXF_HEALTH_TIMEOUT = toString auto.healthTimeout;
-          NXF_HEALTH_INTERVAL = toString auto.healthInterval;
           NXF_HOOK_TIMEOUT = toString auto.hookTimeout;
           # Unattended: never ask, never hang.
           GIT_TERMINAL_PROMPT = "0";
