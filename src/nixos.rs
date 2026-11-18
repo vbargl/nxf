@@ -112,32 +112,69 @@ pub fn activate(action: &str, system: &Path) -> Result<PathBuf, String> {
     nh(action, &[&system.to_string_lossy()])
 }
 
+/// Whether dix takes the two systems after the word `diff`, as it does from
+/// dix 3. An unreadable version counts as a current one.
+fn dix_has_commands() -> bool {
+    let version = Command::new("dix")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default();
+    let major = version
+        .rsplit(' ')
+        .next()
+        .and_then(|version| version.split('.').next())
+        .and_then(|major| major.trim().parse::<u32>().ok());
+    major.is_none_or(|major| major >= 3)
+}
+
 /// The command printing the full package diff between two systems.
 pub fn diff(old: &Path, new: &Path) -> Command {
     let mut dix = Command::new("dix");
-    dix.arg("diff").arg(old).arg(new);
+    if dix_has_commands() {
+        dix.arg("diff");
+    }
+    dix.arg(old).arg(new);
     dix
 }
 
-/// A count line of dix, such as "CHANGED (12)", as "12 changed".
-fn count(line: &str) -> Option<String> {
-    let (word, count) = line.split_once(" (")?;
-    let count = count.strip_suffix(')')?;
-    let valid = !word.is_empty()
-        && word.bytes().all(|byte| byte.is_ascii_uppercase())
-        && !count.is_empty()
-        && count.bytes().all(|byte| byte.is_ascii_digit());
-    valid.then(|| format!("{count} {}", word.to_lowercase()))
+/// The heading of a group of dix, such as "CHANGED (12)" or, before dix 3,
+/// "CHANGED": its word, and the count where dix gives one.
+fn heading(line: &str) -> Option<(&str, Option<usize>)> {
+    let (word, count) = match line.split_once(" (") {
+        Some((word, count)) => (word, Some(count.strip_suffix(')')?.parse().ok()?)),
+        None => (line, None),
+    };
+    let valid = !word.is_empty() && word.bytes().all(|byte| byte.is_ascii_uppercase());
+    valid.then_some((word, count))
+}
+
+/// The groups of a dix diff as "12 changed". Without a count in the heading
+/// the packages listed under it are counted.
+fn counts(text: &str) -> Vec<String> {
+    let mut groups: Vec<(&str, usize, bool)> = Vec::new();
+    for line in text.lines() {
+        if let Some((word, count)) = heading(line) {
+            groups.push((word, count.unwrap_or(0), count.is_none()));
+        } else if line.starts_with('[') {
+            if let Some((_, count, true)) = groups.last_mut() {
+                *count += 1;
+            }
+        }
+    }
+    groups
+        .iter()
+        .filter(|(_, count, _)| *count > 0)
+        .map(|(word, count, _)| format!("{count} {}", word.to_lowercase()))
+        .collect()
 }
 
 /// What changes between two systems, as labelled facts: the changed, added
 /// and removed package counts, and the closure size.
 pub fn changes(old: &Path, new: &Path) -> Result<Vec<(&'static str, String)>, String> {
-    let output = Command::new("dix")
+    let output = diff(old, new)
         .arg("--color=never")
-        .arg("diff")
-        .arg(old)
-        .arg(new)
         .stdin(Stdio::null())
         .output()
         .map_err(|err| format!("cannot run dix: {err}"))?;
@@ -145,7 +182,7 @@ pub fn changes(old: &Path, new: &Path) -> Result<Vec<(&'static str, String)>, St
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    let counts: Vec<String> = text.lines().filter_map(count).collect();
+    let counts = counts(&text);
     let mut facts = vec![(
         "Packages",
         if counts.is_empty() {

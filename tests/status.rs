@@ -277,6 +277,63 @@ fn diff() {
     assert_contains(&result.stdout, "  Package list: nxf status --detailed");
 }
 
+/// A dix that takes the two systems without a command word, as dix 2 does,
+/// and prints headings without counts.
+fn dix_2(fx: &Fixture) {
+    write_script(
+        &fx.dir.join("bin/dix"),
+        r#"#!/usr/bin/env bash
+[[ $1 != --version ]] || { echo "dix 2.2.0"; exit 0; }
+paths=()
+for word; do [[ $word == --* ]] || paths+=("$word"); done
+set -- "${paths[@]}"
+if [[ $# != 2 ]]; then
+    printf "error: unexpected argument '%s' found\n\nUsage: dix [OPTIONS] <OLD_PATH> <NEW_PATH>\n" "$3" >&2
+    exit 2
+fi
+cat <<END
+<<< $1
+>>> $2
+
+CHANGED
+[U.] bash  5.3p3 -> 5.3p9
+[C.] curl  8.22.0, <unchanged> -> <unchanged>, +1.0 KiB
+
+ADDED
+[A.] jq  1.8.1
+
+REMOVED
+[R.] nano  8.7
+[R.] vim  9.2
+[R.] w3m  0.5.6
+
+PATHS: 12 -> 10 (+3, -5)
+SIZE: 34.7 GiB -> 33.5 GiB
+DIFF: -1.14 GiB
+END
+"#,
+    );
+}
+
+/// The package changes are read from dix 2 as well as from dix 3: nxf is
+/// built with the nixpkgs of the machine flake, which may hold either.
+#[test]
+fn diff_with_dix_2() {
+    let built = fake_systems();
+    let fx = fixture().with("NXF_SYSTEM", &built.one);
+    fx.record_build(&built.two);
+    dix_2(&fx);
+    let result = fx.run(&["status"]);
+    result.ok();
+    assert_contains(
+        &result.stdout,
+        "\nChanges when switched\n  Packages  2 changed, 1 added, 3 removed\n  Size      34.7 GiB → 33.5 GiB\n",
+    );
+    let result = fx.run(&["status", "--detailed"]);
+    result.ok();
+    assert_contains(&result.stdout, "\n    [A.] jq  1.8.1\n");
+}
+
 /// Detailed status adds the closure size and the full package list.
 #[test]
 fn detailed() {
