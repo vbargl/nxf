@@ -323,7 +323,7 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
    `nxf.nix` keeps it.
 6. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
-   identity gets `nxf <nxf@host>` as its own.
+   identity gets `nxf`, without an e-mail, as its own.
 7. The checks of `nxf doctor` that concern the checkout run, and
    `module` says whether the configuration imports the nxf module.
 
@@ -440,7 +440,7 @@ one you already know is refused.
 | `schedule` | `*-*-* 00/6:00:00` | systemd calendar expression |
 | `randomizedDelay` | `1h` | Latest start after the schedule |
 | `fixedDelay` | `true` | Keep the same delay on every run, different for each machine |
-| `gitIdentity` | `nxf <nxf@host>` | Identity of the lockfile commits of the update |
+| `gitIdentity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
 | `checkHook` | none | Script that is asked before an update starts |
@@ -552,15 +552,22 @@ hold with an end stops holding at that time. Tasks run by hand are not held.
 
 ### Who runs it, and who may work with it
 
-The update runs as the system user `nxf`, not as root. It has a home of its
-own, `/var/lib/nxf-home`, for its SSH configuration and keys, and commits with
-the identity of `gitIdentity`. Only the switch needs root, and nh gets it with
+The update runs as the system user `nxf`, not as root, and commits with the
+identity of `gitIdentity`. Only the switch needs root, and nh gets it with
 sudo. The module therefore lets the group `nxf` use sudo without a password:
 an unattended run cannot answer a prompt.
 
-Root owns the flake directory and the state in `/var/lib/nxf`, and the group
-`nxf` may write them. The module creates the group, and the user `nxf` is in
-it. Whoever else is in it can work with nxf, with no other setting:
+That user is the owner of the process and no person: it has no home. What
+the update needs to reach private inputs is given to it by path, see below.
+What Nix keeps between runs, the clones of Git inputs and what it remembers
+of earlier fetches and evaluations, is in `/var/cache/nxf` and can be deleted
+at any time; the inputs themselves are in the Nix store. A member of the
+group who runs a task by hand does so under their own account, with their
+own access to the inputs and Nix's cache in their own home.
+
+The user `nxf` owns the flake directory and the state in `/var/lib/nxf`, and
+the group `nxf` may write them. The module creates both. Whoever else is in
+the group can work with nxf, with no other setting:
 
 ```nix
 users.users.alice.extraGroups = [ "nxf" ];
@@ -575,7 +582,17 @@ The module hands over only what nxf changes: the directory, `flake.lock`, the
 `.git` repository, which it sets to `core.sharedRepository = group`, and the
 state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
 its files writable by the group while the checkout is, and the module makes
-Git trust the checkout, which root owns, for every user.
+Git trust the checkout for every user: Git refuses one that another user
+owns, which is the case for root and for the other members of the group.
+
+A flake that `nxf init` or `nxf install` founds belongs to whoever ran it,
+usually root, because the user `nxf` exists only once the configuration is
+active. The module hands it over when the machine starts, and after every
+switch that changes the module.
+
+The commits of the update carry the name `nxf` and no e-mail: they stay on the
+machine. Set `gitIdentity` for another identity, for example when the machine
+flake is pushed to a server that wants an e-mail.
 
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
@@ -593,10 +610,16 @@ tokens in `nixConfigFile`, a nix.conf fragment:
 access-tokens = github.com=TOKEN
 ```
 
-Keep both files out of the Nix store and readable only by the user `nxf`, for
-example with sops-nix or agenix. Inputs over SSH also work: the service runs
-`ssh` in batch mode with the configuration and keys in `/var/lib/nxf-home/.ssh`,
-and the host keys it must trust in the same place.
+Where the two files are is yours to choose: a directory beside the flake
+that Git ignores, or secrets committed encrypted that sops-nix or agenix
+decrypt. They must be outside the Nix store, the user `nxf` must be able to
+read them, and nobody else should.
+
+Inputs over SSH also work. The service runs `ssh` in batch mode, and the user
+`nxf` has no `~/.ssh`: its key and the host keys it must trust come from the
+SSH configuration of the system, for example `programs.ssh.knownHosts` and a
+`Match localuser nxf` block with an `IdentityFile` in
+`programs.ssh.extraConfig`.
 
 ### Operating it
 

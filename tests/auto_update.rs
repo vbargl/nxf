@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{append, assert_contains, fake_systems, fixture, Fixture};
+use common::{append, assert_contains, fake_systems, fixture, git, Fixture};
 use serde_json::{json, Value};
 
 fn saved(fx: &Fixture) -> Value {
@@ -46,6 +46,25 @@ fn updates_and_switches() {
         [pair("update", "done"), pair("switch", "done")]
     );
     assert_contains(&result.stdout, "  ✓ update\n  ✓ switch\n");
+}
+
+/// The identity of the module's default, a name and an empty e-mail, commits
+/// the lockfile.
+#[test]
+fn commits_without_email() {
+    let system = &fake_systems().one;
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", system)
+        .with("GIT_AUTHOR_NAME", "nxf")
+        .with("GIT_COMMITTER_NAME", "nxf")
+        .with("GIT_AUTHOR_EMAIL", "")
+        .with("GIT_COMMITTER_EMAIL", "");
+    fx.bump(&["a"]);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!(
+        git(&fx.checkout, &["log", "-1", "--format=%an <%ae> %cn <%ce>"]),
+        "nxf <> nxf <>"
+    );
 }
 
 /// Nothing new and a running system that matches: nothing is built or activated.

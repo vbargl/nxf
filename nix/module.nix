@@ -11,7 +11,9 @@ let
   auto = cfg.autoUpdate;
   # The group, and the user of the same name that runs the update.
   group = "nxf";
-  home = "/var/lib/nxf-home";
+  # The user has no home. Nix needs a place for the clones of Git inputs and
+  # for what it remembers between runs; all of it can be deleted at any time.
+  cache = "/var/cache/nxf";
 
   gitConfig = lib.optional (auto.gitCredentialsFile != null) {
     key = "credential.helper";
@@ -66,9 +68,9 @@ in
       default = "/etc/nixos";
       description = ''
         Directory of the machine flake: a local Git repository with a
-        `flake.lock` and one configuration under `nixosConfigurations`. Root
-        owns it and the group `nxf` may write it, so every member of the group
-        can work with nxf, and so can the user `nxf` that runs the update.
+        `flake.lock` and one configuration under `nixosConfigurations`. The
+        user `nxf`, which runs the update, owns it, and the group `nxf` may
+        write it, so every member of the group can work with nxf.
       '';
     };
 
@@ -111,13 +113,15 @@ in
         );
         default = {
           name = "nxf";
-          email = "nxf@${config.networking.hostName}";
+          email = "";
         };
-        defaultText = lib.literalExpression ''{ name = "nxf"; email = "nxf@''${config.networking.hostName}"; }'';
+        defaultText = lib.literalExpression ''{ name = "nxf"; email = ""; }'';
         description = ''
-          The identity of the lockfile commits of the automatic update. With
-          null, Git's own configuration decides. The commits that members of
-          the group make by hand carry their own identity.
+          The identity of the lockfile commits of the automatic update. The
+          e-mail is empty by default: the commits stay on the machine and
+          nobody writes to their author. With null, Git's own configuration
+          decides. The commits that members of the group make by hand carry
+          their own identity.
         '';
       };
 
@@ -128,7 +132,8 @@ in
         description = ''
           A file in the format of git-credential-store, one
           `https://user:token@host` line per host, for inputs fetched with Git
-          over HTTPS. Only the user `nxf` must be able to read it.
+          over HTTPS. It may be anywhere outside the Nix store; the user
+          `nxf` must be able to read it, and nobody else should.
         '';
       };
 
@@ -139,7 +144,8 @@ in
         description = ''
           A nix.conf fragment for the update only, such as
           `access-tokens = github.com=<token>` for `github:` inputs or
-          `netrc-file = <path>` for tarball inputs.
+          `netrc-file = <path>` for tarball inputs. Like `gitCredentialsFile`,
+          it may be anywhere the user `nxf` can read.
         '';
       };
 
@@ -221,18 +227,18 @@ in
       environment.variables.NXF_FLAKE = cfg.flake;
 
       # Whoever is in this group works with nxf: they write the flake and the
-      # state of the updater. Root owns both, always.
+      # state of the updater. The user nxf owns both, always.
       users.groups.${group} = { };
 
-      # The update runs as this user, not as root, with an SSH configuration and
-      # Git credentials of its own. Only the switch is elevated, with sudo, and
-      # that needs no password: nh calls sudo for it, and an unattended run
-      # cannot answer. The group is trusted like root, because what it writes
-      # is what the switch activates.
+      # The update runs as this user, not as root. It is the owner of the
+      # process and no person: it has no home, and what it needs to reach
+      # private inputs is given to the update by path. Only the switch is
+      # elevated, with sudo, and that needs no password: nh calls sudo for it,
+      # and an unattended run cannot answer. The group is trusted like root,
+      # because what it writes is what the switch activates.
       users.users.${group} = {
         isSystemUser = true;
-        inherit group home;
-        createHome = true;
+        inherit group;
         description = "nxf automatic updates";
       };
       security.sudo.extraRules = [
@@ -247,17 +253,18 @@ in
         }
       ];
 
-      # Git refuses a checkout another user owns, and root owns this one.
+      # Git refuses a checkout another user owns, and the user nxf owns this
+      # one: root and the other members of the group would be refused.
       programs.git.enable = lib.mkDefault true;
       programs.git.config.safe.directory = [ cfg.flake ];
 
-      systemd.tmpfiles.rules = [ "d /var/lib/nxf 2775 root ${group} -" ];
+      systemd.tmpfiles.rules = [ "d /var/lib/nxf 2775 ${group} ${group} -" ];
 
       # Only what nxf changes is handed over: the directory, the lockfile, the
       # repository and the state. The other files, such as secrets, keep their
       # owner and mode.
       systemd.services.nxf-permissions = {
-        description = "Give the group ${group} the machine flake";
+        description = "Give the user and the group ${group} the machine flake";
         wantedBy = [ "multi-user.target" ];
         after = [ "local-fs.target" ];
         path = [
@@ -272,24 +279,26 @@ in
         script = ''
           state=/var/lib/nxf
           if [ -d "$state" ]; then
-            chown --recursive root:${group} "$state"
+            chown --recursive ${group}:${group} "$state"
             chmod --recursive g+rwX "$state"
             find "$state" -type d -exec chmod g+s {} +
           fi
           flake=${lib.escapeShellArg cfg.flake}
           [ -d "$flake" ] || exit 0
-          chown root:${group} "$flake"
+          chown ${group}:${group} "$flake"
           chmod 2775 "$flake"
           if [ -e "$flake/flake.lock" ]; then
-            chown root:${group} "$flake/flake.lock"
+            chown ${group}:${group} "$flake/flake.lock"
             chmod 664 "$flake/flake.lock"
           fi
           if [ -d "$flake/.git" ]; then
-            chown --recursive root:${group} "$flake/.git"
+            # New objects and refs of any member stay usable by the others.
+            # Before the owner is set: Git writes its configuration anew, as
+            # root.
+            git -C "$flake" config core.sharedRepository group
+            chown --recursive ${group}:${group} "$flake/.git"
             chmod --recursive g+rwX "$flake/.git"
             find "$flake/.git" -type d -exec chmod g+s {} +
-            # New objects and refs of any member stay usable by the others.
-            git -C "$flake" config core.sharedRepository group
           fi
         '';
       };
@@ -338,7 +347,10 @@ in
           "/run/wrappers"
         ];
         environment = {
-          HOME = home;
+          # Tools that want a home get the cache: Nix warns about a home
+          # that another user owns.
+          HOME = cache;
+          XDG_CACHE_HOME = cache;
           NXF_FLAKE = cfg.flake;
           # Build records every member's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
@@ -365,6 +377,9 @@ in
           Group = group;
           # What the update writes stays writable by the group.
           UMask = "0002";
+          # systemd creates /var/cache/nxf for the user of the service.
+          CacheDirectory = "nxf";
+          CacheDirectoryMode = "0750";
           ExecStart = "${lib.getExe cfg.package} auto-update";
           TimeoutStartSec = auto.timeout;
           Nice = 10;

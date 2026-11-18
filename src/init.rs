@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::doctor::{self, Check, Level};
-use crate::{flake, git, nixos, output};
+use crate::{flake, git, output};
 
 /// The module file every founded flake gets. `nix/init-module.nix` generates
 /// it from the options of the NixOS module, and a flake check compares them.
@@ -134,7 +134,8 @@ pub fn run(options: &Options) -> Result<(), String> {
 
     git::init(&dir)?;
     if git::identity(&dir).is_none() {
-        git::set_identity(&dir, "nxf", &format!("nxf@{}", nixos::hostname()))?;
+        // No e-mail: the commits stay on the machine.
+        git::set_identity(&dir, "nxf", "")?;
     }
     // Nix reads only tracked files of a Git flake.
     git::commit_all(&dir, "Found the machine flake")?;
