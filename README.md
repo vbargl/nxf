@@ -421,8 +421,9 @@ one you already know is refused.
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:
 
-1. If updates are held, or files other than `flake.lock` have uncommitted
-   changes, the run does nothing and reports `skipped`.
+1. If updates are held, files other than `flake.lock` have uncommitted
+   changes, or one of the [checks before the update](#checks-and-hooks)
+   fails, the run does nothing and reports `skipped`.
 2. `update` handles the inputs one at a time, as described above. A broken or
    unreachable input does not block the others.
 3. If the committed flake is not what runs, `switch` builds and activates it:
@@ -430,8 +431,9 @@ one you already know is refused.
    takes effect at the next reboot, and status says that one is needed.
 4. After the switch, the [health checks](#health-checks) run.
 5. The results are saved to `/var/lib/nxf/update.json`, and the service fails
-   if any task failed. `nxf status` shows them once to each user; there is no
-   other notification.
+   if any task failed. `nxf status` shows them once to each user. nxf sends
+   no other notification; after a failure it runs the
+   [failure hooks](#checks-and-hooks) of the configuration.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
@@ -441,9 +443,12 @@ one you already know is refused.
 | `gitIdentity` | `nxf <nxf@host>` | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
+| `preChecks` | none | Scripts that must succeed before an update starts |
 | `healthChecks` | none | Scripts that must succeed after a switch |
 | `healthTimeout` | `300` | Seconds the checks have to pass |
 | `healthInterval` | `10` | Seconds between two rounds of checks |
+| `failureHooks` | none | Scripts that run after a failed update |
+| `hookTimeout` | `60` | Seconds each pre-check and failure hook has to end |
 | `timeout` | `3h` | Longest run |
 
 ### Health checks
@@ -474,6 +479,57 @@ If checks still fail at the end:
   revision stays in the repository, because it built.
 
 Tasks run by hand, such as `nxf switch`, run no health checks.
+
+### Checks and hooks
+
+The configuration can have a say before an automatic update and after one
+that failed. Both are shell scripts, like the health checks: nxf has none of
+its own and knows nothing about what they do.
+
+```nix
+services.nxf.autoUpdate = {
+  preChecks."10-rollout" = ''
+    test "$(curl --fail --silent https://example.org/rollout)" = open
+  '';
+  failureHooks."10-pause" = ''
+    curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
+  '';
+};
+```
+
+- `preChecks` become executables in `/etc/nxf/pre.d` and run in name order
+  before the update starts. The first that fails skips the run: it reports
+  `skipped` with the last line the script printed, and nothing is fetched,
+  built or activated. The run does not count as failed.
+- `failureHooks` become executables in `/etc/nxf/failure.d`. After a run in
+  which a task failed, such as an input that did not build, a switch or the
+  health checks, they all run in name order. The file `$NXF_RESULTS` holds the
+  results of the run, the same JSON as `/var/lib/nxf/update.json`. A hook that
+  fails is itself reported, as the result `hooks`.
+- Each script has `hookTimeout` seconds; one that does not end is stopped and
+  counts as failed.
+
+Tasks run by hand ask no check and run no hook.
+
+#### Stopping a rollout
+
+The two together let one machine stop the others. A machine that updates
+earlier than the rest, by its `schedule`, reports a failure with a failure
+hook; the others ask before every update whether to go on, with a pre-check.
+What stands between them is yours: a file on a server, a small service, or
+`nxf hold --config` run from the hook. nxf defines only when the scripts run.
+
+Know what this does and does not do:
+
+- It stops what breaks the build, the switch or the health checks. An input
+  that was tampered with and passes them stops nothing.
+- A pre-check that cannot reach its answer should fail, as the one above does,
+  so that an outage holds updates instead of letting them through. The held
+  machines say so in `nxf status`.
+- Nothing starts the rollout again by itself. Whoever looked at the failure
+  opens it.
+- The machine that updates first gets every new revision first. Give its hook
+  the right to report, and nothing more.
 
 ### Holding updates
 

@@ -18,6 +18,25 @@ let
     value = "store --file=${auto.gitCredentialsFile}";
   };
 
+  # The scripts of the configuration as executables in /etc/nxf/<kind>.d.
+  scripts =
+    kind:
+    lib.mapAttrs' (
+      name: script:
+      lib.nameValuePair "nxf/${kind}.d/${name}" {
+        source = pkgs.writeShellScript "nxf-${kind}-${name}" ''
+          # The update may have started before a switch; use the running system's tools.
+          export PATH=${
+            lib.makeBinPath [
+              config.systemd.package
+              pkgs.coreutils
+            ]
+          }:/run/current-system/sw/bin:$PATH
+          ${script}
+        '';
+      }
+    );
+
   # Git reads configuration from numbered environment variables.
   gitConfigEnvironment = lib.listToAttrs (
     lib.concatLists (
@@ -151,6 +170,46 @@ in
         description = "Seconds between two rounds of health checks.";
       };
 
+      preChecks = lib.mkOption {
+        type = lib.types.attrsOf lib.types.lines;
+        default = { };
+        example = lib.literalExpression ''
+          {
+            "10-rollout" = "test \"$(curl --fail --silent https://example.org/rollout)\" = open";
+          }
+        '';
+        description = ''
+          Shell scripts that must all succeed before an automatic update
+          starts. They run in name order. The first that fails skips the run,
+          which reports `skipped` with the last line the script printed, and
+          nothing is fetched, built or activated. Updates run by hand ask no
+          check.
+        '';
+      };
+
+      failureHooks = lib.mkOption {
+        type = lib.types.attrsOf lib.types.lines;
+        default = { };
+        example = lib.literalExpression ''
+          {
+            "10-pause" = "curl --fail --silent --request POST --data @\"$NXF_RESULTS\" https://example.org/rollout/pause";
+          }
+        '';
+        description = ''
+          Shell scripts that run after an automatic update failed: an input
+          that did not build, a switch that failed, or a health check. They
+          all run, in name order, and find the results of the run as JSON in
+          the file `$NXF_RESULTS`. A hook that fails is reported as the
+          result `hooks`.
+        '';
+      };
+
+      hookTimeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 60;
+        description = "Seconds each of the `preChecks` and `failureHooks` has to end.";
+      };
+
       timeout = lib.mkOption {
         type = lib.types.str;
         default = "3h";
@@ -240,21 +299,11 @@ in
     })
 
     (lib.mkIf auto.enable {
-      environment.etc = lib.mapAttrs' (
-        name: script:
-        lib.nameValuePair "nxf/health.d/${name}" {
-          source = pkgs.writeShellScript "nxf-health-${name}" ''
-            # The update started before the switch; use the new system's tools.
-            export PATH=${
-              lib.makeBinPath [
-                config.systemd.package
-                pkgs.coreutils
-              ]
-            }:/run/current-system/sw/bin:$PATH
-            ${script}
-          '';
-        }
-      ) auto.healthChecks;
+      environment.etc = lib.mkMerge [
+        (scripts "health" auto.healthChecks)
+        (scripts "pre" auto.preChecks)
+        (scripts "failure" auto.failureHooks)
+      ];
 
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";
@@ -284,6 +333,7 @@ in
           NXF_STATE = "/var/lib/nxf";
           NXF_HEALTH_TIMEOUT = toString auto.healthTimeout;
           NXF_HEALTH_INTERVAL = toString auto.healthInterval;
+          NXF_HOOK_TIMEOUT = toString auto.hookTimeout;
           # Unattended: never ask, never hang.
           GIT_TERMINAL_PROMPT = "0";
           GIT_SSH_COMMAND = "${pkgs.openssh}/bin/ssh -o BatchMode=yes -o ConnectTimeout=30";

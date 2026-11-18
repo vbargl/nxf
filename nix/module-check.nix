@@ -33,6 +33,9 @@ let
       nixConfigFile = "/run/secrets/nix.conf";
       healthChecks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
       healthTimeout = 600;
+      preChecks."10-rollout" = "test -e /run/rollout-open";
+      failureHooks."10-pause" = "cp \"$NXF_RESULTS\" /run/rollout-paused";
+      hookTimeout = 30;
     };
   };
 
@@ -79,6 +82,9 @@ pkgs.runCommand "nxf-module-check"
     );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
+    preCheck = root.environment.etc."nxf/pre.d/10-rollout".source;
+    failureHook = root.environment.etc."nxf/failure.d/10-pause".source;
+    plainEtc = builtins.concatStringsSep " " (builtins.attrNames plain.environment.etc);
     passAsFile = [
       "rootService"
       "rootTimer"
@@ -108,6 +114,13 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
+    test -x "$preCheck"
+    has "$preCheck" 'test -e /run/rollout-open'
+    test -x "$failureHook"
+    has "$failureHook" 'cp "$NXF_RESULTS" /run/rollout-paused'
+    has "$rootServicePath" '"NXF_HOOK_TIMEOUT=30"'
+    has "$plainServicePath" '"NXF_HOOK_TIMEOUT=60"'
+    case " $plainEtc " in *" nxf/"*) echo "unexpected scripts: $plainEtc"; exit 1 ;; esac
     has "$healthCheck" 'systemctl --failed --no-legend'
     # The group keeps what the update writes, and only the switch is elevated.
     has "$rootServicePath" 'Group=nxf'

@@ -24,6 +24,13 @@
     # machine ID, so machines spread out and each keeps its own slot.
     # fixedDelay = true;
 
+    # Shell scripts that must all succeed before an automatic update
+    # starts. They run in name order. The first that fails skips the run,
+    # which reports `skipped` with the last line the script printed, and
+    # nothing is fetched, built or activated. Updates run by hand ask no
+    # check.
+    # preChecks = { };
+
     # Shell scripts that must all succeed after an automatic switch. They
     # are those of the new configuration, run in name order, and are
     # repeated until all pass or `healthTimeout` runs out. Then the
@@ -36,6 +43,16 @@
 
     # Seconds between two rounds of health checks.
     # healthInterval = 10;
+
+    # Shell scripts that run after an automatic update failed: an input
+    # that did not build, a switch that failed, or a health check. They
+    # all run, in name order, and find the results of the run as JSON in
+    # the file `$NXF_RESULTS`. A hook that fails is reported as the
+    # result `hooks`.
+    # failureHooks = { };
+
+    # Seconds each of the `preChecks` and `failureHooks` has to end.
+    # hookTimeout = 60;
 
     # The identity of the lockfile commits of the automatic update. With
     # null, Git's own configuration decides. The commits that members of

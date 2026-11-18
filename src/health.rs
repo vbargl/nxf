@@ -21,7 +21,7 @@ pub enum Health {
     Unhealthy(String),
 }
 
-fn seconds(name: &str, default: u64) -> Duration {
+pub fn seconds(name: &str, default: u64) -> Duration {
     Duration::from_secs(
         std::env::var(name)
             .ok()
@@ -30,12 +30,12 @@ fn seconds(name: &str, default: u64) -> Duration {
     )
 }
 
-/// The checks in name order. They are read again on every round, because a
-/// switch replaces them with those of the new configuration.
-fn checks() -> Vec<PathBuf> {
-    let dir = std::env::var_os("NXF_HEALTH_DIR")
+/// The executables of a directory the configuration fills, in name order.
+/// The variable stands in for the directory in tests.
+pub fn scripts(variable: &str, default: &str) -> Vec<PathBuf> {
+    let dir = std::env::var_os(variable)
         .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from);
+        .map_or_else(|| PathBuf::from(default), PathBuf::from);
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -55,12 +55,20 @@ fn checks() -> Vec<PathBuf> {
     checks
 }
 
-/// Runs one check until the deadline; an error says why it did not pass.
-fn passes(check: &Path, deadline: Instant) -> Result<(), String> {
+/// The checks. They are read again on every round, because a switch replaces
+/// them with those of the new configuration.
+fn checks() -> Vec<PathBuf> {
+    scripts("NXF_HEALTH_DIR", DEFAULT_DIR)
+}
+
+/// Runs one script until the deadline, with the given variables added to its
+/// environment; an error says why it did not pass.
+pub fn passes(check: &Path, deadline: Instant, variables: &[(&str, &Path)]) -> Result<(), String> {
     let (mut reader, writer) = os_pipe::pipe().map_err(|err| err.to_string())?;
     let stderr = writer.try_clone().map_err(|err| err.to_string())?;
     let mut command = Command::new(check);
     let mut child = command
+        .envs(variables.iter().copied())
         .stdin(Stdio::null())
         .stdout(writer)
         .stderr(stderr)
@@ -116,7 +124,7 @@ pub fn check() -> Health {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = passes(&check, deadline).err();
+            let result = passes(&check, deadline, &[]).err();
             let known = ended.iter().position(|(check, _)| *check == name);
             let result = match (known, result.as_deref() == Some(TIMED_OUT)) {
                 (Some(index), true) => ended[index].1.clone(),
