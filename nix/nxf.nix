@@ -6,9 +6,9 @@
 { config, ... }:
 {
   # Directory of the machine flake: a local Git repository with a
-  # `flake.lock` and one configuration under `nixosConfigurations`. Root
-  # owns it and the group `nxf` may write it, so every member of the group
-  # can work with nxf, and so can the user `nxf` that runs the update.
+  # `flake.lock` and one configuration under `nixosConfigurations`. The
+  # user `nxf`, which runs the update, owns it, and the group `nxf` may
+  # write it, so every member of the group can work with nxf.
   # services.nxf.flake = "/etc/nixos";
 
   services.nxf.autoUpdate = {
@@ -52,19 +52,23 @@
     # Seconds the `checkHook` and the `failureHook` each have to end.
     # hookTimeout = 60;
 
-    # The identity of the lockfile commits of the automatic update. With
-    # null, Git's own configuration decides. The commits that members of
-    # the group make by hand carry their own identity.
-    # gitIdentity = { name = "nxf"; email = "nxf@${config.networking.hostName}"; };
+    # The identity of the lockfile commits of the automatic update. The
+    # e-mail is empty by default: the commits stay on the machine and
+    # nobody writes to their author. With null, Git's own configuration
+    # decides. The commits that members of the group make by hand carry
+    # their own identity.
+    # gitIdentity = { name = "nxf"; email = ""; };
 
     # A file in the format of git-credential-store, one
     # `https://user:token@host` line per host, for inputs fetched with Git
-    # over HTTPS. Only the user `nxf` must be able to read it.
+    # over HTTPS. It may be anywhere outside the Nix store; the user
+    # `nxf` must be able to read it, and nobody else should.
     # gitCredentialsFile = null;
 
     # A nix.conf fragment for the update only, such as
     # `access-tokens = github.com=<token>` for `github:` inputs or
-    # `netrc-file = <path>` for tarball inputs.
+    # `netrc-file = <path>` for tarball inputs. Like `gitCredentialsFile`,
+    # it may be anywhere the user `nxf` can read.
     # nixConfigFile = null;
 
     # The update is stopped after this long.

@@ -312,10 +312,7 @@ fn identity_for_a_new_machine() {
     let machine = template(&fx, "node-7", "machine");
     fx.run(&["init", target.to_str().unwrap(), "--template", &machine])
         .ok();
-    assert_eq!(
-        git(&target, &["log", "-1", "--format=%an <%ae>"]),
-        format!("nxf <nxf@{}>", hostname())
-    );
+    assert_eq!(git(&target, &["log", "-1", "--format=%an <%ae>"]), "nxf <>");
 }
 
 /// Files of the machine are laid over the template and committed with it;

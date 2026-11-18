@@ -72,6 +72,8 @@ pkgs.runCommand "nxf-module-check"
     rootGroup = builtins.toJSON (builtins.hasAttr "nxf" root.users.groups);
     commandGroup = builtins.toJSON (builtins.hasAttr "nxf" command.users.groups);
     rootUser = root.users.users.nxf.group;
+    rootHome = root.users.users.nxf.home;
+    rootCreateHome = builtins.toJSON root.users.users.nxf.createHome;
     rootSudo = builtins.toJSON (
       builtins.any (
         rule: rule.groups == [ "nxf" ] && (builtins.head rule.commands).options == [ "NOPASSWD" ]
@@ -106,7 +108,9 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'bin/nxf auto-update'
     has "$rootServicePath" '"NXF_FLAKE=/etc/nixos"'
     has "$rootServicePath" '"NXF_STATE=/var/lib/nxf"'
-    has "$rootServicePath" '"GIT_COMMITTER_EMAIL=nxf@machine"'
+    has "$rootServicePath" '"GIT_COMMITTER_NAME=nxf"'
+    # No e-mail by default: the variable is there and empty.
+    has "$rootServicePath" '"GIT_COMMITTER_EMAIL="'
     has "$rootServicePath" '"GIT_CONFIG_COUNT=1"'
     has "$rootServicePath" '"GIT_CONFIG_KEY_0=credential.helper"'
     has "$rootServicePath" '"GIT_CONFIG_VALUE_0=store --file=/run/secrets/git-credentials"'
@@ -130,24 +134,33 @@ pkgs.runCommand "nxf-module-check"
     # The group keeps what the update writes, and only the switch is elevated.
     has "$rootServicePath" 'Group=nxf'
     has "$rootServicePath" 'UMask=0002'
-    has "$rootServicePath" '"HOME=/var/lib/nxf-home"'
+    # The user has no home; what tools write there goes to the cache.
+    test "$rootHome" = /var/empty
+    test "$rootCreateHome" = false
+    has "$rootServicePath" '"HOME=/var/cache/nxf"'
+    has "$rootServicePath" '"XDG_CACHE_HOME=/var/cache/nxf"'
+    has "$rootServicePath" 'CacheDirectory=nxf'
+    has "$rootServicePath" 'CacheDirectoryMode=0750'
     has "$rootServicePath" '/run/wrappers'
     has "$rootServicePath" 'nxf-permissions.service'
     lacks "$rootServicePath" 'StateDirectory'
-    has "$permissionsPath" 'chown --recursive root:nxf "$state"'
+    has "$permissionsPath" 'chown --recursive nxf:nxf "$state"'
     test "$rootUser" = nxf
     test "$rootSudo" = true
     test "$commandSudo" = true
-    has "$tmpfilesPath" 'd /var/lib/nxf 2775 root nxf -'
+    has "$tmpfilesPath" 'd /var/lib/nxf 2775 nxf nxf -'
     has "$permissionsUnitPath" 'Type=oneshot'
-    has "$permissionsPath" 'chown root:nxf "$flake"'
+    has "$permissionsPath" 'chown nxf:nxf "$flake"'
     has "$permissionsPath" 'chmod 2775 "$flake"'
     has "$permissionsPath" 'core.sharedRepository group'
+    # Git rewrites its configuration as root, so the owner is set after it.
+    line() { grep --line-number --fixed-strings -- "$1" "$permissionsPath" | cut -d: -f1; }
+    test "$(line 'core.sharedRepository group')" -lt "$(line 'chown --recursive nxf:nxf "$flake/.git"')"
     has "$permissionsPath" "flake=/etc/nixos"
     test "$rootGroup" = true
     test "$commandGroup" = true
     test "$commandHasTimer" = false
-    # Git trusts the checkout root owns, for every member.
+    # Git trusts the checkout the user nxf owns, for root and every member.
     has "$gitconfig" 'directory = "/etc/nixos"'
     has "$commandGitconfig" 'directory = "/etc/nixos"'
     has "$rootTimerPath" 'OnCalendar=*-*-* 00/6:00:00'
