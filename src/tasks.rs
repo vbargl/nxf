@@ -8,6 +8,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::output::Mark;
+use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
 use crate::{flake, git, nixos, output};
 
@@ -183,6 +184,15 @@ struct Run<'a> {
     upgrade: bool,
     /// The commit an earlier update task made, if any.
     update_commit: &'a str,
+    /// How the automatic update treats each input. None for a run by hand,
+    /// which updates what it is asked to and reports every failure.
+    strategies: Option<&'a Strategies>,
+}
+
+impl Run<'_> {
+    fn strategy(&self, input: &str) -> Option<Strategy> {
+        self.strategies.map(|strategies| strategies.of(input))
+    }
 }
 
 /// A failed task has either printed its own failure, or left an error to print.
@@ -325,7 +335,29 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
     })
 }
 
-fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
+/// The sources of the locked inputs stay in the Nix store, so that the next
+/// build, by whoever, needs no access to where an input came from.
+fn keep_inputs(dir: &Path) {
+    let kept = flake::archive(dir).and_then(|paths| nixos::keep_sources(&paths));
+    if let Err(err) = kept {
+        let cause = err.lines().last().unwrap_or_default().trim();
+        output::warning(&format!(
+            "the sources of the inputs could not be kept in the Nix store: {cause}"
+        ));
+    }
+}
+
+/// What a failed input update said, on one line.
+fn said(error: &str) -> String {
+    strip_ansi(error)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn update(run: &Run, inputs: &[String], flagged: &mut Vec<Outcome>) -> Result<(), Stop> {
     let dir = run.dir;
     output::start("Checking input updates");
     // Never built, so never committed: left by an interrupted update.
@@ -334,8 +366,12 @@ fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
         output::warning("flake.lock had uncommitted changes; they were restored.");
     }
     let before = flake::lock(dir)?;
-    let selected = if inputs.is_empty() {
+    let selected: Vec<String> = if inputs.is_empty() {
+        // The automatic update leaves alone what is updated by hand.
         flake::root_inputs(&before)
+            .into_iter()
+            .filter(|input| run.strategy(input) != Some(Strategy::Off))
+            .collect()
     } else {
         inputs.to_vec()
     };
@@ -356,16 +392,29 @@ fn update(run: &Run, inputs: &[String]) -> Result<(), Stop> {
             result.mark,
             &format!("{:<width$}{}", result.name, result.summary),
         );
+        let ends = result.mark == Mark::Failed && run.strategy(input) == Some(Strategy::Panic);
         results.push(result);
+        if ends {
+            // Nothing is rolled out without this input: the others wait.
+            break;
+        }
     }
     let unchanged = flake::lock(dir)? == before;
     if !unchanged {
         output::sub("Commit", &git::commit_line(dir, "HEAD"));
+        keep_inputs(dir);
     }
-    let failed: Vec<&InputResult> = results
+    let (noted, failed): (Vec<&InputResult>, Vec<&InputResult>) = results
         .iter()
         .filter(|result| result.mark == Mark::Failed)
-        .collect();
+        .partition(|result| run.strategy(&result.name) == Some(Strategy::Flag));
+    // A flagged input is a record, not a failure of the run.
+    flagged.extend(noted.iter().map(|result| Outcome {
+        task: "update".to_string(),
+        inputs: vec![result.name.clone()],
+        outcome: "flagged".to_string(),
+        detail: said(result.error.as_deref().unwrap_or_default()),
+    }));
     if !failed.is_empty() {
         let causes: Vec<String> = failed
             .iter()
@@ -432,7 +481,10 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
         )
     })?;
     match &tree {
-        Some(tree) => nixos::remember(tree, &built)?,
+        Some(tree) => {
+            nixos::remember(tree, &built)?;
+            keep_inputs(dir);
+        }
         None => {
             output::warning("uncommitted changes: this build cannot be identified by nxf status.")
         }
@@ -517,7 +569,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
 pub struct Outcome {
     pub task: String,
     pub inputs: Vec<String>,
-    /// `done`, `unchanged`, `failed`, or the updater's `skipped`.
+    /// `done`, `unchanged`, `failed`, or the updater's `skipped` and `flagged`.
     pub outcome: String,
     pub detail: String,
 }
@@ -553,6 +605,22 @@ fn diagnostics(stderr: &str) -> String {
 /// Runs the given tasks in order and returns one outcome per task that ran.
 /// A failure stops later tasks. Quiet runs print nothing.
 pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
+    run_with(given, quiet, None)
+}
+
+/// Runs the tasks for the automatic update, quietly and with its strategies:
+/// an input that is off is not updated, one that is flagged adds an outcome
+/// of its own when its update fails, and the first other failure ends the
+/// update.
+pub fn run_unattended(given: &[String], strategies: &Strategies) -> Result<Vec<Outcome>, String> {
+    run_with(given, true, Some(strategies))
+}
+
+fn run_with(
+    given: &[String],
+    quiet: bool,
+    strategies: Option<&Strategies>,
+) -> Result<Vec<Outcome>, String> {
     let dir = flake::checkout()?;
     let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?))?;
     let chosen: Vec<&Task> = plan.tasks.iter().filter_map(|name| task(name)).collect();
@@ -574,13 +642,15 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
             last: index + 1 == chosen.len(),
             upgrade: given.iter().any(|word| word == "upgrade"),
             update_commit: &update_commit,
+            strategies,
         };
+        let mut flagged = Vec::new();
         output::phases(offset, total);
         if quiet {
             output::capture();
         }
         let result = match task.name {
-            "update" => update(&context, inputs),
+            "update" => update(&context, inputs, &mut flagged),
             action => system(&context, action),
         };
         if let Err(Stop::Error(error)) = &result {
@@ -610,6 +680,7 @@ pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
                 String::new()
             },
         });
+        outcomes.extend(flagged);
         if result.is_err() {
             break;
         }

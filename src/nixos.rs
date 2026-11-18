@@ -355,6 +355,31 @@ pub fn remember(key: &str, system: &Path) -> Result<(), String> {
         .map_err(|err| format!("cannot write {}: {err}", link.display()))
 }
 
+/// Keeps the sources of the locked inputs in the Nix store, as GC roots in
+/// the state: whoever builds the flake next needs no access to where an input
+/// came from. They replace the sources kept by the build before.
+pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
+    let sources = state_dir().join("sources");
+    let _ = std::fs::remove_dir_all(&sources);
+    std::fs::create_dir_all(&sources)
+        .map_err(|err| format!("cannot create {}: {err}", sources.display()))?;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let output = Command::new("nix")
+        .arg("build")
+        .args(paths)
+        .arg("--out-link")
+        .arg(sources.join("input"))
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|err| format!("cannot run nix: {err}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Remembered {
     pub key: String,

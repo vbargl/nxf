@@ -17,5 +17,6 @@ pub mod output;
 pub mod progress;
 pub mod reconcile;
 pub mod status;
+pub mod strategy;
 pub mod tasks;
 pub mod text;

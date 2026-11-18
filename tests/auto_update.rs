@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{append, assert_contains, fake_systems, fixture, git, Fixture};
+use common::{append, assert_contains, commit, fake_systems, fixture, git, hostname, Fixture};
 use serde_json::{json, Value};
 
 fn saved(fx: &Fixture) -> Value {
@@ -25,6 +25,26 @@ fn outcomes(report: &Value) -> Vec<(String, String)> {
 
 fn pair(task: &str, outcome: &str) -> (String, String) {
     (task.to_string(), outcome.to_string())
+}
+
+/// Sets `services.nxf.autoUpdate` of the configuration in the checkout, and
+/// commits it: nxf reads the strategies from what is committed.
+fn strategies(fx: &Fixture, settings: &str) {
+    let file = fx.checkout.join("flake.nix");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let plain = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
+    assert_contains(&text, &plain);
+    let set = format!(
+        "nixosConfigurations.\"{}\" = {{ config.services.nxf.autoUpdate = {settings}; }};",
+        hostname()
+    );
+    std::fs::write(&file, text.replace(&plain, &set)).unwrap();
+    commit(&fx.checkout, "strategies");
+}
+
+/// Takes away where an input comes from: its update cannot be fetched.
+fn lose(fx: &Fixture, input: &str) {
+    std::fs::rename(fx.dir.join(input), fx.dir.join(format!("{input}.gone"))).unwrap();
 }
 
 /// A new input revision is built, committed and switched to.
@@ -161,4 +181,130 @@ fn shared_state() {
         &fx.run(&["status"]).stdout,
         "Running system matches the checkout (",
     );
+}
+
+/// An input that is off is left alone; the others are updated.
+#[test]
+fn off_is_left_alone() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    strategies(&fx, "{ inputs.a = \"off\"; }");
+    let (a, b) = (fx.locked("a"), fx.locked("b"));
+    fx.bump(&["a", "b"]);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!(fx.locked("a"), a);
+    assert_ne!(fx.locked("b"), b);
+    assert_eq!(
+        outcomes(&saved(&fx)),
+        [pair("update", "done"), pair("switch", "done")]
+    );
+    // By hand it is updated like any other input.
+    fx.run(&["update", "a"]).ok();
+    assert_ne!(fx.locked("a"), a);
+}
+
+/// With every input off, nothing is updated and the checkout is switched to.
+#[test]
+fn all_off() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    strategies(&fx, "{ strategy = \"off\"; }");
+    let (a, b) = (fx.locked("a"), fx.locked("b"));
+    fx.bump(&["a", "b"]);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!((fx.locked("a"), fx.locked("b")), (a, b));
+    assert_eq!(
+        outcomes(&saved(&fx)),
+        [pair("update", "unchanged"), pair("switch", "done")]
+    );
+}
+
+/// A flagged input whose update fails is recorded; the run goes on with the
+/// other inputs, switches, and does not fail.
+#[test]
+fn flagged_failure_goes_on() {
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", &fake_systems().one)
+        .with("NXF_SYSTEM", &fake_systems().two);
+    strategies(&fx, "{ inputs.a = \"flag\"; }");
+    let (a, b) = (fx.locked("a"), fx.locked("b"));
+    lose(&fx, "a");
+    fx.bump(&["b"]);
+    let result = fx.run(&["auto-update"]);
+    result.ok();
+    assert_eq!(fx.locked("a"), a);
+    assert_ne!(fx.locked("b"), b);
+    assert_eq!(fx.porcelain(), "");
+    let report = saved(&fx);
+    assert_eq!(
+        outcomes(&report),
+        [
+            pair("update", "done"),
+            pair("update", "flagged"),
+            pair("switch", "done")
+        ]
+    );
+    assert_eq!(report["results"][1]["inputs"], json!(["a"]));
+    assert_contains(
+        report["results"][1]["detail"].as_str().unwrap(),
+        "does not exist",
+    );
+    assert_contains(&result.stdout, "\n  · update a  flagged, ");
+    assert_contains(&fx.run(&["status"]).stdout, "\n  · update a  flagged, ");
+}
+
+/// An input that fails with the strategy panic ends the run: the inputs after
+/// it are not tried, nothing is switched to, and the run fails.
+#[test]
+fn panic_ends_the_run() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let b = fx.locked("b");
+    lose(&fx, "a");
+    fx.bump(&["b"]);
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_eq!(fx.locked("b"), b);
+    assert!(fx.nh_calls().is_empty());
+    assert_eq!(outcomes(&saved(&fx)), [pair("update", "failed")]);
+    // What an earlier input brought stays committed, and waits.
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let a = fx.locked("a");
+    lose(&fx, "b");
+    fx.bump(&["a"]);
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    assert_ne!(fx.locked("a"), a);
+    assert_eq!(fx.porcelain(), "");
+    assert_eq!(fx.nh_actions(), ["build"]);
+    assert_eq!(outcomes(&saved(&fx)), [pair("update", "failed")]);
+}
+
+/// The strategies are read from the committed configuration; a word that is
+/// none of them stops the run before anything is updated.
+#[test]
+fn unknown_strategy() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    strategies(&fx, "{ inputs.a = \"sometimes\"; }");
+    fx.bump(&["a"]);
+    let result = fx.run(&["auto-update"]);
+    assert_ne!(result.code, 0);
+    assert_contains(&result.stderr, "unknown update strategy 'sometimes'");
+    assert!(fx.nh_calls().is_empty());
+}
+
+/// After a build of a committed flake, the locked inputs are in the Nix
+/// store and kept there, so the next build needs no access to their origin.
+#[test]
+fn keeps_the_sources() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    fx.bump(&["a"]);
+    fx.run(&["auto-update"]).ok();
+    let sources = fx.state.join("nxf/sources");
+    let mut versions: Vec<String> = std::fs::read_dir(&sources)
+        .unwrap()
+        .map(|entry| {
+            let source = std::fs::canonicalize(entry.unwrap().path()).unwrap();
+            assert!(source.starts_with("/nix/store"), "{}", source.display());
+            std::fs::read_to_string(source.join("v")).unwrap()
+        })
+        .collect();
+    versions.sort();
+    assert_eq!(versions, ["1", "2"]);
 }
