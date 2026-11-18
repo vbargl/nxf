@@ -433,8 +433,8 @@ one you already know is refused.
 4. After the switch, the [health checks](#health-checks) run.
 5. The results are saved to `/var/lib/nxf/update.json`, and the service fails
    if any task failed. `nxf status` shows them once to each user. nxf sends
-   no other notification; after a failure it runs the
-   [failure hook](#hooks) of the configuration.
+   no other notification; after a failure, or an input it is to report, it
+   runs the [failure hook](#hooks) of the configuration.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
@@ -444,13 +444,13 @@ one you already know is refused.
 | `gitIdentity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
-| `strategy` | `panic` | What the update does with an input: `off`, `flag` or `panic` |
+| `strategy` | `report` | What the update does with an input: `off`, `flag` or `report` |
 | `inputs` | none | The strategy of single inputs, by name |
 | `checkHook` | none | Script that is asked before an update starts |
 | `healthChecks` | none | Scripts that must succeed after a switch |
 | `healthTimeout` | `300` | Seconds the checks have to pass |
 | `healthInterval` | `10` | Seconds between two rounds of checks |
-| `failureHook` | none | Script that runs after a failed update |
+| `failureHook` | none | Script that runs after a failed update, or an input to report |
 | `hookTimeout` | `60` | Seconds each of the two hooks has to end |
 | `timeout` | `3h` | Longest run |
 
@@ -507,8 +507,9 @@ services.nxf.autoUpdate = {
   last line the script printed, and nothing is fetched, built or activated.
   The run does not count as failed.
 - `failureHook` becomes `/etc/nxf/hooks/failure` and runs after a run in which
-  a task failed, such as an input that did not build, a switch or the health
-  checks. The file `$NXF_RESULTS` holds the results of the run, the same JSON
+  a task failed, such as a switch or the health checks, or which could not
+  update an input whose [strategy](#strategies) is `report`. The file
+  `$NXF_RESULTS` holds the results of the run, the same JSON
   as `/var/lib/nxf/update.json`. When the hook fails itself, that is
   reported, as the result `hook`.
 - A hook fails when any of its commands does. Modules can each add lines to
@@ -563,11 +564,11 @@ only. Each input has a strategy for the automatic update:
 | --- | --- |
 | `off` | leaves the input alone. It is updated by hand, with `nxf update <input>` |
 | `flag` | tries. An update that cannot be fetched or does not build is recorded, and the run goes on and does not fail. `nxf status` shows the record |
-| `panic` | tries. Such an update ends the run: no later input is tried, nothing is switched to, the run fails and the failure hook runs. What earlier inputs brought stays committed and waits |
+| `report` | does the same as `flag`, and the [failure hook](#hooks) runs after the run |
 
 ```nix
 services.nxf.autoUpdate = {
-  strategy = "panic"; # every input without an entry below
+  strategy = "report"; # every input without an entry below
   inputs = {
     work = "off";
     unstable = "flag";
@@ -576,9 +577,12 @@ services.nxf.autoUpdate = {
 ```
 
 nxf reads the strategies from the configuration in the checkout, not from
-the system that runs: a commit changes them, and no switch is needed, which
-`panic` would hold back. They concern the automatic update only. A task run
-by hand updates what it is asked to and reports every failure.
+the system that runs: a commit changes them, and no switch is needed. They
+concern the automatic update only. A task run by hand updates what it is
+asked to and fails when an update does.
+
+No strategy holds back the other inputs or the switch: an input that could
+not be updated stays as it was, and what the others brought is rolled out.
 
 A build needs every input, also one the automatic update does not touch.
 Nix reads a locked input from the Nix store when it is there, and asks the

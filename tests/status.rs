@@ -65,6 +65,19 @@ fn latest_update() {
     assert_lacks(&fx.run(&["status"]).stdout, "Last automatic update");
 }
 
+/// A result with a long name keeps a gap before what it says.
+#[test]
+fn long_result_name() {
+    let fx = fixture();
+    fx.save_update(json!({"time": 1, "results": [
+        {"task": "update", "inputs": ["unstable"], "outcome": "reported", "detail": "no route | to host"},
+    ]}));
+    assert_contains(
+        &fx.run(&["status"]).stdout,
+        "\n  · update unstable  reported, no route\n",
+    );
+}
+
 /// Read tracking is per Unix user's state directory, not in shared updater data.
 #[test]
 fn update_read_per_user() {

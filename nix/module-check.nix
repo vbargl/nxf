@@ -156,7 +156,7 @@ pkgs.runCommand "nxf-module-check"
     has "$permissionsPath" 'chown --recursive nxf:nxf "$state"'
     test "$rootUser" = nxf
     test "$rootStrategies" = '{"inputs":{"work":"off"},"strategy":"flag"}'
-    test "$plainStrategies" = '{"inputs":{},"strategy":"panic"}'
+    test "$plainStrategies" = '{"inputs":{},"strategy":"report"}'
     test "$rootSudo" = true
     test "$commandSudo" = true
     has "$tmpfilesPath" 'd /var/lib/nxf 2775 nxf nxf -'

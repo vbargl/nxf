@@ -18,7 +18,7 @@ let
   strategy = lib.types.enum [
     "off"
     "flag"
-    "panic"
+    "report"
   ];
 
   gitConfig = lib.optional (auto.gitCredentialsFile != null) {
@@ -157,15 +157,14 @@ in
 
       strategy = lib.mkOption {
         type = strategy;
-        default = "panic";
+        default = "report";
         description = ''
           What the automatic update does with an input that has no entry in
           `inputs`. With `off` it leaves the input alone, which is then
           updated by hand. With `flag` it tries, and an update that cannot be
           fetched or does not build is only recorded: the run goes on and
-          does not fail, and `nxf status` shows the record. With `panic` such
-          an update ends the run: no later input is tried, nothing is
-          switched to, and the run fails.
+          does not fail, and `nxf status` shows the record. With `report` it
+          does the same, and the `failureHook` runs after the run.
         '';
       };
 
@@ -236,9 +235,10 @@ in
           curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
         '';
         description = ''
-          A shell script that runs after an automatic update failed: an
-          input that did not build, a switch that failed, or a health check.
-          It finds the results of the run as JSON in the file `$NXF_RESULTS`.
+          A shell script that runs after an automatic update in which a
+          task failed, such as a switch or a health check, or which could not
+          update an input whose strategy is `report`. It finds the results
+          of the run as JSON in the file `$NXF_RESULTS`.
           When it fails itself, that is reported as the result `hook`.
         '';
       };

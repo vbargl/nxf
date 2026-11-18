@@ -86,9 +86,13 @@ pub fn result_rows(results: &[Value]) -> Vec<ResultRow> {
             };
             ResultRow {
                 mark,
-                text: format!("{name:<width$}{said}", width = output::LABEL)
-                    .trim_end()
-                    .to_string(),
+                // A long name keeps its distance from what follows.
+                text: format!(
+                    "{name:<width$}{said}",
+                    width = output::LABEL.max(name.chars().count() + 2)
+                )
+                .trim_end()
+                .to_string(),
                 more: pieces.collect(),
             }
         })
