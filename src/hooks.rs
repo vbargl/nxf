@@ -1,48 +1,42 @@
-//! The configuration's say in an automatic update: checks that must pass
-//! before one starts, and hooks that run after one failed. Both are
-//! executables in a directory, like the health checks, and nxf knows nothing
-//! about what they do.
+//! The configuration's two hooks around an automatic update: one that is
+//! asked before it starts, and one that runs after it failed. Each is one
+//! executable, and nxf knows nothing about what it does.
 
-use std::path::Path;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::health;
 
-pub const PRE_DIR: &str = "/etc/nxf/pre.d";
-pub const FAILURE_DIR: &str = "/etc/nxf/failure.d";
+pub const CHECK_HOOK: &str = "/etc/nxf/check-hook";
+pub const FAILURE_HOOK: &str = "/etc/nxf/failure-hook";
 
-fn name(script: &Path) -> String {
-    script
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned()
+/// The hook, when the configuration has one. The variable stands in for its
+/// path in tests.
+fn hook(variable: &str, default: &str) -> Option<PathBuf> {
+    let path = std::env::var_os(variable)
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| PathBuf::from(default), PathBuf::from);
+    std::fs::metadata(&path)
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        .then_some(path)
 }
 
-fn deadline() -> Instant {
-    Instant::now() + health::seconds("NXF_HOOK_TIMEOUT", 60)
+fn run(hook: &Path, variables: &[(&str, &Path)]) -> Option<String> {
+    let deadline = Instant::now() + health::seconds("NXF_HOOK_TIMEOUT", 60);
+    health::passes(hook, deadline, variables).err()
 }
 
-/// The first check that does not let the update start, with what it said.
-/// The checks run in name order, and the ones after it are not run.
+/// What the check hook said when it did not let the update start.
 pub fn refused() -> Option<String> {
-    health::scripts("NXF_PRE_DIR", PRE_DIR)
-        .iter()
-        .find_map(|check| {
-            let why = health::passes(check, deadline(), &[]).err()?;
-            Some(format!("{}: {why}", name(check)))
-        })
+    run(&hook("NXF_CHECK_HOOK", CHECK_HOOK)?, &[])
 }
 
-/// Runs every failure hook, each with the saved results in NXF_RESULTS, and
-/// returns the hooks that failed, with what they said.
+/// Runs the failure hook with the saved results in NXF_RESULTS, and returns
+/// what it said when it failed itself.
 pub fn failure(results: &Path) -> Option<String> {
-    let failed: Vec<String> = health::scripts("NXF_FAILURE_DIR", FAILURE_DIR)
-        .iter()
-        .filter_map(|hook| {
-            let why = health::passes(hook, deadline(), &[("NXF_RESULTS", results)]).err()?;
-            Some(format!("{}: {why}", name(hook)))
-        })
-        .collect();
-    (!failed.is_empty()).then(|| failed.join("; "))
+    run(
+        &hook("NXF_FAILURE_HOOK", FAILURE_HOOK)?,
+        &[("NXF_RESULTS", results)],
+    )
 }

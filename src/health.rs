@@ -30,12 +30,12 @@ pub fn seconds(name: &str, default: u64) -> Duration {
     )
 }
 
-/// The executables of a directory the configuration fills, in name order.
-/// The variable stands in for the directory in tests.
-pub fn scripts(variable: &str, default: &str) -> Vec<PathBuf> {
-    let dir = std::env::var_os(variable)
+/// The checks in name order. They are read again on every round, because a
+/// switch replaces them with those of the new configuration.
+fn checks() -> Vec<PathBuf> {
+    let dir = std::env::var_os("NXF_HEALTH_DIR")
         .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(default), PathBuf::from);
+        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from);
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -53,12 +53,6 @@ pub fn scripts(variable: &str, default: &str) -> Vec<PathBuf> {
         .collect();
     checks.sort();
     checks
-}
-
-/// The checks. They are read again on every round, because a switch replaces
-/// them with those of the new configuration.
-fn checks() -> Vec<PathBuf> {
-    scripts("NXF_HEALTH_DIR", DEFAULT_DIR)
 }
 
 /// Runs one script until the deadline, with the given variables added to its

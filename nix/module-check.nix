@@ -33,8 +33,8 @@ let
       nixConfigFile = "/run/secrets/nix.conf";
       healthChecks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
       healthTimeout = 600;
-      preChecks."10-rollout" = "test -e /run/rollout-open";
-      failureHooks."10-pause" = "cp \"$NXF_RESULTS\" /run/rollout-paused";
+      checkHook = "test -e /run/rollout-open";
+      failureHook = "cp \"$NXF_RESULTS\" /run/rollout-paused";
       hookTimeout = 30;
     };
   };
@@ -82,8 +82,8 @@ pkgs.runCommand "nxf-module-check"
     );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
-    preCheck = root.environment.etc."nxf/pre.d/10-rollout".source;
-    failureHook = root.environment.etc."nxf/failure.d/10-pause".source;
+    checkHook = root.environment.etc."nxf/check-hook".source;
+    failureHook = root.environment.etc."nxf/failure-hook".source;
     plainEtc = builtins.concatStringsSep " " (builtins.attrNames plain.environment.etc);
     passAsFile = [
       "rootService"
@@ -114,8 +114,9 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
-    test -x "$preCheck"
-    has "$preCheck" 'test -e /run/rollout-open'
+    test -x "$checkHook"
+    has "$checkHook" 'set -e'
+    has "$checkHook" 'test -e /run/rollout-open'
     test -x "$failureHook"
     has "$failureHook" 'cp "$NXF_RESULTS" /run/rollout-paused'
     has "$rootServicePath" '"NXF_HOOK_TIMEOUT=30"'

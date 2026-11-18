@@ -32,15 +32,17 @@ change them here first.
   `hosts.<name>.ssh` and must keep ignoring everything else.
 - `nxf init` does not edit the files of a template. It adds `nxf.nix` and
   reports whether the configuration imports the module.
-- Health checks, the checks before an automatic update and the failure hooks
-  come from the configuration. nxf ships none and knows nothing about what
-  they do: no URLs, protocols or services of its own.
+- Health checks and the two hooks come from the configuration. nxf ships
+  none and knows nothing about what they do: no URLs, protocols or services
+  of its own.
+- There are two hooks and no more: the check hook before an automatic update
+  and the failure hook after a failed one, each one script. The check hook
+  can only skip the automatic run, and the failure hook can only fail as a
+  result of its own. Neither changes what the tasks do, and tasks run by hand
+  use neither.
 - `nxf status` is the only way nxf brings results to people: no notification
-  services, queues or channels. A failure hook is the configuration's, and
+  services, queues or channels. The failure hook is the configuration's, and
   what it tells to whom is not nxf's.
-- A check before the update can only skip the automatic run, and a failure
-  hook can only fail as a result of its own. Neither changes what the tasks
-  do, and tasks run by hand use neither.
 
 ## Layout
 
@@ -51,7 +53,7 @@ change them here first.
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
 | `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
 | `src/hold.rs` | The hold on automatic updates |
-| `src/hooks.rs` | The configuration's checks before an automatic update and its hooks after a failed one |
+| `src/hooks.rs` | The configuration's check hook before an automatic update and its failure hook after a failed one |
 | `src/hosts.rs` | The hosts file: SSH destinations, with everything else ignored |
 | `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh |
 | `src/init.rs` | Founding a machine flake from a template |
@@ -131,10 +133,9 @@ change them here first.
   machine that starts as another system, and run it a second time.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
-  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR`, `NXF_PRE_DIR`, `NXF_FAILURE_DIR` and
+  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR`, `NXF_CHECK_HOOK`, `NXF_FAILURE_HOOK` and
   `NXF_SSH` stand in for the running and the booted system, the updater,
-  systemd, the health checks, the checks before an update, the failure hooks
-  and ssh.
+  systemd, the health checks, the two hooks and ssh.
 - Tests of live progress hold the mock nh back and assert that the output is
   there before it is released. Tests of in-place updates run in a
   pseudo-terminal and assert the final screen.

@@ -118,10 +118,10 @@ fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
 pub fn run(state: &Path) -> Result<bool, String> {
     let mut results = decide()?;
     let saved = save(state, &results)?;
-    // The hooks read the saved results; one that fails becomes a result too.
+    // The hook reads the saved results; when it fails, that is a result too.
     if results.iter().any(Outcome::failed) {
         if let Some(failed) = hooks::failure(&saved) {
-            results.push(outcome("hooks", "failed", failed));
+            results.push(outcome("hook", "failed", failed));
             save(state, &results)?;
         }
     }

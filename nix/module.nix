@@ -18,24 +18,27 @@ let
     value = "store --file=${auto.gitCredentialsFile}";
   };
 
-  # The scripts of the configuration as executables in /etc/nxf/<kind>.d.
-  scripts =
-    kind:
-    lib.mapAttrs' (
-      name: script:
-      lib.nameValuePair "nxf/${kind}.d/${name}" {
-        source = pkgs.writeShellScript "nxf-${kind}-${name}" ''
-          # The update may have started before a switch; use the running system's tools.
-          export PATH=${
-            lib.makeBinPath [
-              config.systemd.package
-              pkgs.coreutils
-            ]
-          }:/run/current-system/sw/bin:$PATH
-          ${script}
-        '';
-      }
-    );
+  # The update may have started before a switch; use the running system's tools.
+  tools = ''
+    export PATH=${
+      lib.makeBinPath [
+        config.systemd.package
+        pkgs.coreutils
+      ]
+    }:/run/current-system/sw/bin:$PATH
+  '';
+
+  # One hook as an executable in /etc/nxf, when the configuration has it.
+  # Modules may each add lines, so every command must succeed.
+  hook =
+    name: script:
+    lib.optionalAttrs (script != "") {
+      "nxf/${name}".source = pkgs.writeShellScript "nxf-${name}" ''
+        set -e
+        ${tools}
+        ${script}
+      '';
+    };
 
   # Git reads configuration from numbered environment variables.
   gitConfigEnvironment = lib.listToAttrs (
@@ -170,44 +173,38 @@ in
         description = "Seconds between two rounds of health checks.";
       };
 
-      preChecks = lib.mkOption {
-        type = lib.types.attrsOf lib.types.lines;
-        default = { };
-        example = lib.literalExpression ''
-          {
-            "10-rollout" = "test \"$(curl --fail --silent https://example.org/rollout)\" = open";
-          }
+      checkHook = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        example = ''
+          test "$(curl --fail --silent https://example.org/rollout)" = open
         '';
         description = ''
-          Shell scripts that must all succeed before an automatic update
-          starts. They run in name order. The first that fails skips the run,
-          which reports `skipped` with the last line the script printed, and
-          nothing is fetched, built or activated. Updates run by hand ask no
-          check.
+          A shell script that is asked before an automatic update starts.
+          When one of its commands fails, the run is skipped: it reports
+          `skipped` with the last line the script printed, and nothing is
+          fetched, built or activated. Updates run by hand do not ask it.
         '';
       };
 
-      failureHooks = lib.mkOption {
-        type = lib.types.attrsOf lib.types.lines;
-        default = { };
-        example = lib.literalExpression ''
-          {
-            "10-pause" = "curl --fail --silent --request POST --data @\"$NXF_RESULTS\" https://example.org/rollout/pause";
-          }
+      failureHook = lib.mkOption {
+        type = lib.types.lines;
+        default = "";
+        example = ''
+          curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
         '';
         description = ''
-          Shell scripts that run after an automatic update failed: an input
-          that did not build, a switch that failed, or a health check. They
-          all run, in name order, and find the results of the run as JSON in
-          the file `$NXF_RESULTS`. A hook that fails is reported as the
-          result `hooks`.
+          A shell script that runs after an automatic update failed: an
+          input that did not build, a switch that failed, or a health check.
+          It finds the results of the run as JSON in the file `$NXF_RESULTS`.
+          When it fails itself, that is reported as the result `hook`.
         '';
       };
 
       hookTimeout = lib.mkOption {
         type = lib.types.ints.positive;
         default = 60;
-        description = "Seconds each of the `preChecks` and `failureHooks` has to end.";
+        description = "Seconds the `checkHook` and the `failureHook` each have to end.";
       };
 
       timeout = lib.mkOption {
@@ -299,11 +296,18 @@ in
     })
 
     (lib.mkIf auto.enable {
-      environment.etc = lib.mkMerge [
-        (scripts "health" auto.healthChecks)
-        (scripts "pre" auto.preChecks)
-        (scripts "failure" auto.failureHooks)
-      ];
+      environment.etc =
+        lib.mapAttrs' (
+          name: script:
+          lib.nameValuePair "nxf/health.d/${name}" {
+            source = pkgs.writeShellScript "nxf-health-${name}" ''
+              ${tools}
+              ${script}
+            '';
+          }
+        ) auto.healthChecks
+        // hook "check-hook" auto.checkHook
+        // hook "failure-hook" auto.failureHook;
 
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";
