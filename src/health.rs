@@ -1,5 +1,6 @@
 //! Health checks after a switch. The configuration supplies them as
-//! executables in one directory; all must pass before the time runs out.
+//! executables in one directory, with their times in a file beside them; all
+//! must pass before the time runs out.
 
 use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
@@ -10,6 +11,8 @@ use std::time::{Duration, Instant};
 use crate::text::plain;
 
 pub const DEFAULT_DIR: &str = "/etc/nxf/health.d";
+/// The file beside the directory of the checks that holds their times.
+const SETTINGS: &str = "health.conf";
 const TIMED_OUT: &str = "timed out";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -21,22 +24,27 @@ pub enum Health {
     Unhealthy(String),
 }
 
+fn dir() -> PathBuf {
+    std::env::var_os("NXF_HEALTH_DIR")
+        .filter(|value| !value.is_empty())
+        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from)
+}
+
+/// A time in seconds from the `name=seconds` lines of the file beside the
+/// checks. A switch replaces it too, so the new configuration decides.
 fn seconds(name: &str, default: u64) -> Duration {
-    Duration::from_secs(
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default),
-    )
+    let settings = std::fs::read_to_string(dir().with_file_name(SETTINGS)).unwrap_or_default();
+    let value = settings.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == name).then(|| value.trim().parse().ok())?
+    });
+    Duration::from_secs(value.unwrap_or(default))
 }
 
 /// The checks in name order. They are read again on every round, because a
 /// switch replaces them with those of the new configuration.
 fn checks() -> Vec<PathBuf> {
-    let dir = std::env::var_os("NXF_HEALTH_DIR")
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from);
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = std::fs::read_dir(dir()) else {
         return Vec::new();
     };
     let mut checks: Vec<PathBuf> = entries
@@ -103,8 +111,8 @@ pub fn check() -> Health {
     if checks().is_empty() {
         return Health::Unchecked;
     }
-    let deadline = Instant::now() + seconds("NXF_HEALTH_TIMEOUT", 300);
-    let interval = seconds("NXF_HEALTH_INTERVAL", 10);
+    let deadline = Instant::now() + seconds("timeout", 300);
+    let interval = seconds("interval", 10);
     // How each check ended when it last ran to its end: passed, or why not.
     // A run that the deadline cut short says less than the one before it.
     let mut ended: Vec<(String, Option<String>)> = Vec::new();

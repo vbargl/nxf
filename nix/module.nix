@@ -184,21 +184,29 @@ in
     })
 
     (lib.mkIf auto.enable {
-      environment.etc = lib.mapAttrs' (
-        name: script:
-        lib.nameValuePair "nxf/health.d/${name}" {
-          source = pkgs.writeShellScript "nxf-health-${name}" ''
-            # The update started before the switch; use the new system's tools.
-            export PATH=${
-              lib.makeBinPath [
-                config.systemd.package
-                pkgs.coreutils
-              ]
-            }:/run/current-system/sw/bin:$PATH
-            ${script}
+      environment.etc =
+        lib.mapAttrs' (
+          name: script:
+          lib.nameValuePair "nxf/health.d/${name}" {
+            source = pkgs.writeShellScript "nxf-health-${name}" ''
+              # The update started before the switch; use the new system's tools.
+              export PATH=${
+                lib.makeBinPath [
+                  config.systemd.package
+                  pkgs.coreutils
+                ]
+              }:/run/current-system/sw/bin:$PATH
+              ${script}
+            '';
+          }
+        ) auto.healthChecks
+        // {
+          # nxf reads the times after the switch, so those of the new system count.
+          "nxf/health.conf".text = ''
+            timeout=${toString auto.healthTimeout}
+            interval=${toString auto.healthInterval}
           '';
-        }
-      ) auto.healthChecks;
+        };
 
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";
@@ -220,8 +228,6 @@ in
           NXF_FLAKE = cfg.flake;
           # Build records every user's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
-          NXF_HEALTH_TIMEOUT = toString auto.healthTimeout;
-          NXF_HEALTH_INTERVAL = toString auto.healthInterval;
           # Unattended: never ask, never hang.
           GIT_TERMINAL_PROMPT = "0";
           GIT_SSH_COMMAND = "${pkgs.openssh}/bin/ssh -o BatchMode=yes -o ConnectTimeout=30";

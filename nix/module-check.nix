@@ -60,7 +60,9 @@ pkgs.runCommand "nxf-module-check"
     userService = unit user "nxf-auto-update.service";
     userTimer = unit user "nxf-auto-update.timer";
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
+    healthSettings = root.environment.etc."nxf/health.conf".text;
     passAsFile = [
+      "healthSettings"
       "rootService"
       "rootTimer"
       "userService"
@@ -80,8 +82,10 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" '"GIT_CONFIG_KEY_0=safe.directory"'
     has "$rootServicePath" '"GIT_CONFIG_VALUE_1=store --file=/run/secrets/git-credentials"'
     has "$rootServicePath" '"NIX_CONFIG=!include /run/secrets/nix.conf"'
-    has "$rootServicePath" '"NXF_HEALTH_TIMEOUT=600"'
-    has "$rootServicePath" '"NXF_HEALTH_INTERVAL=10"'
+    # The times are in /etc, which the switch replaces; the unit keeps running.
+    lacks "$rootServicePath" 'NXF_HEALTH'
+    has "$healthSettingsPath" 'timeout=600'
+    has "$healthSettingsPath" 'interval=10'
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
