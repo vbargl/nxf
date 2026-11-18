@@ -4,9 +4,11 @@
 
 mod common;
 
-use common::{assert_contains, assert_lacks, fixture, write_script, Fixture};
+use common::{
+    assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture,
+};
 use nxf::hosts::Host;
-use nxf::reconcile::{known_hosts_line, parse_probe, Found};
+use nxf::reconcile::{known_hosts_line, parse_probe, template, Found};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -52,6 +54,35 @@ fn known_hosts() {
         known_hosts_line(&host(Some(2222)), "ssh-ed25519 AAAA"),
         "[10.0.0.5]:2222 ssh-ed25519 AAAA"
     );
+}
+
+/// The source of the template is in the Nix store when it is named, with the
+/// uncommitted changes of its checkout, because it is copied to the machines
+/// from there. Nix names the store path of a flake before it writes it.
+#[test]
+fn template_source_is_stored() {
+    let dir = temp_dir("template");
+    let unique = format!("{:?} {:?}", dir, std::time::SystemTime::now());
+    std::fs::write(
+        dir.join("flake.nix"),
+        "{ outputs = _: { templates.machine = { path = ./machine; description = \"\"; }; }; }\n",
+    )
+    .unwrap();
+    std::fs::create_dir(dir.join("machine")).unwrap();
+    std::fs::write(dir.join("machine/value"), &unique).unwrap();
+    git(&dir, &["init", "--quiet", "--initial-branch", "main"]);
+    commit(&dir, "init");
+    let changed = format!("{unique} changed");
+    std::fs::write(dir.join("machine/value"), &changed).unwrap();
+
+    let (source, name) = template(&format!("{}#machine", dir.display())).unwrap();
+    assert_eq!(name, "machine");
+    assert!(source.starts_with("/nix/store"), "{}", source.display());
+    assert_eq!(
+        std::fs::read_to_string(source.join("machine/value")).ok(),
+        Some(changed)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Machines behind a mock ssh that answers the probe from a file.

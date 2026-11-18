@@ -280,12 +280,14 @@ fn package() -> Result<PathBuf, String> {
 
 /// The source of the template as a store path, and the name of the template.
 /// The machines get the same source, without a way to the repository.
-fn template(reference: &str) -> Result<(PathBuf, String), String> {
+/// `nix flake prefetch` writes the source to the store; `nix flake metadata`
+/// may only name the path it would have there.
+pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
     let (flake, name) = reference
         .split_once('#')
         .ok_or("The template must be given as <flake>#<name>")?;
     let output = Command::new("nix")
-        .args(["flake", "metadata", "--json", flake])
+        .args(["flake", "prefetch", "--json", flake])
         .stdin(Stdio::null())
         .output()
         .map_err(|err| format!("cannot run nix: {err}"))?;
@@ -295,10 +297,10 @@ fn template(reference: &str) -> Result<(PathBuf, String), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let metadata: Value = serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
-    let path = metadata["path"]
+    let fetched: Value = serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
+    let path = fetched["storePath"]
         .as_str()
-        .ok_or("nix flake metadata gave no path")?;
+        .ok_or("nix flake prefetch gave no store path")?;
     Ok((PathBuf::from(path), name.to_string()))
 }
 
