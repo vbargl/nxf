@@ -43,7 +43,7 @@ pub fn active() -> Option<Hold> {
 
 fn denied(action: &str, err: std::io::Error) -> String {
     format!(
-        "cannot {action} {}: {err}; run as the update user or with sudo",
+        "cannot {action} {}: {err}; run as a member of the nxf group or with sudo",
         file().display()
     )
 }

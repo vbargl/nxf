@@ -32,13 +32,23 @@ fn dir() -> PathBuf {
 
 /// A time in seconds from the `name=seconds` lines of the file beside the
 /// checks. A switch replaces it too, so the new configuration decides.
-fn seconds(name: &str, default: u64) -> Duration {
+fn time(name: &str, default: u64) -> Duration {
     let settings = std::fs::read_to_string(dir().with_file_name(SETTINGS)).unwrap_or_default();
     let value = settings.lines().find_map(|line| {
         let (key, value) = line.split_once('=')?;
         (key.trim() == name).then(|| value.trim().parse().ok())?
     });
     Duration::from_secs(value.unwrap_or(default))
+}
+
+/// Seconds from a variable of the environment.
+pub fn seconds(name: &str, default: u64) -> Duration {
+    Duration::from_secs(
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default),
+    )
 }
 
 /// The checks in name order. They are read again on every round, because a
@@ -63,12 +73,14 @@ fn checks() -> Vec<PathBuf> {
     checks
 }
 
-/// Runs one check until the deadline; an error says why it did not pass.
-fn passes(check: &Path, deadline: Instant) -> Result<(), String> {
+/// Runs one script until the deadline, with the given variables added to its
+/// environment; an error says why it did not pass.
+pub fn passes(check: &Path, deadline: Instant, variables: &[(&str, &Path)]) -> Result<(), String> {
     let (mut reader, writer) = os_pipe::pipe().map_err(|err| err.to_string())?;
     let stderr = writer.try_clone().map_err(|err| err.to_string())?;
     let mut command = Command::new(check);
     let mut child = command
+        .envs(variables.iter().copied())
         .stdin(Stdio::null())
         .stdout(writer)
         .stderr(stderr)
@@ -111,8 +123,8 @@ pub fn check() -> Health {
     if checks().is_empty() {
         return Health::Unchecked;
     }
-    let deadline = Instant::now() + seconds("timeout", 300);
-    let interval = seconds("interval", 10);
+    let deadline = Instant::now() + time("timeout", 300);
+    let interval = time("interval", 10);
     // How each check ended when it last ran to its end: passed, or why not.
     // A run that the deadline cut short says less than the one before it.
     let mut ended: Vec<(String, Option<String>)> = Vec::new();
@@ -124,7 +136,7 @@ pub fn check() -> Health {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = passes(&check, deadline).err();
+            let result = passes(&check, deadline, &[]).err();
             let known = ended.iter().position(|(check, _)| *check == name);
             let result = match (known, result.as_deref() == Some(TIMED_OUT)) {
                 (Some(index), true) => ended[index].1.clone(),

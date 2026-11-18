@@ -145,6 +145,24 @@ fn state_dir() {
     assert_eq!(nixos::state_dir(), Path::new("/var/lib/nxf"));
 }
 
+/// A checkout the group may write makes what nxf creates writable by the
+/// group; one only its owner may write leaves the umask alone.
+#[test]
+fn shared() {
+    use std::os::unix::fs::PermissionsExt;
+    let _guard = environment(&[]);
+    let private = temp_dir("private");
+    let group = temp_dir("group");
+    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&group, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    let before = unsafe { libc::umask(0o022) };
+    assert!(!nixos::share_with_group(&private));
+    assert_eq!(unsafe { libc::umask(0o022) }, 0o022);
+    assert!(!nixos::share_with_group(&private.join("missing")));
+    assert!(nixos::share_with_group(&group));
+    assert_eq!(unsafe { libc::umask(before) }, 0o002);
+}
+
 /// Remembered systems come back by key; dangling records are skipped.
 #[test]
 fn remember() {

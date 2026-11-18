@@ -273,7 +273,7 @@ needs nxf installed on the machines. A machine that does not answer is a
 failed row and makes the command fail. `nxf status --config <file> --json`
 prints one entry for each machine: its `status --json`, or an `error`.
 `hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
-the update user.
+a member of the group `nxf`.
 
 ### The hosts file
 
@@ -421,8 +421,9 @@ one you already know is refused.
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:
 
-1. If updates are held, or files other than `flake.lock` have uncommitted
-   changes, the run does nothing and reports `skipped`.
+1. If updates are held, files other than `flake.lock` have uncommitted
+   changes, or the [check hook](#hooks) fails, the run does nothing and
+   reports `skipped`.
 2. `update` handles the inputs one at a time, as described above. A broken or
    unreachable input does not block the others.
 3. If the committed flake is not what runs, `switch` builds and activates it:
@@ -430,21 +431,24 @@ one you already know is refused.
    takes effect at the next reboot, and status says that one is needed.
 4. After the switch, the [health checks](#health-checks) run.
 5. The results are saved to `/var/lib/nxf/update.json`, and the service fails
-   if any task failed. `nxf status` shows them once to each user; there is no
-   other notification.
+   if any task failed. `nxf status` shows them once to each user. nxf sends
+   no other notification; after a failure it runs the
+   [failure hook](#hooks) of the configuration.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
-| `user` | `root` | The user that runs the update |
 | `schedule` | `*-*-* 00/6:00:00` | systemd calendar expression |
 | `randomizedDelay` | `1h` | Latest start after the schedule |
 | `fixedDelay` | `true` | Keep the same delay on every run, different for each machine |
-| `gitIdentity` | `nxf <nxf@host>` for root | Identity of the lockfile commits |
+| `gitIdentity` | `nxf <nxf@host>` | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
+| `checkHook` | none | Script that is asked before an update starts |
 | `healthChecks` | none | Scripts that must succeed after a switch |
 | `healthTimeout` | `300` | Seconds the checks have to pass |
 | `healthInterval` | `10` | Seconds between two rounds of checks |
+| `failureHook` | none | Script that runs after a failed update |
+| `hookTimeout` | `60` | Seconds each of the two hooks has to end |
 | `timeout` | `3h` | Longest run |
 
 ### Health checks
@@ -478,6 +482,60 @@ If checks still fail at the end:
 
 Tasks run by hand, such as `nxf switch`, run no health checks.
 
+### Hooks
+
+The configuration has a say at two points of an automatic update: before it
+starts, and after it failed. Each is one shell script. nxf has none of its
+own, knows nothing about what they do, and has no other hooks.
+
+```nix
+services.nxf.autoUpdate = {
+  checkHook = ''
+    test "$(curl --fail --silent https://example.org/rollout)" = open
+  '';
+  failureHook = ''
+    curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
+  '';
+};
+```
+
+- `checkHook` becomes `/etc/nxf/hooks/check` and is asked before the update
+  starts. When it fails, the run is skipped: it reports `skipped` with the
+  last line the script printed, and nothing is fetched, built or activated.
+  The run does not count as failed.
+- `failureHook` becomes `/etc/nxf/hooks/failure` and runs after a run in which
+  a task failed, such as an input that did not build, a switch or the health
+  checks. The file `$NXF_RESULTS` holds the results of the run, the same JSON
+  as `/var/lib/nxf/update.json`. When the hook fails itself, that is
+  reported, as the result `hook`.
+- A hook fails when any of its commands does. Modules can each add lines to
+  a hook, and the lines run in the order of the configuration.
+- Each hook has `hookTimeout` seconds; one that does not end is stopped and
+  counts as failed.
+
+Tasks run by hand ask no hook and run none.
+
+#### Stopping a rollout
+
+The two together let one machine stop the others. A machine that updates
+earlier than the rest, by its `schedule`, reports a failure with its failure
+hook; the others ask with their check hook, before every update, whether to
+go on. What stands between them is yours: a file on a server, a small
+service, or `nxf hold --config` run from the hook. nxf defines only when the
+hooks run.
+
+Know what this does and does not do:
+
+- It stops what breaks the build, the switch or the health checks. An input
+  that was tampered with and passes them stops nothing.
+- A check hook that cannot reach its answer should fail, as the one above
+  does, so that an outage holds updates instead of letting them through. The
+  held machines say so in `nxf status`.
+- Nothing starts the rollout again by itself. Whoever looked at the failure
+  opens it.
+- The machine that updates first gets every new revision first. Give its hook
+  the right to report, and nothing more.
+
 ### Holding updates
 
 ```sh
@@ -489,13 +547,35 @@ nxf release
 
 A hold stops the automatic update: the run reports `skipped` with the reason.
 The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
-only root or the update user can set or release it. `nxf status` shows it. A
+only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
 
-### As root
+### Who runs it, and who may work with it
 
-Root is the default and needs no interactive user: no sudo, no personal SSH
-configuration. The flake directory can belong to root or to another user.
+The update runs as the system user `nxf`, not as root. It has a home of its
+own, `/var/lib/nxf-home`, for its SSH configuration and keys, and commits with
+the identity of `gitIdentity`. Only the switch needs root, and nh gets it with
+sudo. The module therefore lets the group `nxf` use sudo without a password:
+an unattended run cannot answer a prompt.
+
+Root owns the flake directory and the state in `/var/lib/nxf`, and the group
+`nxf` may write them. The module creates the group, and the user `nxf` is in
+it. Whoever else is in it can work with nxf, with no other setting:
+
+```nix
+users.users.alice.extraGroups = [ "nxf" ];
+```
+
+A member runs `update`, `build`, `switch` and the other tasks on the checkout
+with their own Git identity, and holds or releases updates. The group is
+trusted like root: what its members write is what the switch activates, and
+sudo asks them for no password.
+
+The module hands over only what nxf changes: the directory, `flake.lock`, the
+`.git` repository, which it sets to `core.sharedRepository = group`, and the
+state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
+its files writable by the group while the checkout is, and the module makes
+Git trust the checkout, which root owns, for every user.
 
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
@@ -513,16 +593,10 @@ tokens in `nixConfigFile`, a nix.conf fragment:
 access-tokens = github.com=TOKEN
 ```
 
-Keep both files out of the Nix store and readable only by the update user, for
+Keep both files out of the Nix store and readable only by the user `nxf`, for
 example with sops-nix or agenix. Inputs over SSH also work: the service runs
-`ssh` in batch mode with root's SSH configuration and keys.
-
-### As a user
-
-With `user = "alice"`, everything runs as if that user ran nxf: their Git
-identity makes the commits, their `~/.ssh/config` provides hosts and keys, and
-nh elevates with sudo, which must not ask for a password. The user must own
-the flake directory.
+`ssh` in batch mode with the configuration and keys in `/var/lib/nxf-home/.ssh`,
+and the host keys it must trust in the same place.
 
 ### Operating it
 

@@ -8,6 +8,7 @@ pub mod fleet;
 pub mod git;
 pub mod health;
 pub mod hold;
+pub mod hooks;
 pub mod hosts;
 pub mod init;
 pub mod install;

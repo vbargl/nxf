@@ -2,14 +2,14 @@
 //! report their results; this only decides what comes next, and saves the
 //! results for `nxf status`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{hold, nixos, output, status};
+use crate::{hold, hooks, nixos, output, status};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -72,6 +72,9 @@ fn decide() -> Result<Vec<Outcome>, String> {
             "the checkout has uncommitted changes".to_string(),
         )]);
     }
+    if let Some(refused) = hooks::refused() {
+        return Ok(vec![outcome("update", "skipped", refused)]);
+    }
     // Every input that builds is committed; the others stay as they were.
     let mut results = tasks::run(&words(&["update"]), true)?;
     // Whatever is committed now has been built, by this run or an earlier one.
@@ -96,7 +99,7 @@ fn decide() -> Result<Vec<Outcome>, String> {
     Ok(results)
 }
 
-fn save(state: &Path, results: &[Outcome]) -> Result<(), String> {
+fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
@@ -107,13 +110,21 @@ fn save(state: &Path, results: &[Outcome]) -> Result<(), String> {
     std::fs::create_dir_all(state)
         .and_then(|()| std::fs::write(&temporary, format!("{report:#}\n")))
         .and_then(|()| std::fs::rename(&temporary, &file))
-        .map_err(|err| format!("cannot save {}: {err}", file.display()))
+        .map_err(|err| format!("cannot save {}: {err}", file.display()))?;
+    Ok(file)
 }
 
 /// Runs one update and returns whether every task succeeded.
 pub fn run(state: &Path) -> Result<bool, String> {
-    let results = decide()?;
-    save(state, &results)?;
+    let mut results = decide()?;
+    let saved = save(state, &results)?;
+    // The hook reads the saved results; when it fails, that is a result too.
+    if results.iter().any(Outcome::failed) {
+        if let Some(failed) = hooks::failure(&saved) {
+            results.push(outcome("hook", "failed", failed));
+            save(state, &results)?;
+        }
+    }
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
     let rows = status::result_rows(&list);
     if rows.is_empty() {
