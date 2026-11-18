@@ -21,10 +21,9 @@ const GIT_ENV: [(&str, &str); 6] = [
 ];
 
 /// Variables of the caller's environment that would change what nxf does.
-const INHERITED: [&str; 16] = [
+const INHERITED: [&str; 15] = [
     "NXF_BOOTED",
-    "NXF_CHECK_HOOK",
-    "NXF_FAILURE_HOOK",
+    "NXF_HOOKS_DIR",
     "NXF_HOOK_TIMEOUT",
     "NXF_HEALTH_DIR",
     "NXF_HEALTH_TIMEOUT",
@@ -222,14 +221,7 @@ ln -sfn "${{NXF_TEST_BUILD:-{root}/system}}" "${{@: -1}}"
             "NXF_HEALTH_DIR",
             dir.join("no-health-checks").display().to_string(),
         ),
-        (
-            "NXF_CHECK_HOOK",
-            dir.join("no-check-hook").display().to_string(),
-        ),
-        (
-            "NXF_FAILURE_HOOK",
-            dir.join("no-failure-hook").display().to_string(),
-        ),
+        ("NXF_HOOKS_DIR", dir.join("no-hooks").display().to_string()),
         ("NO_COLOR", "1".to_string()),
         ("PATH", path),
     ] {

@@ -28,12 +28,12 @@ let
     }:/run/current-system/sw/bin:$PATH
   '';
 
-  # One hook as an executable in /etc/nxf, when the configuration has it.
+  # One hook as an executable in /etc/nxf/hooks, when the configuration has it.
   # Modules may each add lines, so every command must succeed.
   hook =
     name: script:
     lib.optionalAttrs (script != "") {
-      "nxf/${name}".source = pkgs.writeShellScript "nxf-${name}" ''
+      "nxf/hooks/${name}".source = pkgs.writeShellScript "nxf-${name}-hook" ''
         set -e
         ${tools}
         ${script}
@@ -306,8 +306,8 @@ in
             '';
           }
         ) auto.healthChecks
-        // hook "check-hook" auto.checkHook
-        // hook "failure-hook" auto.failureHook;
+        // hook "check" auto.checkHook
+        // hook "failure" auto.failureHook;
 
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";

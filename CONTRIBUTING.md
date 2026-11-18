@@ -133,7 +133,7 @@ change them here first.
   machine that starts as another system, and run it a second time.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
-  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR`, `NXF_CHECK_HOOK`, `NXF_FAILURE_HOOK` and
+  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR`, `NXF_HOOKS_DIR` and
   `NXF_SSH` stand in for the running and the booted system, the updater,
   systemd, the health checks, the two hooks and ssh.
 - Tests of live progress hold the mock nh back and assert that the output is

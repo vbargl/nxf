@@ -82,8 +82,8 @@ pkgs.runCommand "nxf-module-check"
     );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
-    checkHook = root.environment.etc."nxf/check-hook".source;
-    failureHook = root.environment.etc."nxf/failure-hook".source;
+    checkHook = root.environment.etc."nxf/hooks/check".source;
+    failureHook = root.environment.etc."nxf/hooks/failure".source;
     plainEtc = builtins.concatStringsSep " " (builtins.attrNames plain.environment.etc);
     passAsFile = [
       "rootService"

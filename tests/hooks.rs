@@ -8,19 +8,18 @@ use std::path::PathBuf;
 use common::{assert_contains, fake_systems, fixture, write_script, Fixture};
 use serde_json::{json, Value};
 
-const CHECK: &str = "check-hook";
-const FAILURE: &str = "failure-hook";
+const CHECK: &str = "check";
+const FAILURE: &str = "failure";
 
-/// A fixture with a new revision of input a to update to, and a place for
-/// each hook.
+/// A fixture with a new revision of input a to update to, and a directory
+/// for the hooks.
 fn updating() -> Fixture {
     let mut fx = fixture()
         .with("NXF_TEST_BUILD", &fake_systems().one)
         .with("NXF_HOOK_TIMEOUT", "2");
-    for (variable, name) in [("NXF_CHECK_HOOK", CHECK), ("NXF_FAILURE_HOOK", FAILURE)] {
-        let path = fx.dir.join(name);
-        fx.set(variable, path);
-    }
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    fx.set("NXF_HOOKS_DIR", hooks);
     fx.bump(&["a"]);
     fx
 }
@@ -37,7 +36,10 @@ fn failing() -> Fixture {
 }
 
 fn hook(fx: &Fixture, name: &str, script: &str) {
-    write_script(&fx.dir.join(name), &format!("#!/bin/sh\n{script}\n"));
+    write_script(
+        &fx.dir.join("hooks").join(name),
+        &format!("#!/bin/sh\n{script}\n"),
+    );
 }
 
 /// A failure hook that leaves a file behind when it runs.

@@ -8,15 +8,15 @@ use std::time::Instant;
 
 use crate::health;
 
-pub const CHECK_HOOK: &str = "/etc/nxf/check-hook";
-pub const FAILURE_HOOK: &str = "/etc/nxf/failure-hook";
+pub const DEFAULT_DIR: &str = "/etc/nxf/hooks";
 
-/// The hook, when the configuration has one. The variable stands in for its
-/// path in tests.
-fn hook(variable: &str, default: &str) -> Option<PathBuf> {
-    let path = std::env::var_os(variable)
+/// The hook of that name, when the configuration has one. NXF_HOOKS_DIR
+/// stands in for the directory in tests.
+fn hook(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("NXF_HOOKS_DIR")
         .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(default), PathBuf::from);
+        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from)
+        .join(name);
     std::fs::metadata(&path)
         .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
         .then_some(path)
@@ -29,14 +29,11 @@ fn run(hook: &Path, variables: &[(&str, &Path)]) -> Option<String> {
 
 /// What the check hook said when it did not let the update start.
 pub fn refused() -> Option<String> {
-    run(&hook("NXF_CHECK_HOOK", CHECK_HOOK)?, &[])
+    run(&hook("check")?, &[])
 }
 
 /// Runs the failure hook with the saved results in NXF_RESULTS, and returns
 /// what it said when it failed itself.
 pub fn failure(results: &Path) -> Option<String> {
-    run(
-        &hook("NXF_FAILURE_HOOK", FAILURE_HOOK)?,
-        &[("NXF_RESULTS", results)],
-    )
+    run(&hook("failure")?, &[("NXF_RESULTS", results)])
 }

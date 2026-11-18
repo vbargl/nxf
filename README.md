@@ -497,11 +497,11 @@ services.nxf.autoUpdate = {
 };
 ```
 
-- `checkHook` becomes `/etc/nxf/check-hook` and is asked before the update
+- `checkHook` becomes `/etc/nxf/hooks/check` and is asked before the update
   starts. When it fails, the run is skipped: it reports `skipped` with the
   last line the script printed, and nothing is fetched, built or activated.
   The run does not count as failed.
-- `failureHook` becomes `/etc/nxf/failure-hook` and runs after a run in which
+- `failureHook` becomes `/etc/nxf/hooks/failure` and runs after a run in which
   a task failed, such as an input that did not build, a switch or the health
   checks. The file `$NXF_RESULTS` holds the results of the run, the same JSON
   as `/var/lib/nxf/update.json`. When the hook fails itself, that is
