@@ -66,6 +66,56 @@ pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
+/// What the configuration in the checkout says about the automatic update of
+/// its inputs: the strategy for all of them and those of single ones, from
+/// `services.nxf.autoUpdate`. Null and empty where it does not have the option.
+pub fn update_settings(dir: &Path, configuration: &str) -> Result<Value, String> {
+    let output = Command::new("nix")
+        .args(["eval", "--json"])
+        .arg(format!(
+            "{}#nixosConfigurations.\"{configuration}\"",
+            dir.display()
+        ))
+        .args([
+            "--apply",
+            "c: { strategy = c.config.services.nxf.autoUpdate.strategy or null; inputs = c.config.services.nxf.autoUpdate.inputs or { }; }",
+        ])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|err| format!("cannot run nix: {err}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
+}
+
+/// The store paths of an archived flake's inputs, and of theirs.
+fn archived(node: &Value, paths: &mut Vec<PathBuf>) {
+    let Some(inputs) = node.get("inputs").and_then(Value::as_object) else {
+        return;
+    };
+    for input in inputs.values() {
+        if let Some(path) = input.get("path").and_then(Value::as_str) {
+            let path = PathBuf::from(path);
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+        archived(input, paths);
+    }
+}
+
+/// Copies every locked input of the flake, and theirs, into the Nix store,
+/// and returns where they are. Nix reads a locked input from the store when
+/// it is there, and asks its origin only when it is not.
+pub fn archive(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let said = nix(dir, &["flake", "archive", "--json"])?;
+    let tree: Value = serde_json::from_str(&said).map_err(|err| err.to_string())?;
+    let mut paths = Vec::new();
+    archived(&tree, &mut paths);
+    Ok(paths)
+}
+
 /// The name nxf expects the machine's configuration to have.
 pub const CONFIGURATION: &str = "default";
 

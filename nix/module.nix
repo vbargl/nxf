@@ -15,6 +15,12 @@ let
   # for what it remembers between runs; all of it can be deleted at any time.
   cache = "/var/cache/nxf";
 
+  strategy = lib.types.enum [
+    "off"
+    "flag"
+    "panic"
+  ];
+
   gitConfig = lib.optional (auto.gitCredentialsFile != null) {
     key = "credential.helper";
     value = "store --file=${auto.gitCredentialsFile}";
@@ -146,6 +152,36 @@ in
           `access-tokens = github.com=<token>` for `github:` inputs or
           `netrc-file = <path>` for tarball inputs. Like `gitCredentialsFile`,
           it may be anywhere the user `nxf` can read.
+        '';
+      };
+
+      strategy = lib.mkOption {
+        type = strategy;
+        default = "panic";
+        description = ''
+          What the automatic update does with an input that has no entry in
+          `inputs`. With `off` it leaves the input alone, which is then
+          updated by hand. With `flag` it tries, and an update that cannot be
+          fetched or does not build is only recorded: the run goes on and
+          does not fail, and `nxf status` shows the record. With `panic` such
+          an update ends the run: no later input is tried, nothing is
+          switched to, and the run fails.
+        '';
+      };
+
+      inputs = lib.mkOption {
+        type = lib.types.attrsOf strategy;
+        default = { };
+        example = lib.literalExpression ''
+          {
+            work = "off";
+            unstable = "flag";
+          }
+        '';
+        description = ''
+          The strategy of single inputs of the machine flake, by name. nxf
+          reads the strategies from the configuration in the checkout, so a
+          commit changes them, without a switch.
         '';
       };
 

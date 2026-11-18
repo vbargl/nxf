@@ -36,6 +36,8 @@ let
       checkHook = "test -e /run/rollout-open";
       failureHook = "cp \"$NXF_RESULTS\" /run/rollout-paused";
       hookTimeout = 30;
+      strategy = "flag";
+      inputs.work = "off";
     };
   };
 
@@ -72,6 +74,13 @@ pkgs.runCommand "nxf-module-check"
     rootGroup = builtins.toJSON (builtins.hasAttr "nxf" root.users.groups);
     commandGroup = builtins.toJSON (builtins.hasAttr "nxf" command.users.groups);
     rootUser = root.users.users.nxf.group;
+    # What nxf reads from the configuration in the checkout.
+    rootStrategies = builtins.toJSON {
+      inherit (root.services.nxf.autoUpdate) strategy inputs;
+    };
+    plainStrategies = builtins.toJSON {
+      inherit (plain.services.nxf.autoUpdate) strategy inputs;
+    };
     rootHome = root.users.users.nxf.home;
     rootCreateHome = builtins.toJSON root.users.users.nxf.createHome;
     rootSudo = builtins.toJSON (
@@ -146,6 +155,8 @@ pkgs.runCommand "nxf-module-check"
     lacks "$rootServicePath" 'StateDirectory'
     has "$permissionsPath" 'chown --recursive nxf:nxf "$state"'
     test "$rootUser" = nxf
+    test "$rootStrategies" = '{"inputs":{"work":"off"},"strategy":"flag"}'
+    test "$plainStrategies" = '{"inputs":{},"strategy":"panic"}'
     test "$rootSudo" = true
     test "$commandSudo" = true
     has "$tmpfilesPath" 'd /var/lib/nxf 2775 nxf nxf -'

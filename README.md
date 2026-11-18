@@ -424,8 +424,9 @@ one you already know is refused.
 1. If updates are held, files other than `flake.lock` have uncommitted
    changes, or the [check hook](#hooks) fails, the run does nothing and
    reports `skipped`.
-2. `update` handles the inputs one at a time, as described above. A broken or
-   unreachable input does not block the others.
+2. `update` handles the inputs one at a time, as described above. What it
+   does with each, and with one that cannot be fetched or does not build, is
+   the input's [strategy](#strategies).
 3. If the committed flake is not what runs, `switch` builds and activates it:
    a live switch of everything. The machine is never rebooted; a new kernel
    takes effect at the next reboot, and status says that one is needed.
@@ -443,6 +444,8 @@ one you already know is refused.
 | `gitIdentity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
 | `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
+| `strategy` | `panic` | What the update does with an input: `off`, `flag` or `panic` |
+| `inputs` | none | The strategy of single inputs, by name |
 | `checkHook` | none | Script that is asked before an update starts |
 | `healthChecks` | none | Scripts that must succeed after a switch |
 | `healthTimeout` | `300` | Seconds the checks have to pass |
@@ -549,6 +552,41 @@ A hold stops the automatic update: the run reports `skipped` with the reason.
 The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
 only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
+
+### Strategies
+
+Not every input can be updated unattended: one needs a VPN, another
+credentials that the machine should not hold, a third is moved on purpose
+only. Each input has a strategy for the automatic update:
+
+| Strategy | The automatic update |
+| --- | --- |
+| `off` | leaves the input alone. It is updated by hand, with `nxf update <input>` |
+| `flag` | tries. An update that cannot be fetched or does not build is recorded, and the run goes on and does not fail. `nxf status` shows the record |
+| `panic` | tries. Such an update ends the run: no later input is tried, nothing is switched to, the run fails and the failure hook runs. What earlier inputs brought stays committed and waits |
+
+```nix
+services.nxf.autoUpdate = {
+  strategy = "panic"; # every input without an entry below
+  inputs = {
+    work = "off";
+    unstable = "flag";
+  };
+};
+```
+
+nxf reads the strategies from the configuration in the checkout, not from
+the system that runs: a commit changes them, and no switch is needed, which
+`panic` would hold back. They concern the automatic update only. A task run
+by hand updates what it is asked to and reports every failure.
+
+A build needs every input, also one the automatic update does not touch.
+Nix reads a locked input from the Nix store when it is there, and asks the
+input's origin only when it is not. So whenever nxf has built a committed
+flake, it copies the locked inputs into the store and keeps them there, as
+GC roots in `sources` of its state. After `nxf update work`, run by someone
+with access to that input, the automatic update builds and switches without
+any access to it.
 
 ### Who runs it, and who may work with it
 

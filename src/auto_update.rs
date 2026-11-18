@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{hold, hooks, nixos, output, status};
+use crate::{flake, hold, hooks, nixos, output, status, strategy};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -75,8 +75,15 @@ fn decide() -> Result<Vec<Outcome>, String> {
     if let Some(refused) = hooks::refused() {
         return Ok(vec![outcome("update", "skipped", refused)]);
     }
+    // What is committed says how each input is treated.
+    let dir = flake::checkout()?;
+    let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
-    let mut results = tasks::run(&words(&["update"]), true)?;
+    let mut results = tasks::run_unattended(&words(&["update"]), &strategies)?;
+    // An input that must not fail did: nothing is rolled out.
+    if results.iter().any(Outcome::failed) {
+        return Ok(results);
+    }
     // Whatever is committed now has been built, by this run or an earlier one.
     let checkout = status::compare()?;
     if checkout.matches {

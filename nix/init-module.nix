@@ -30,6 +30,8 @@ let
     "gitIdentity"
     "gitCredentialsFile"
     "nixConfigFile"
+    "strategy"
+    "inputs"
     "timeout"
   ];
   listed = lib.sort lib.lessThan ([ "enable" ] ++ order);

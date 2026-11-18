@@ -71,6 +71,20 @@
     # it may be anywhere the user `nxf` can read.
     # nixConfigFile = null;
 
+    # What the automatic update does with an input that has no entry in
+    # `inputs`. With `off` it leaves the input alone, which is then
+    # updated by hand. With `flag` it tries, and an update that cannot be
+    # fetched or does not build is only recorded: the run goes on and
+    # does not fail, and `nxf status` shows the record. With `panic` such
+    # an update ends the run: no later input is tried, nothing is
+    # switched to, and the run fails.
+    # strategy = "panic";
+
+    # The strategy of single inputs of the machine flake, by name. nxf
+    # reads the strategies from the configuration in the checkout, so a
+    # commit changes them, without a switch.
+    # inputs = { };
+
     # The update is stopped after this long.
     # timeout = "3h";
   };
