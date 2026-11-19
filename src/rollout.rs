@@ -240,7 +240,7 @@ impl Link {
 
     /// Waits until the machine is what is expected.
     fn wait_for(&self, expected: impl Fn(&Found) -> bool, what: &str) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(seconds("NXF_RECONCILE_WAIT", 600));
+        let deadline = Instant::now() + Duration::from_secs(seconds("NXF_ROLLOUT_WAIT", 600));
         loop {
             std::thread::sleep(Duration::from_secs(5));
             let probe = self.probe();
