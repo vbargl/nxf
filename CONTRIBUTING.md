@@ -48,6 +48,7 @@ change them here first.
 
 | Path | Holds |
 | --- | --- |
+| `docs/features/` | Short feature briefs and use-case scenarios for acceptance tests |
 | `src/cli.rs` | The commands and their routing; no logic |
 | `src/tasks.rs` | The task table, and planning and running tasks |
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
@@ -81,6 +82,15 @@ change them here first.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
   line.
+
+## Feature descriptions
+
+- Keep a short brief for each new or changed feature in
+  `docs/features/<feature>.md`: the problem, who uses it, resulting behavior
+  and boundaries.
+- Include concrete Given/When/Then use cases as templates for acceptance
+  tests. Link existing coverage and distinguish scenarios from checks that
+  have actually run. Keep the brief current when the behavior changes.
 
 ## Commands and tasks
 

@@ -166,6 +166,9 @@ Scripts drive nxf through JSON instead of reading its terminal output:
 
 ## Status
 
+For the feature brief and acceptance scenarios, see
+[Shared build records](docs/features/shared-build-records.md).
+
 The nh tasks record which committed Git tree produced each system, as a plain
 symlink `/var/lib/nxf/systems/<tree> -> /nix/store/<system>`. The module creates
 this directory as `nxf:nxf`, mode `2775`, without the sticky bit. Root, the
