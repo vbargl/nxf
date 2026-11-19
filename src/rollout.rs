@@ -28,7 +28,7 @@ pub struct Options {
     pub known_hosts: Option<PathBuf>,
 }
 
-/// What a machine is before reconciling.
+/// What a machine is before rollout.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Found {
     /// Installed by nxf, or running nxf: nothing to do.
@@ -240,7 +240,7 @@ impl Link {
 
     /// Waits until the machine is what is expected.
     fn wait_for(&self, expected: impl Fn(&Found) -> bool, what: &str) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(seconds("NXF_RECONCILE_WAIT", 600));
+        let deadline = Instant::now() + Duration::from_secs(seconds("NXF_ROLLOUT_WAIT", 600));
         loop {
             std::thread::sleep(Duration::from_secs(5));
             let probe = self.probe();
@@ -506,14 +506,14 @@ fn machines(count: usize) -> String {
 }
 
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
-    let scratch = std::env::temp_dir().join(format!("nxf-reconcile.{}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
-    let result = reconcile(options, hosts, &scratch);
+    let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     result
 }
 
-fn reconcile(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
+fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
     // Every machine is asked what it is, all at once.
     let probes: Vec<Probe> = std::thread::scope(|scope| {
         let asked: Vec<_> = hosts
@@ -645,7 +645,7 @@ fn reconcile(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, 
 
     if !failed.is_empty() || silent > 0 {
         output::failure(&format!(
-            "{} of {} not reconciled",
+            "{} of {} not rolled out",
             failed.len() + silent,
             machines(hosts.len())
         ));

@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::output::{self, Mark};
 use crate::{flake, git, hold, nixos};
 
-/// The mark of a machine that nxf installed. `nxf reconcile` leaves such a
+/// The mark of a machine that nxf installed. `nxf rollout` leaves such a
 /// machine alone.
 pub const MARKER: &str = "var/lib/nxf/installed.json";
 
@@ -168,7 +168,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     }
     if !installer() {
         return Err(
-            "This system runs from a disk, and installing erases disks\nStart the machine from a NixOS installer, or let `nxf reconcile` do it."
+            "This system runs from a disk, and installing erases disks\nStart the machine from a NixOS installer, or let `nxf rollout` do it."
                 .to_string(),
         );
     }

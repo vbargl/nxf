@@ -21,7 +21,7 @@ changes to the flake itself.
 | `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
 | `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
 | `nxf install <dir>` | Install the machine a flake describes, from a NixOS installer on it; see [Installing a machine](#installing-a-machine) |
-| `nxf reconcile --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
+| `nxf rollout --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
@@ -404,13 +404,13 @@ so a private input needs its credentials in the installer.
 ### From another computer
 
 ```sh
-nxf reconcile --config hosts.toml --template <flake>#<name> --files ./machines
+nxf rollout --config hosts.toml --template <flake>#<name> --files ./machines
 ```
 
-`reconcile` brings every machine of a [hosts file](#the-hosts-file) to the
+`rollout` brings every machine of a [hosts file](#the-hosts-file) to the
 same state: installed by nxf. It asks each machine what it is, and then:
 
-| The machine is | Reconcile |
+| The machine is | Rollout |
 | --- | --- |
 | installed by nxf, or runs nxf | leaves it alone |
 | a NixOS installer | installs it |
@@ -419,11 +419,11 @@ same state: installed by nxf. It asks each machine what it is, and then:
 
 The command can be repeated: machines that are installed are not touched, so
 a second run only installs what the first one could not. Installing erases
-disks, so reconcile shows the plan and asks before it erases anything; `--yes`
+disks, so rollout shows the plan and asks before it erases anything; `--yes`
 confirms without a question, and without a terminal nothing is erased unless
 `--yes` is given.
 
-For each machine it installs, reconcile copies this nxf and the template to
+For each machine it installs, rollout copies this nxf and the template to
 the machine, runs `nxf init --hardware` and `nxf install` there, restarts it,
 and waits until the new system answers with the host key the installation
 made. The flake never exists on your computer. `--files <dir>` gives each
