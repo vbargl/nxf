@@ -22,6 +22,7 @@ changes to the flake itself.
 | `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
 | `nxf install <dir>` | Install the machine a flake describes, from a NixOS installer on it; see [Installing a machine](#installing-a-machine) |
 | `nxf rollout --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
+| `nxf rollout --config <file> --upgrade` | Upgrade every machine of a hosts file, the first alone, then in waves; see [Upgrading machines](#upgrading-machines) |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
@@ -287,8 +288,8 @@ hosts.toml · 3 machines
 One command shows which revision every machine runs, when it last updated and
 what needs attention, and one command holds automatic updates on all of them,
 so that a bad update does not spread. A hold with an end ends at the same
-moment on every machine. Tasks such as `switch` do not take `--config`: nxf
-never changes several machines with one command.
+moment on every machine. Tasks such as `switch` do not take `--config`; the
+one way to change several machines is [`rollout`](#from-another-computer).
 
 nxf runs itself on each machine with the system's `ssh`, in batch mode, all
 machines at once. It uses your SSH configuration, keys and `known_hosts`, and
@@ -437,6 +438,46 @@ Limits: the SSH user must be root, and the machine needs a way to the
 internet for the installer image and the inputs. The first connection to a
 machine nobody has connected to accepts its host key; a key that differs from
 one you already know is refused.
+
+### Upgrading machines
+
+```sh
+nxf rollout --config hosts.toml --upgrade                 # one machine at a time
+nxf rollout --config hosts.toml --upgrade --batch 3       # the first, then three at a time
+nxf rollout --config hosts.toml --upgrade nixpkgs         # update only these inputs
+```
+
+With `--upgrade`, rollout installs nothing: it runs `nxf upgrade` on each
+machine of the hosts file, in the order of their names, as you would by hand.
+The first machine upgrades alone. When it succeeded, the others follow in
+waves of `--batch` machines (1 when not given), and each wave starts only when
+the one before has ended without a failure.
+
+```
+hosts.toml · 3 machines
+
+  ✓ node-1    inputs updated, switched
+  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully
+  · node-3    not started
+
+✗ Upgrade failed on 1 of 3 machines
+  Not started: node-3. Run the rollout again once the failure is fixed.
+```
+
+- A failure, or a machine that does not answer, lets its own wave end and
+  starts no other. The machines of a later wave are listed as not started.
+- Each machine updates its own flake, so each commits its own `flake.lock`;
+  the machines get the same revisions only when they fetch at the same time.
+  A machine with no new revision still switches to its committed flake.
+- It is a task run by hand on each machine: holds, strategies, the
+  [hooks](#hooks) and the [health checks](#health-checks) do not apply, and
+  the result is not the automatic update of `nxf status`. A wave stops on
+  what `nxf upgrade` reports: a fetch, a build or a switch that fails.
+- The SSH user must be able to work with the flake and switch: root, or a
+  member of the group `nxf`. Each machine has `NXF_UPGRADE_TIMEOUT` seconds,
+  3 hours by default.
+- Named inputs go to every machine; one that a machine's flake does not
+  have fails on the first machine, before any other changes.
 
 ## Automatic updates
 

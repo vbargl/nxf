@@ -1,6 +1,7 @@
 //! Commands against the machines of a hosts file. nxf runs itself on each
 //! machine over ssh and reports one row for each; it knows a list of SSH
-//! destinations and nothing about what the machines form together.
+//! destinations and nothing about what the machines form together. The
+//! upgrade is the one of these that changes machines, and it goes in waves.
 
 use std::io::Read;
 use std::path::Path;
@@ -75,7 +76,7 @@ fn seconds(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn ask(host: &Host, args: &[String]) -> Reply {
+fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
     let program = std::env::var_os("NXF_SSH")
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "ssh".into());
@@ -118,7 +119,7 @@ fn ask(host: &Host, args: &[String]) -> Reply {
     };
     let stdout = collect(child.stdout.take().map(|pipe| Box::new(pipe) as _));
     let stderr = collect(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-    let deadline = Instant::now() + Duration::from_secs(seconds("NXF_SSH_TIMEOUT", 120));
+    let deadline = Instant::now() + timeout;
     let code = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status.code().unwrap_or(255)),
@@ -140,10 +141,15 @@ fn ask(host: &Host, args: &[String]) -> Reply {
 /// Runs nxf with the arguments on every host at once; replies come back in
 /// the order of the hosts.
 pub fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
+    let timeout = Duration::from_secs(seconds("NXF_SSH_TIMEOUT", 120));
+    run_for(hosts, args, timeout)
+}
+
+fn run_for(hosts: &[Host], args: &[String], timeout: Duration) -> Vec<Reply> {
     std::thread::scope(|scope| {
         let asked: Vec<_> = hosts
             .iter()
-            .map(|host| scope.spawn(move || ask(host, args)))
+            .map(|host| scope.spawn(move || ask(host, args, timeout)))
             .collect();
         asked
             .into_iter()
@@ -318,4 +324,126 @@ pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &s
         output::success(&format!("{done} on {}", machines(total)));
     }
     failures == 0
+}
+
+/// The waves of an upgrade, as ranges of the hosts: the first machine alone,
+/// then `batch` machines at a time.
+pub fn waves(count: usize, batch: usize) -> Vec<std::ops::Range<usize>> {
+    let batch = batch.max(1);
+    let mut waves = Vec::new();
+    if count > 0 {
+        waves.push(0..1);
+    }
+    let mut start = 1;
+    while start < count {
+        let end = (start + batch).min(count);
+        waves.push(start..end);
+        start = end;
+    }
+    waves
+}
+
+/// What the upgrade did on one machine, from the outcomes its `--json` printed.
+fn upgraded(reply: &Reply) -> Result<String, String> {
+    let outcomes = match reply.code {
+        Some(255) | None => None,
+        Some(_) => match serde_json::from_str::<Value>(&reply.stdout) {
+            Ok(Value::Array(outcomes)) => Some(outcomes),
+            _ => None,
+        },
+    };
+    let Some(outcomes) = outcomes else {
+        return Err(reply
+            .error()
+            .unwrap_or_else(|| "unreadable answer".to_string()));
+    };
+    if let Some(failed) = outcomes
+        .iter()
+        .find(|outcome| outcome["outcome"] == "failed")
+    {
+        let task = failed["task"].as_str().unwrap_or("upgrade");
+        // The detail is the task's own failure, whose mark the row repeats.
+        let detail = failed["detail"]
+            .as_str()
+            .map(|detail| detail.trim_start_matches(['✗', ' ']))
+            .filter(|detail| !detail.is_empty());
+        return Err(match detail {
+            Some(detail) => format!("{task} failed: {detail}"),
+            None => format!("{task} failed"),
+        });
+    }
+    if reply.code != Some(0) {
+        return Err(reply
+            .error()
+            .unwrap_or_else(|| "the upgrade failed".to_string()));
+    }
+    let updated = outcomes
+        .iter()
+        .any(|outcome| outcome["task"] == "update" && outcome["outcome"] == "done");
+    Ok(if updated {
+        "inputs updated, switched".to_string()
+    } else {
+        "no input changed, switched".to_string()
+    })
+}
+
+/// Runs `nxf upgrade` on the machines in waves: the first machine alone, then
+/// `batch` at a time. A failure lets its wave end and starts no other.
+pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> bool {
+    let mut args = vec!["--json".to_string(), "upgrade".to_string()];
+    args.extend(inputs.iter().cloned());
+    let timeout = Duration::from_secs(seconds("NXF_UPGRADE_TIMEOUT", 3 * 3600));
+    let width = header(file, hosts);
+    let mut failed = Vec::new();
+    let mut reached = hosts.len();
+    for wave in waves(hosts.len(), batch) {
+        if !failed.is_empty() {
+            reached = wave.start;
+            break;
+        }
+        let names: Vec<&str> = hosts[wave.clone()]
+            .iter()
+            .map(|host| host.name.as_str())
+            .collect();
+        let pending = output::pending(&format!("Upgrading {}", names.join(", ")));
+        let replies = run_for(&hosts[wave], &args, timeout);
+        output::settle(pending);
+        for reply in &replies {
+            let name = &reply.host.name;
+            match upgraded(reply) {
+                Ok(said) => output::row(Mark::Done, &format!("{name:<width$}{said}")),
+                Err(error) => {
+                    failed.push(name.clone());
+                    output::row(Mark::Failed, &format!("{name:<width$}{error}"));
+                }
+            }
+        }
+    }
+    let untouched: Vec<&str> = hosts[reached..]
+        .iter()
+        .map(|host| host.name.as_str())
+        .collect();
+    for name in &untouched {
+        output::row(
+            Mark::Quiet,
+            &format!("{name:<width$}{}", output::dim("not started")),
+        );
+    }
+    let total = hosts.len();
+    if failed.is_empty() {
+        output::success(&format!("{} upgraded", machines(total)));
+        return true;
+    }
+    output::failure(&format!(
+        "Upgrade failed on {} of {}",
+        failed.len(),
+        machines(total)
+    ));
+    if !untouched.is_empty() {
+        output::effect_err(&format!(
+            "Not started: {}. Run the rollout again once the failure is fixed.",
+            untouched.join(", ")
+        ));
+    }
+    false
 }
