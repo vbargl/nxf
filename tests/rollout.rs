@@ -1,4 +1,4 @@
-//! Tests for src/reconcile.rs: what each machine is found to be, and what is
+//! Tests for src/rollout.rs: what each machine is found to be, and what is
 //! planned for it. The installation itself needs a real machine; it is
 //! checked by hand on a virtual machine, not here.
 
@@ -8,7 +8,7 @@ use common::{
     assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture,
 };
 use nxf::hosts::Host;
-use nxf::reconcile::{known_hosts_line, parse_probe, template, Found};
+use nxf::rollout::{known_hosts_line, parse_probe, template, Found};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -120,12 +120,12 @@ const MANAGED: &str = "nxf-probe managed=yes installer=no arch=x86_64\nnxf-os Ni
 const UBUNTU: &str = "nxf-probe managed=no installer=no arch=x86_64\nnxf-os Ubuntu 24.04.5 LTS\n";
 const INSTALLER: &str = "nxf-probe managed=no installer=yes arch=x86_64\nnxf-os NixOS 25.11\n";
 
-/// Machines that nxf installed are left alone, so reconciling again changes nothing.
+/// Machines that nxf installed are left alone, so running rollout again changes nothing.
 #[test]
 fn repeatable() {
     let (fx, hosts) = machines(&[("node-1", MANAGED), ("node-2", MANAGED)]);
     for _ in 0..2 {
-        let result = fx.run(&["reconcile", "--config", &hosts, "--template", "x#y"]);
+        let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y"]);
         result.ok();
         assert_contains(&result.stdout, "\n  ✓ node-1    installed by nxf\n");
         assert!(
@@ -150,7 +150,7 @@ fn asks_before_erasing() {
         ("node-2", UBUNTU),
         ("node-3", INSTALLER),
     ]);
-    let result = fx.run(&["reconcile", "--config", &hosts, "--template", "x#y"]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y"]);
     assert_eq!(result.code, 1);
     assert_contains(&result.stdout, "\n  ✓ node-1    installed by nxf\n");
     assert_contains(
@@ -174,14 +174,7 @@ fn asks_before_erasing() {
 #[test]
 fn unreachable() {
     let (fx, hosts) = machines(&[("node-1", MANAGED), ("node-2", "")]);
-    let result = fx.run(&[
-        "reconcile",
-        "--config",
-        &hosts,
-        "--template",
-        "x#y",
-        "--yes",
-    ]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
     assert_eq!(result.code, 1);
     assert_contains(
         &result.stdout,

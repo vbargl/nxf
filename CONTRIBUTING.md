@@ -26,7 +26,7 @@ change them here first.
   health checks, and a template given by reference.
 - Remote work is nxf running itself on each machine over ssh. `status`,
   `hold`, `release`, `version` and `doctor` take `--config`; tasks never do.
-  `reconcile` is the one command that changes machines, and only those that
+  `rollout` is the one command that changes machines, and only those that
   nxf has not installed: it must stay repeatable, and it must ask before it
   erases a disk. The hosts file stays a list of SSH destinations: nxf reads
   `hosts.<name>.ssh` and must keep ignoring everything else.
@@ -58,7 +58,7 @@ change them here first.
 | `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh |
 | `src/init.rs` | Founding a machine flake from a template |
 | `src/install.rs` | Installing from an installer: disks, nixos-install, host key, records |
-| `src/reconcile.rs` | Installing the machines of a hosts file that nxf has not installed |
+| `src/rollout.rs` | Installing the machines of a hosts file that nxf has not installed |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -129,7 +129,7 @@ change them here first.
   comment that says what must hold.
 - Add or update tests with every change of behaviour.
 - The installation of a real machine cannot be a test here. After a change to
-  `install.rs` or `reconcile.rs`, run `nxf reconcile` against a virtual
+  `install.rs` or `rollout.rs`, run `nxf rollout` against a virtual
   machine that starts as another system, and run it a second time.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,

@@ -15,7 +15,7 @@ pub mod install;
 pub mod nixos;
 pub mod output;
 pub mod progress;
-pub mod reconcile;
+pub mod rollout;
 pub mod status;
 pub mod strategy;
 pub mod tasks;

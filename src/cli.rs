@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, flake, fleet, hold, hosts, init, install, nixos, output, reconcile,
-    status, tasks,
+    auto_update, doctor, flake, fleet, hold, hosts, init, install, nixos, output, rollout, status,
+    tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -116,7 +116,7 @@ enum Cmd {
         reboot: bool,
     },
     /// Bring every machine of a hosts file to the same state: installed by nxf.
-    Reconcile {
+    Rollout {
         /// The hosts file.
         #[arg(long, value_name = "FILE")]
         config: PathBuf,
@@ -169,7 +169,7 @@ const COMMANDS: &[&str] = &[
     "version",
     "init",
     "install",
-    "reconcile",
+    "rollout",
     "hold",
     "release",
     "auto-update",
@@ -311,7 +311,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             reboot,
         })
         .map(|()| true),
-        Cmd::Reconcile {
+        Cmd::Rollout {
             config,
             template,
             files,
@@ -320,8 +320,8 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             known_hosts,
         } => {
             let machines = hosts::load(&config)?;
-            reconcile::run(
-                &reconcile::Options {
+            rollout::run(
+                &rollout::Options {
                     file: config,
                     template,
                     files,
