@@ -42,14 +42,20 @@ Boundaries:
 | U4: A wave runs to its end | `--batch 2` and the second machine fails | `rollout --upgrade --batch 2` runs | The second and third machines run in one wave; the command fails on 1 of 3 and lists nobody as not started |
 | U5: Inputs are passed on | Inputs named after `--upgrade` | `rollout --upgrade b` runs | Every machine runs `nxf --json upgrade b` |
 | U6: Mixed options are refused | `--upgrade` with an install option, `--batch 0`, or `--batch` or inputs without `--upgrade` | The command is given | It fails before any ssh connection |
+| U7: An unknown input | An input that the first machine's flake does not have | `rollout --upgrade <input>` runs | The first machine refuses it, its row shows the cause and not the help beneath it, and no other machine is asked |
 
 ## Existing verification
 
 [Fleet fixtures](../../tests/fleet.rs) cover U1 (`upgrade`), U2
 (`upgrade_stops`), U3 (`upgrade_unreachable`), U4 and U5 (`upgrade_batch`),
-U6 (`upgrade_refused`) and the order of the waves (`waves`). They run through
-a mock ssh, with the real nxf on both sides and the mock nh. In the fixtures
-the machines share one checkout, so only the first one finds the new
-revision. Nothing has been run against real machines.
+U6 (`upgrade_refused`), U7 (`upgrade_unknown_input`) and the order of the
+waves (`waves`). They run through a mock ssh, with the real nxf on both sides
+and the mock nh. In the fixtures the machines share one checkout, so only the
+first one finds the new revision.
+
+U1 to U5 and U7 were also run by hand against three Incus NixOS VMs, each
+with its own machine flake, a local Git input changed per machine and SSH as
+root; a broken input made the build fail through an assertion of the
+configuration. That run is not repeatable in CI.
 
 See the [operating documentation](../../README.md#upgrading-machines).

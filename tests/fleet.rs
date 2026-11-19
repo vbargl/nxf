@@ -383,6 +383,21 @@ fn upgrade_unreachable() {
     assert_eq!(set.upgraded(), ["node-1.test", "node-2.test"]);
 }
 
+/// An input the first machine does not know is refused there, with the
+/// cause in its row, and no other machine is asked.
+#[test]
+fn upgrade_unknown_input() {
+    let set = machines();
+    let result = set.upgrade(&["nosuch"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    assert_eq!(set.upgraded(), ["node-1.test"]);
+}
+
 /// After the first machine, a wave of --batch machines runs to its end even
 /// when one of them fails, and the named inputs are passed on.
 #[test]

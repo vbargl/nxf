@@ -353,8 +353,17 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
         },
     };
     let Some(outcomes) = outcomes else {
-        return Err(reply
-            .error()
+        // nxf refused before any task ran: its outcome line is the cause,
+        // and the lines beneath only help to resolve it.
+        let refused = reply.code.filter(|code| *code != 255).and_then(|_| {
+            plain(&reply.stderr)
+                .lines()
+                .find_map(|line| line.trim().strip_prefix('✗').map(str::trim))
+                .filter(|cause| !cause.is_empty())
+                .map(str::to_string)
+        });
+        return Err(refused
+            .or_else(|| reply.error())
             .unwrap_or_else(|| "unreadable answer".to_string()));
     };
     if let Some(failed) = outcomes
