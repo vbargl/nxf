@@ -39,6 +39,23 @@ pub fn clean_tree(dir: &Path) -> Option<String> {
         .map(|tree| tree.trim().to_string())
 }
 
+/// Tracked work-tree changes relative to an immutable tree, including binary
+/// contents. Comparing against the same base also works across a lockfile commit.
+pub fn worktree_diff(dir: &Path, tree: &str) -> Option<String> {
+    text(
+        dir,
+        &[
+            "diff",
+            "--binary",
+            "--no-ext-diff",
+            "--no-textconv",
+            tree,
+            "--",
+        ],
+    )
+    .ok()
+}
+
 /// The newest commit with one of the given trees.
 pub fn commit_of(dir: &Path, trees: &[String]) -> Option<String> {
     let log = text(dir, &["log", "--all", "--date-order", "--format=%H %T"]).ok()?;

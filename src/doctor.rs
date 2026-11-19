@@ -1,7 +1,5 @@
 //! Checks that nxf can work on this machine, and says how to fix what not.
 
-use std::ffi::CString;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
@@ -35,8 +33,7 @@ fn on_path(tool: &str) -> bool {
 }
 
 fn writable(path: &Path) -> bool {
-    CString::new(path.as_os_str().as_bytes())
-        .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
+    nixos::writable_directory(path)
 }
 
 fn user() -> String {
@@ -185,16 +182,37 @@ fn state() -> Check {
         check(
             Level::Ok,
             "state",
-            format!("builds are remembered in {}", dir.display()),
+            format!(
+                "result links, source roots and read markers in {}",
+                dir.display()
+            ),
         )
     } else {
         check(
             Level::Fail,
             "state",
             format!(
-                "{} is not writable; builds cannot be remembered",
+                "{} is not writable/searchable; per-user state cannot be saved",
                 existing.display()
             ),
+        )
+    }
+}
+
+fn records() -> Check {
+    let shared = nixos::updater_dir().join("systems");
+    let destination = nixos::record_dir();
+    if shared.exists() && !writable(&shared) {
+        check(
+            Level::Warn,
+            "records",
+            format!("{} is not writable/searchable by this process; build records fall back to {}; check permissions and active nxf group membership (a new login may be needed)", shared.display(), destination.display()),
+        )
+    } else {
+        check(
+            Level::Ok,
+            "records",
+            format!("build records go to {}", destination.display()),
         )
     }
 }
@@ -230,6 +248,7 @@ pub fn checks() -> Vec<Check> {
     let mut results = vec![tools()];
     results.extend(checkout);
     results.push(state());
+    results.push(records());
     results.push(running(dir.as_deref()));
     results
 }

@@ -294,7 +294,10 @@ in
       programs.git.enable = lib.mkDefault true;
       programs.git.config.safe.directory = [ cfg.flake ];
 
-      systemd.tmpfiles.rules = [ "d /var/lib/nxf 2775 ${group} ${group} -" ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/nxf 2775 ${group} ${group} -"
+        "d /var/lib/nxf/systems 2775 ${group} ${group} -"
+      ];
 
       # Only what nxf changes is handed over: the directory, the lockfile, the
       # repository and the state. The other files, such as secrets, keep their

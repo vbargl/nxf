@@ -18,6 +18,185 @@ fn plan(given: &[&str]) -> Result<tasks::Plan, String> {
     tasks::plan(&words(given), &words(&["a", "b"]))
 }
 
+/// A module-provisioned directory receives records; per-user state stays separate.
+#[test]
+fn publishes_shared() {
+    let system = &fake_systems().one;
+    let fx = fixture().with("NXF_TEST_BUILD", system);
+    std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+    let explicit = fx.dir.join("explicit-state");
+    let fx = fx.with("NXF_STATE", &explicit);
+    fx.run(&["build"]).ok();
+    assert_eq!(
+        std::fs::canonicalize(fx.updater.join("systems").join(fx.tree())).unwrap(),
+        *system
+    );
+    assert!(explicit.join("result").exists());
+    assert!(explicit.join("sources").exists());
+    assert!(!explicit.join("systems").exists());
+    assert!(!fx.updater.join("sources").exists());
+}
+
+/// Standalone builds use local records without creating the updater directory.
+#[test]
+fn standalone_records() {
+    let system = &fake_systems().one;
+    let fx = fixture().with("NXF_TEST_BUILD", system);
+    fx.run(&["build"]).ok();
+    assert_eq!(
+        std::fs::canonicalize(fx.systems().join(fx.tree())).unwrap(),
+        *system
+    );
+    assert!(!fx.updater.exists());
+}
+
+/// An inaccessible shared directory warns and falls back without blocking activation.
+#[test]
+fn shared_fallback() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let shared = fx.updater.join("systems");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = fx.run(&["switch"]);
+    result.ok();
+    assert_contains(&result.stderr, "shared build records unavailable");
+    assert_contains(&result.stderr, "active nxf group membership");
+    assert!(fx.systems().join(fx.tree()).exists());
+    assert_eq!(fx.nh_actions(), ["build", "switch"]);
+}
+
+/// Publication and fallback failures cannot fail a build, switch or committed update.
+#[test]
+fn record_failures_are_nonfatal() {
+    for task in ["build", "switch", "update"] {
+        let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+        let shared = fx.updater.join("systems");
+        std::fs::create_dir_all(shared.join(fx.tree())).unwrap();
+        std::fs::create_dir_all(fx.state.join("nxf")).unwrap();
+        std::fs::write(fx.systems(), "not a directory").unwrap();
+        // For update the tree key changes; a file in place of systems forces publication failure.
+        if task == "update" {
+            std::fs::remove_dir_all(&shared).unwrap();
+            std::fs::write(&shared, "not a directory").unwrap();
+            fx.bump(&["a"]);
+        }
+        let head = fx.head();
+        let result = fx.run(&[task]);
+        result.ok();
+        assert_contains(&result.stderr, "shared build records unavailable");
+        assert_contains(&result.stderr, "build record was not saved");
+        assert_eq!(
+            std::fs::read_dir(&shared).map_or(0, |entries| entries
+                .filter(|entry| entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with('.'))
+                .count()),
+            0
+        );
+        if task == "update" {
+            assert_ne!(fx.head(), head);
+            assert_eq!(fx.porcelain(), "");
+            assert_lacks(&result.stdout, "lockfile restored");
+        }
+    }
+}
+
+/// Only valid records from the invoking state migrate, without replacing shared entries.
+#[test]
+fn imports_legacy_records() {
+    use std::os::unix::fs::symlink;
+    let systems = fake_systems();
+    let fx = fixture().with("NXF_TEST_BUILD", &systems.one);
+    let shared = fx.updater.join("systems");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::create_dir_all(fx.systems()).unwrap();
+    for (key, target) in [
+        ("legacy", systems.one.clone()),
+        ("conflict", systems.one.clone()),
+        ("dangling", fx.dir.join("missing")),
+        ("outside", fx.checkout.clone()),
+        ("file", systems.one.join("file")),
+        (".temporary", systems.one.clone()),
+    ] {
+        symlink(target, fx.systems().join(key)).unwrap();
+    }
+    symlink(&systems.two, shared.join("conflict")).unwrap();
+    std::fs::create_dir_all(fx.systems().join("directory")).unwrap();
+    fx.run(&["status", "--json"]).ok();
+    assert!(!shared.join("legacy").exists());
+    fx.run(&["build"]).ok();
+    assert_eq!(
+        std::fs::canonicalize(shared.join("legacy")).unwrap(),
+        systems.one
+    );
+    assert_eq!(
+        std::fs::canonicalize(shared.join("conflict")).unwrap(),
+        systems.two
+    );
+    for key in ["dangling", "outside", "file", ".temporary", "directory"] {
+        assert!(std::fs::symlink_metadata(shared.join(key)).is_err());
+    }
+    assert!(fx.systems().join("legacy").exists());
+}
+
+/// Tracked edits or a new commit during a build must not publish an earlier tree.
+#[test]
+fn changed_during_build() {
+    for commit_edit in [false, true] {
+        let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+        std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+        let script = format!(
+            "\nprintf '# changed\\n' >> '{}'\n{}",
+            fx.checkout.join("flake.nix").display(),
+            if commit_edit {
+                format!(
+                    "git -C '{}' add flake.nix\ngit -C '{}' commit -qm changed\n",
+                    fx.checkout.display(),
+                    fx.checkout.display()
+                )
+            } else {
+                String::new()
+            }
+        );
+        append(&fx.dir.join("bin/nh"), &script);
+        fx.run(&["build"]).ok();
+        assert_eq!(
+            std::fs::read_dir(fx.updater.join("systems"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+}
+
+/// A dirty lockfile may be recorded after commit only if it is the one built.
+#[test]
+fn update_build_identity() {
+    for edit in [
+        "",
+        "printf '\\n' >> flake.lock",
+        "printf '# changed\\n' >> flake.nix\ngit add flake.nix\ngit commit -qm changed",
+    ] {
+        let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+        std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+        fx.bump(&["a"]);
+        append(
+            &fx.dir.join("bin/nh"),
+            &format!("\ncd '{}'\n{edit}\n", fx.checkout.display()),
+        );
+        fx.run(&["update", "a"]).ok();
+        assert_eq!(fx.porcelain(), "");
+        assert_eq!(
+            fx.updater.join("systems").join(fx.tree()).exists(),
+            edit.is_empty()
+        );
+    }
+}
+
 /// Tasks are defined in the order they run in.
 #[test]
 fn discovery() {

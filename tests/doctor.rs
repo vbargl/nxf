@@ -134,3 +134,31 @@ fn read_only() {
     assert_ne!(result.code, 0);
     assert_eq!(status_of(&result.stdout, "writable"), Some("fail"));
 }
+
+/// Doctor reports the actual record destination without creating or importing records.
+#[test]
+fn record_destination() {
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture();
+    let local = fx.run(&["doctor"]);
+    assert_contains(
+        &local.stdout,
+        &format!("build records go to {}", fx.systems().display()),
+    );
+    let shared = fx.updater.join("systems");
+    assert!(!fx.updater.exists());
+    std::fs::create_dir_all(&shared).unwrap();
+    let result = fx.run(&["doctor"]);
+    assert_eq!(status_of(&result.stdout, "records"), Some("ok"));
+    assert_contains(
+        &result.stdout,
+        &format!("build records go to {}", shared.display()),
+    );
+    std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let result = fx.run(&["doctor"]);
+    result.ok();
+    assert_eq!(status_of(&result.stdout, "records"), Some("warn"));
+    assert_contains(&result.stdout, "active nxf group membership");
+    assert_contains(&result.stdout, &fx.systems().display().to_string());
+    assert_eq!(std::fs::read_dir(shared).unwrap().count(), 0);
+}

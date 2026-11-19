@@ -286,12 +286,20 @@ struct InputResult {
 fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputResult, String> {
     let before = flake::lock(dir)?;
     let attempt = || -> Result<(), String> {
+        let base = git::clean_tree(dir);
         flake::update(dir, &[input.to_string()])?;
         if git::changed(dir, "flake.lock") {
+            let source = base.as_ref().and_then(|tree| git::worktree_diff(dir, tree));
             let system = nixos::build(dir, configuration)?;
             git::commit_file(dir, "flake.lock", &format!("flake.lock: update {input}"))?;
-            if let Some(tree) = git::clean_tree(dir) {
-                nixos::remember(&tree, &system)?;
+            if source.is_some()
+                && base.as_ref().and_then(|tree| git::worktree_diff(dir, tree)) == source
+            {
+                if let Some(tree) = git::clean_tree(dir) {
+                    nixos::remember(&tree, &system);
+                }
+            } else {
+                output::warning("checkout changed during the update build: this build cannot be identified by nxf status.");
             }
         }
         Ok(())
@@ -482,13 +490,13 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
             },
         )
     })?;
-    match &tree {
+    match tree.filter(|before| git::clean_tree(dir).as_ref() == Some(before)) {
         Some(tree) => {
-            nixos::remember(tree, &built)?;
+            nixos::remember(&tree, &built);
             keep_inputs(dir);
         }
         None => {
-            output::warning("uncommitted changes: this build cannot be identified by nxf status.")
+            output::warning("uncommitted changes or checkout changed during the build: this build cannot be identified by nxf status.")
         }
     }
     let unchanged = built == running;
