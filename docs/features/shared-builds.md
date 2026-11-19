@@ -1,4 +1,6 @@
-# Shared build records
+# Shared Builds
+
+Machine-wide tracking of NixOS build results across users.
 
 ## Brief
 
