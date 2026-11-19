@@ -197,6 +197,45 @@ fn update_build_identity() {
     }
 }
 
+/// An already dirty checkout gets an accurate warning and no build record.
+#[test]
+fn dirty_update_identity() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+    append(&fx.checkout.join("flake.nix"), "# already dirty\n");
+    fx.bump(&["a"]);
+    let head = fx.head();
+    let result = fx.run(&["update", "a"]);
+    result.ok();
+    assert_contains(
+        &result.stderr,
+        "uncommitted changes: this build cannot be identified",
+    );
+    assert_lacks(&result.stderr, "checkout changed during the update build");
+    assert_ne!(fx.head(), head);
+    assert_eq!(fx.porcelain(), "M flake.nix");
+    assert_eq!(
+        std::fs::read_dir(fx.updater.join("systems"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+/// S10: a recorded but inactive system still goes through nh build before switch.
+#[test]
+fn switch_builds_recorded_system() {
+    let systems = fake_systems();
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", &systems.one)
+        .with("NXF_SYSTEM", &systems.two);
+    std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+    std::os::unix::fs::symlink(&systems.one, fx.updater.join("systems").join(fx.tree())).unwrap();
+    fx.run(&["switch"]).ok();
+    assert_eq!(fx.nh_actions(), ["build", "switch"]);
+    assert_contains(&fx.nh_calls()[1], systems.one.to_str().unwrap());
+}
+
 /// Tasks are defined in the order they run in.
 #[test]
 fn discovery() {

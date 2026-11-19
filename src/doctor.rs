@@ -1,5 +1,7 @@
 //! Checks that nxf can work on this machine, and says how to fix what not.
 
+use std::ffi::CString;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
@@ -33,7 +35,8 @@ fn on_path(tool: &str) -> bool {
 }
 
 fn writable(path: &Path) -> bool {
-    nixos::writable_directory(path)
+    CString::new(path.as_os_str().as_bytes())
+        .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
 }
 
 fn user() -> String {
@@ -178,7 +181,7 @@ fn state() -> Check {
             None => break,
         }
     }
-    if writable(&existing) {
+    if nixos::writable_directory(&existing) {
         check(
             Level::Ok,
             "state",
@@ -202,11 +205,16 @@ fn state() -> Check {
 fn records() -> Check {
     let shared = nixos::updater_dir().join("systems");
     let destination = nixos::record_dir();
-    if shared.exists() && !writable(&shared) {
+    if shared.exists() && !nixos::writable_directory(&shared) {
+        let effect = if destination == shared {
+            "build records cannot be saved".to_string()
+        } else {
+            format!("build records fall back to {}", destination.display())
+        };
         check(
             Level::Warn,
             "records",
-            format!("{} is not writable/searchable by this process; build records fall back to {}; check permissions and active nxf group membership (a new login may be needed)", shared.display(), destination.display()),
+            format!("{} is not writable/searchable by this process; {effect}; check permissions and active nxf group membership (a new login may be needed)", shared.display()),
         )
     } else {
         check(

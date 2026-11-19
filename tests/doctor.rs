@@ -135,11 +135,33 @@ fn read_only() {
     assert_eq!(status_of(&result.stdout, "writable"), Some("fail"));
 }
 
+/// A linked worktree's .git file must not make a writable checkout fail.
+#[test]
+fn linked_worktree() {
+    let fx = fixture();
+    let linked = fx.dir.join("linked");
+    common::git(
+        &fx.checkout,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "--detach",
+            linked.to_str().unwrap(),
+        ],
+    );
+    assert!(linked.join(".git").is_file());
+    let fx = fx.with("NXF_FLAKE", &linked);
+    let result = fx.run(&["doctor"]);
+    result.ok();
+    assert_eq!(status_of(&result.stdout, "writable"), Some("ok"));
+}
+
 /// Doctor reports the actual record destination without creating or importing records.
 #[test]
 fn record_destination() {
     use std::os::unix::fs::PermissionsExt;
-    let fx = fixture();
+    let mut fx = fixture();
     let local = fx.run(&["doctor"]);
     assert_contains(
         &local.stdout,
@@ -160,5 +182,11 @@ fn record_destination() {
     assert_eq!(status_of(&result.stdout, "records"), Some("warn"));
     assert_contains(&result.stdout, "active nxf group membership");
     assert_contains(&result.stdout, &fx.systems().display().to_string());
-    assert_eq!(std::fs::read_dir(shared).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(&shared).unwrap().count(), 0);
+    fx.set("NXF_STATE", fx.updater.clone());
+    let result = fx.run(&["doctor"]);
+    result.ok();
+    assert_eq!(status_of(&result.stdout, "records"), Some("warn"));
+    assert_contains(&result.stdout, "build records cannot be saved");
+    assert_lacks(&result.stdout, "fall back to");
 }

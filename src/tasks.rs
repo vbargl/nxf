@@ -292,7 +292,11 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
             let source = base.as_ref().and_then(|tree| git::worktree_diff(dir, tree));
             let system = nixos::build(dir, configuration)?;
             git::commit_file(dir, "flake.lock", &format!("flake.lock: update {input}"))?;
-            if source.is_some()
+            if base.is_none() {
+                output::warning(
+                    "uncommitted changes: this build cannot be identified by nxf status.",
+                );
+            } else if source.is_some()
                 && base.as_ref().and_then(|tree| git::worktree_diff(dir, tree)) == source
             {
                 if let Some(tree) = git::clean_tree(dir) {
