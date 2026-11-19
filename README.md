@@ -166,11 +166,34 @@ Scripts drive nxf through JSON instead of reading its terminal output:
 
 ## Status
 
+For the feature brief and acceptance scenarios, see
+[Shared Builds](docs/features/shared-builds.md).
+
 The nh tasks record which committed Git tree produced each system, as a plain
-symlink `<state>/systems/<tree> -> <system>`. The state directory is
-`NXF_STATE`, or `$XDG_STATE_HOME/nxf`, or `~/.local/state/nxf`. The automatic
-updater keeps its records in `/var/lib/nxf`, and status reads both. That is
-all status needs:
+symlink `/var/lib/nxf/systems/<tree> -> /nix/store/<system>`. The module creates
+this directory as `nxf:nxf`, mode `2775`, without the sticky bit. Root, the
+user `nxf` and members of the group `nxf` can atomically replace each other's
+records. A build is recorded only if the tracked checkout still corresponds
+to what was built, including the lockfile built before an update commits it.
+
+Without a provisioned shared directory, records stay in `<state>/systems`.
+The CLI never creates the shared directory implicitly. If shared publication
+fails, nxf warns and tries the per-user location; record failures do not fail
+a successful build, update or activation. `nxf doctor` reports the destination
+and warns about an inaccessible shared directory, including group membership
+that needs a new login.
+
+The per-user state directory is `NXF_STATE`, or `$XDG_STATE_HOME/nxf`, or
+`~/.local/state/nxf`. `NXF_STATE` controls result links, source roots, read
+markers and fallback records; it does not disable shared publication.
+`NXF_UPDATER_STATE` overrides `/var/lib/nxf` for shared records and updater
+state. Status reads shared records first, then per-user records for missing
+keys. On successful shared publication, nxf also imports the invoking user's
+own old records without replacing existing shared entries. Dangling links,
+non-symlinks and targets other than directories under `/nix/store` are ignored.
+Status never imports records, including with `--json`.
+
+That is all status needs:
 
 - The tree of the running system gives its flake commit, and
   `git show <commit>:flake.lock` gives the exact input revisions it was built
@@ -430,6 +453,10 @@ one you already know is refused.
 3. If the committed flake is not what runs, `switch` builds and activates it:
    a live switch of everything. The machine is never rebooted; a new kernel
    takes effect at the next reboot, and status says that one is needed.
+   Shared records let the updater skip `nh os build` when the committed tree
+   is already running, even if someone else built it. Configuration selection
+   and input strategies still require evaluation before that comparison.
+   A recorded system that is not running is still built by the switch task.
 4. After the switch, the [health checks](#health-checks) run.
 5. The results are saved to `/var/lib/nxf/update.json`, and the service fails
    if any task failed. `nxf status` shows them once to each user. nxf sends
@@ -588,9 +615,12 @@ A build needs every input, also one the automatic update does not touch.
 Nix reads a locked input from the Nix store when it is there, and asks the
 input's origin only when it is not. So whenever nxf has built a committed
 flake, it copies the locked inputs into the store and keeps them there, as
-GC roots in `sources` of its state. After `nxf update work`, run by someone
-with access to that input, the automatic update builds and switches without
-any access to it.
+GC roots in `sources` of its own state. Those roots protect the shared store
+for every user and are not moved or shared. Locked inputs that are kept this
+way need no fetch access for the next user. Additional sources fetched at
+evaluation time outside `flake.lock` may still need network access or
+credentials, even when build records are shared. Nix's fetcher cache remains
+per-user.
 
 ### Who runs it, and who may work with it
 

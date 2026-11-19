@@ -71,7 +71,7 @@ pub fn share_with_group(dir: &Path) -> bool {
     shared
 }
 
-/// Where nxf keeps its state: remembered builds and the read marker.
+/// Per-user state: result links, source roots, fallback records and read markers.
 pub fn state_dir() -> PathBuf {
     var("NXF_STATE").unwrap_or_else(|| {
         var("XDG_STATE_HOME")
@@ -83,6 +83,25 @@ pub fn state_dir() -> PathBuf {
 /// The automatic updater's state. NXF_UPDATER_STATE stands in for it in tests.
 pub fn updater_dir() -> PathBuf {
     var("NXF_UPDATER_STATE").unwrap_or_else(|| PathBuf::from(DEFAULT_UPDATER_STATE))
+}
+
+/// Whether this process can create and replace entries in a directory.
+pub fn writable_directory(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    path.is_dir()
+        && CString::new(path.as_os_str().as_bytes())
+            .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK | libc::X_OK) == 0 })
+}
+
+/// Use shared records only when their directory has already been provisioned.
+pub fn record_dir() -> PathBuf {
+    let shared = updater_dir().join("systems");
+    if writable_directory(&shared) {
+        shared
+    } else {
+        state_dir().join("systems")
+    }
 }
 
 /// Runs nh on a flake installable or an already built store path.
@@ -341,18 +360,65 @@ pub fn bad(tree: &str) -> Option<String> {
         .map(|reason| reason.trim().to_string())
 }
 
-/// Remembers that the source with the given key built a system.
-/// A plain link, not a GC root: the record disappears with the system.
-pub fn remember(key: &str, system: &Path) -> Result<(), String> {
-    let systems = state_dir().join("systems");
-    std::fs::create_dir_all(&systems)
-        .map_err(|err| format!("cannot create {}: {err}", systems.display()))?;
+fn write_record(systems: &Path, key: &str, system: &Path) -> Result<(), String> {
     let link = systems.join(key);
     let temporary = systems.join(format!(".{key}.{}", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
-    std::os::unix::fs::symlink(system, &temporary)
+    let result = std::os::unix::fs::symlink(system, &temporary)
         .and_then(|()| std::fs::rename(&temporary, &link))
-        .map_err(|err| format!("cannot write {}: {err}", link.display()))
+        .map_err(|err| format!("cannot write {}: {err}", link.display()));
+    let _ = std::fs::remove_file(&temporary);
+    result
+}
+
+/// Publishes a plain link, not a GC root. Metadata failures never fail a build.
+/// Only this caller's legacy records are imported, without replacing shared ones.
+pub fn remember(key: &str, system: &Path) {
+    let shared = updater_dir().join("systems");
+    let local = state_dir().join("systems");
+    if shared.exists() {
+        let result = if writable_directory(&shared) {
+            write_record(&shared, key, system)
+        } else {
+            Err(format!(
+                "{} is not writable/searchable by this process",
+                shared.display()
+            ))
+        };
+        match result {
+            Ok(()) => {
+                if local != shared {
+                    for record in records(&local) {
+                        // Creating the final symlink is atomic and refuses any existing entry,
+                        // including a dangling link. Never replace a newer shared record.
+                        if let Err(err) =
+                            std::os::unix::fs::symlink(record.system, shared.join(&record.key))
+                        {
+                            if err.kind() != std::io::ErrorKind::AlreadyExists {
+                                output::warning(&format!(
+                                    "cannot import build record {}: {err}",
+                                    record.key
+                                ));
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            Err(err) => {
+                output::warning(&format!("{err}; shared build records unavailable; check permissions and active nxf group membership."));
+                if local == shared {
+                    return;
+                }
+            }
+        }
+    }
+    let result = std::fs::create_dir_all(&local)
+        .map_err(|err| format!("cannot create {}: {err}", local.display()))
+        .and_then(|()| write_record(&local, key, system));
+    if let Err(err) = result {
+        output::warning(&format!("build record was not saved: {err}"));
+    }
 }
 
 /// Keeps the sources of the locked inputs in the Nix store, as GC roots in
@@ -393,22 +459,26 @@ fn records(systems: &Path) -> Vec<Remembered> {
     let mut records: Vec<Remembered> = entries
         .filter_map(Result::ok)
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
-        .filter(|entry| entry.path().exists())
-        .map(|entry| Remembered {
-            key: entry.file_name().to_string_lossy().into_owned(),
-            system: expand(&entry.path()),
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_symlink() {
+                return None;
+            }
+            let system = std::fs::canonicalize(entry.path()).ok()?;
+            (system.starts_with("/nix/store") && system.is_dir()).then(|| Remembered {
+                key: entry.file_name().to_string_lossy().into_owned(),
+                system,
+            })
         })
         .collect();
     records.sort_by(|a, b| a.key.cmp(&b.key));
     records
 }
 
-/// Remembered systems by source key: this user's and the automatic
-/// updater's, which keys its builds the same way.
+/// Shared records take precedence over this caller's legacy/fallback records.
 pub fn remembered() -> Vec<Remembered> {
-    let mut all = records(&state_dir().join("systems"));
-    for record in records(&updater_dir().join("systems")) {
-        if !all.contains(&record) {
+    let mut all = records(&updater_dir().join("systems"));
+    for record in records(&state_dir().join("systems")) {
+        if !all.iter().any(|known| known.key == record.key) {
             all.push(record);
         }
     }

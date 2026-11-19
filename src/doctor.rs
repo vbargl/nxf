@@ -181,20 +181,46 @@ fn state() -> Check {
             None => break,
         }
     }
-    if writable(&existing) {
+    if nixos::writable_directory(&existing) {
         check(
             Level::Ok,
             "state",
-            format!("builds are remembered in {}", dir.display()),
+            format!(
+                "result links, source roots and read markers in {}",
+                dir.display()
+            ),
         )
     } else {
         check(
             Level::Fail,
             "state",
             format!(
-                "{} is not writable; builds cannot be remembered",
+                "{} is not writable/searchable; per-user state cannot be saved",
                 existing.display()
             ),
+        )
+    }
+}
+
+fn records() -> Check {
+    let shared = nixos::updater_dir().join("systems");
+    let destination = nixos::record_dir();
+    if shared.exists() && !nixos::writable_directory(&shared) {
+        let effect = if destination == shared {
+            "build records cannot be saved".to_string()
+        } else {
+            format!("build records fall back to {}", destination.display())
+        };
+        check(
+            Level::Warn,
+            "records",
+            format!("{} is not writable/searchable by this process; {effect}; check permissions and active nxf group membership (a new login may be needed)", shared.display()),
+        )
+    } else {
+        check(
+            Level::Ok,
+            "records",
+            format!("build records go to {}", destination.display()),
         )
     }
 }
@@ -230,6 +256,7 @@ pub fn checks() -> Vec<Check> {
     let mut results = vec![tools()];
     results.extend(checkout);
     results.push(state());
+    results.push(records());
     results.push(running(dir.as_deref()));
     results
 }

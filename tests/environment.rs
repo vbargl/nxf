@@ -172,8 +172,8 @@ fn remember() {
         ("XDG_STATE_HOME", state.to_str().unwrap()),
         ("NXF_UPDATER_STATE", state.join("none").to_str().unwrap()),
     ]);
-    nixos::remember("one", &systems.one).unwrap();
-    nixos::remember("one", &systems.one).unwrap();
+    nixos::remember("one", &systems.one);
+    nixos::remember("one", &systems.one);
     std::os::unix::fs::symlink(state.join("missing"), state.join("nxf/systems/gone")).unwrap();
     assert_eq!(
         nixos::remembered(),

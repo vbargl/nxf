@@ -160,6 +160,7 @@ pkgs.runCommand "nxf-module-check"
     test "$rootSudo" = true
     test "$commandSudo" = true
     has "$tmpfilesPath" 'd /var/lib/nxf 2775 nxf nxf -'
+    has "$tmpfilesPath" 'd /var/lib/nxf/systems 2775 nxf nxf -'
     has "$permissionsUnitPath" 'Type=oneshot'
     has "$permissionsPath" 'chown nxf:nxf "$flake"'
     has "$permissionsPath" 'chmod 2775 "$flake"'

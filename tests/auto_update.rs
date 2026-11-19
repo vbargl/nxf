@@ -166,6 +166,29 @@ fn shared_state() {
     );
 }
 
+/// A manual build is visible to the service, which skips nh for the running tree.
+#[test]
+fn manual_build_skips_service_build() {
+    let systems = fake_systems();
+    let mut fx = fixture()
+        .with("NXF_TEST_BUILD", &systems.one)
+        .with("NXF_SYSTEM", &systems.one);
+    std::fs::create_dir_all(fx.updater.join("systems")).unwrap();
+    // A conflicting old local record must not override the machine-wide record.
+    fx.record_build(&systems.two);
+    fx.run(&["build"]).ok();
+    let manual: Value = serde_json::from_str(&fx.run(&["status", "--json"]).stdout).unwrap();
+    std::fs::remove_file(&fx.log).unwrap();
+    fx.set("NXF_STATE", fx.updater.clone());
+    let service: Value = serde_json::from_str(&fx.run(&["status", "--json"]).stdout).unwrap();
+    for key in ["built", "matches", "revision"] {
+        assert_eq!(manual[key], service[key]);
+    }
+    assert_eq!(service["matches"], true);
+    fx.run(&["auto-update"]).ok();
+    assert!(fx.nh_calls().is_empty());
+}
+
 /// An input that is off is left alone; the others are updated.
 #[test]
 fn off_is_left_alone() {
