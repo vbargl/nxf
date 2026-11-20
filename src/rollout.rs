@@ -3,13 +3,15 @@
 //! repeated. Any other machine is started into a NixOS installer and
 //! installed there with `nxf init` and `nxf install`.
 
-use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::fleet::quoted;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::text::plain;
@@ -40,26 +42,29 @@ pub enum Found {
     Unreachable(String),
 }
 
-/// Says in plain sh what the machine is. It is sent on standard input, so
-/// that no login shell has to read it.
-const PROBE: &str = r#"
+/// Says in plain sh what the machine is; sent on standard input, so that no
+/// login shell reads it. The installation record or nxf in the system mean
+/// managed wherever the root is; nxf on the path alone may be an installer's copy.
+pub const PROBE: &str = r#"
 root=$(awk '$2 == "/" { kind = $3 } END { print kind }' /proc/mounts)
 installer=no
 case $root in tmpfs|rootfs|ramfs) [ -e /etc/NIXOS ] && installer=yes ;; esac
 managed=no
-if [ $installer = no ]; then
-    if [ -e /var/lib/nxf/installed.json ] || [ -x /run/current-system/sw/bin/nxf ] || command -v nxf >/dev/null 2>&1; then
-        managed=yes
-    fi
+if [ -e /var/lib/nxf/installed.json ] || [ -x /run/current-system/sw/bin/nxf ]; then
+    managed=yes
+elif [ $installer = no ] && command -v nxf >/dev/null 2>&1; then
+    managed=yes
 fi
 os=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown system}")
-echo "nxf-probe managed=$managed installer=$installer arch=$(uname -m)"
+echo "nxf-probe managed=$managed installer=$installer uid=$(id -u 2>/dev/null || echo unknown) arch=$(uname -m)"
 echo "nxf-os $os"
 "#;
 
 pub struct Probe {
     pub found: Found,
     pub arch: String,
+    /// The user id the probe ran as, when it told one. Installing needs 0.
+    pub user: Option<String>,
 }
 
 /// Reads the answer of the probe.
@@ -84,6 +89,7 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
     Some(Probe {
         found,
         arch: fact("arch")?.to_string(),
+        user: fact("uid").map(str::to_string),
     })
 }
 
@@ -104,6 +110,22 @@ enum Trust {
     Made { known: PathBuf },
 }
 
+/// The known_hosts file of the user, which every link trusts before the installation.
+fn user_known_hosts() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(format!("{home}/.ssh/known_hosts").into())
+}
+
+/// The keys of a known_hosts file as ssh reads them, as bytes; none when the
+/// file is not there. One that is there and cannot be read is an error.
+fn keys_of(file: &Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::read(file) {
+        Ok(keys) => Ok(Some(keys)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("cannot read {}: {err}", file.display())),
+    }
+}
+
 #[derive(Clone)]
 struct Link {
     host: Host,
@@ -111,7 +133,27 @@ struct Link {
 }
 
 impl Link {
+    /// The known_hosts files whose keys the link trusts.
+    fn trusted(&self) -> Vec<PathBuf> {
+        match &self.trust {
+            Trust::First { seen } => std::iter::once(seen.clone())
+                .chain(user_known_hosts())
+                .collect(),
+            Trust::Made { known } => vec![known.clone()],
+        }
+    }
+
     fn options(&self) -> Vec<String> {
+        self.options_with(&self.trusted())
+    }
+
+    /// The options of ssh, with the given known_hosts files for those of the link.
+    fn options_with(&self, known_hosts: &[PathBuf]) -> Vec<String> {
+        let known_hosts: Vec<String> = known_hosts
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect();
+        let known_hosts = format!("UserKnownHostsFile={}", known_hosts.join(" "));
         let mut options = vec![
             "-o".to_string(),
             "BatchMode=yes".to_string(),
@@ -119,22 +161,17 @@ impl Link {
             format!("ConnectTimeout={}", seconds("NXF_SSH_CONNECT_TIMEOUT", 10)),
         ];
         match &self.trust {
-            Trust::First { seen } => {
-                let own = std::env::var("HOME")
-                    .map(|home| format!(" {home}/.ssh/known_hosts"))
-                    .unwrap_or_default();
-                options.extend([
-                    "-o".to_string(),
-                    "StrictHostKeyChecking=accept-new".to_string(),
-                    "-o".to_string(),
-                    format!("UserKnownHostsFile={}{own}", seen.display()),
-                ]);
-            }
-            Trust::Made { known } => options.extend([
+            Trust::First { .. } => options.extend([
+                "-o".to_string(),
+                "StrictHostKeyChecking=accept-new".to_string(),
+                "-o".to_string(),
+                known_hosts,
+            ]),
+            Trust::Made { .. } => options.extend([
                 "-o".to_string(),
                 "StrictHostKeyChecking=yes".to_string(),
                 "-o".to_string(),
-                format!("UserKnownHostsFile={}", known.display()),
+                known_hosts,
                 "-o".to_string(),
                 "GlobalKnownHostsFile=/dev/null".to_string(),
             ]),
@@ -233,6 +270,7 @@ impl Link {
                 Probe {
                     found: Found::Unreachable(why.to_string()),
                     arch: String::new(),
+                    user: None,
                 }
             }
         }
@@ -304,60 +342,76 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
     Ok((PathBuf::from(path), name.to_string()))
 }
 
-fn copy(link: &Link, paths: &[&Path]) -> Result<(), String> {
-    let Trust::First { seen } = &link.trust else {
+fn copy(link: &Link, paths: &[&Path], stem: &Path) -> Result<(), String> {
+    if !matches!(link.trust, Trust::First { .. }) {
         return Err("the machine is already installed".to_string());
-    };
-    let mut ssh_options = format!(
-        "-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={}",
-        seen.display()
-    );
-    if let Some(port) = link.host.port {
-        ssh_options.push_str(&format!(" -p {port}"));
     }
+    // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
+    // as a shell does, so no option may need a quote.
+    let trusted = stem.with_extension("trusted");
+    let mut keys = Vec::new();
+    for file in link.trusted() {
+        if let Some(known) = keys_of(&file)? {
+            keys.extend(known);
+            keys.push(b'\n');
+        }
+    }
+    // For the user alone: it holds a copy of the keys the user knows.
+    let mut merged = std::fs::OpenOptions::new();
+    merged.write(true).create(true).truncate(true).mode(0o600);
+    merged
+        .open(&trusted)
+        .and_then(|mut file| file.write_all(&keys))
+        .map_err(|err| format!("cannot write {}: {err}", trusted.display()))?;
     let mut nix = Command::new("nix");
     nix.args(["copy", "--no-check-sigs", "--to"])
         .arg(format!("ssh-ng://{}", link.host.destination()))
         .args(paths)
-        .env("NIX_SSHOPTS", ssh_options);
+        .env("NIX_SSHOPTS", link.options_with(&[trusted]).join(" "));
     output::stream(&mut nix, true, &[])
         .map_err(|err| format!("Copying nxf to the machine failed\n{err}"))
 }
 
-/// Sends the files of a machine as a tar stream into a directory there.
+/// Sends the files of a machine as a tar stream into a directory there. tar
+/// writes into the connection, and the upload fails unless both end well.
 fn upload(link: &Link, files: &Path, to: &str) -> Result<(), String> {
     let mut tar = Command::new("tar")
         .arg("--create")
         .arg("--directory")
         .arg(files)
         .arg(".")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("cannot run tar: {err}"))?;
-    let mut archive = Vec::new();
-    if let Some(mut stdout) = tar.stdout.take() {
-        stdout
-            .read_to_end(&mut archive)
-            .map_err(|err| err.to_string())?;
-    }
-    let _ = tar.wait();
+    let archive = tar.stdout.take().ok_or("cannot read from tar")?;
     let mut ssh = link.ssh(&format!(
         "rm -rf {to} && mkdir -p {to} && tar --extract --directory {to}"
     ));
-    let mut child = ssh
-        .stdin(Stdio::piped())
+    let sent = ssh
+        .stdin(archive)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("cannot run ssh: {err}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&archive).map_err(|err| err.to_string())?;
-    }
-    let output = child.wait_with_output().map_err(|err| err.to_string())?;
-    if !output.status.success() {
+        .spawn();
+    // The command holds the read end of the archive until it is dropped.
+    drop(ssh);
+    let packed = std::thread::spawn(move || tar.wait_with_output());
+    let sent = sent.and_then(|child| child.wait_with_output());
+    let packed = packed.join().map_err(|_| "cannot wait for tar")?;
+    let (packed, sent) = (
+        packed.map_err(|err| format!("cannot run tar: {err}"))?,
+        sent.map_err(|err| format!("cannot run ssh: {err}"))?,
+    );
+    if !packed.status.success() || !sent.status.success() {
+        let said = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&packed.stderr).trim(),
+            String::from_utf8_lossy(&sent.stderr).trim()
+        );
         return Err(format!(
             "Sending the machine's files failed\n{}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            said.trim()
         ));
     }
     Ok(())
@@ -376,9 +430,9 @@ fn install(
     package: &Path,
     source: &Path,
     name: &str,
-    scratch: &Path,
+    stem: &Path,
 ) -> Result<Installed, String> {
-    let seen = scratch.join(format!("{}.seen", host.name));
+    let seen = stem.with_extension("seen");
     let link = Link {
         host: host.clone(),
         trust: Trust::First { seen },
@@ -402,7 +456,8 @@ fn install(
             .unwrap_or_else(|| KEXEC_URL.to_string())
             .replace("{arch}", &probe.arch);
         let script = format!(
-            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL '{url}'; else wget -qO- '{url}'; fi | tar -xzf -\nTMPDIR=/root/kexec setsid --wait /root/kexec/kexec/run\n"
+            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL {image}; else wget -qO- {image}; fi | tar -xzf -\nTMPDIR=/root/kexec setsid --wait /root/kexec/kexec/run\n",
+            image = quoted(&url)
         );
         let (ok, stdout, stderr) = link.capture("sh", &script);
         if !ok {
@@ -422,11 +477,12 @@ fn install(
     }
 
     output::start("Founding the machine flake");
-    copy(&link, &[package, source])?;
-    let nxf = format!("{}/bin/nxf", package.display());
+    copy(&link, &[package, source], stem)?;
+    // What the operator and the file system name is one word each to the machine's shell.
+    let nxf = quoted(&format!("{}/bin/nxf", package.display()));
+    let template = quoted(&format!("path:{}#{name}", source.display()));
     let mut init = format!(
-        "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template path:{}#{name} --hardware",
-        source.display()
+        "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template {template} --hardware"
     );
     if let Some(files) = &files {
         upload(&link, files, "/tmp/nxf-files")?;
@@ -450,9 +506,9 @@ fn install(
 
     output::start("Starting the system");
     let _ = link.capture("systemctl reboot", "");
-    let known = scratch.join(format!("{}.known", host.name));
+    let known = stem.with_extension("known");
     std::fs::write(&known, format!("{}\n", known_hosts_line(host, &key)))
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("cannot write {}: {err}", known.display()))?;
     let started = Link {
         host: host.clone(),
         trust: Trust::Made { known },
@@ -482,19 +538,31 @@ fn remember(file: &Path, host: &Host, key: &str) -> Result<(), String> {
         Some(port) if port != 22 => format!("[{}]:{port}", host.address),
         _ => host.address.clone(),
     };
-    // Drop the key of the system that was there before.
-    let _ = Command::new("ssh-keygen")
-        .args(["-R", &name, "-f"])
-        .arg(file)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // Drop the key of the system that was there before: it must not stay trusted.
+    if file.exists() {
+        let removed = Command::new("ssh-keygen")
+            .args(["-R", &name, "-f"])
+            .arg(file)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| format!("cannot run ssh-keygen: {err}"))?;
+        if !removed.status.success() {
+            let said = plain(&String::from_utf8_lossy(&removed.stderr));
+            let why = said.lines().map(str::trim).rfind(|line| !line.is_empty());
+            return Err(format!(
+                "cannot remove the old key of {name} from {}: {}",
+                file.display(),
+                why.unwrap_or("ssh-keygen failed")
+            ));
+        }
+    }
     let mut known = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(file)
         .map_err(|err| format!("cannot write {}: {err}", file.display()))?;
-    writeln!(known, "{}", known_hosts_line(host, key)).map_err(|err| err.to_string())
+    writeln!(known, "{}", known_hosts_line(host, key))
+        .map_err(|err| format!("cannot write {}: {err}", file.display()))
 }
 
 fn machines(count: usize) -> String {
@@ -505,24 +573,92 @@ fn machines(count: usize) -> String {
     }
 }
 
+/// The outcome when machines were left out: how many of all, and which of
+/// them were not installed. The silent ones have their rows in the plan.
+fn not_rolled_out(failed: &[&str], silent: usize, all: usize) {
+    output::failure(&format!(
+        "{} of {} not rolled out",
+        failed.len() + silent,
+        machines(all)
+    ));
+    if !failed.is_empty() {
+        output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
+    }
+}
+
+/// How many names a run tries for its scratch directory.
+pub const SCRATCH_NAMES: usize = 100;
+
+/// Makes the scratch directory of this run in `temp`, under the first name
+/// that is free. One that is there is never used: it may be another user's,
+/// with links that lead the writes of this run elsewhere.
+fn make_scratch(temp: &Path) -> Result<PathBuf, String> {
+    let named = |n: usize| temp.join(format!("nxf-rollout.{}.{n}", std::process::id()));
+    for scratch in (0..SCRATCH_NAMES).map(named) {
+        // For the user alone, and only when this call makes it.
+        match std::fs::DirBuilder::new().mode(0o700).create(&scratch) {
+            Ok(()) => return Ok(scratch),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                return Err(format!(
+                    "cannot create {}: {err}\nrollout keeps the keys of a run there. TMPDIR names the directory it is made in.",
+                    scratch.display()
+                ))
+            }
+        }
+    }
+    Err(format!(
+        "{} to {} are all there already\nrollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.",
+        named(0).display(),
+        named(SCRATCH_NAMES - 1).display()
+    ))
+}
+
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
-    let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
-    std::fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    // Before any machine is asked: without its files a machine would be
+    // erased and installed from the template alone.
+    if let Some(files) = options.files.as_ref().filter(|files| !files.is_dir()) {
+        return Err(format!(
+            "{} is not a directory\n--files takes a directory that holds one directory of files for each machine, by name.",
+            files.display()
+        ));
+    }
+    // Before any machine is asked too: nix copy reads these keys only after a
+    // machine that ran another system was started into the installer.
+    if let Some(file) = user_known_hosts() {
+        keys_of(&file).map_err(|err| {
+            format!("{err}\nrollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.")
+        })?;
+    }
+    let temp = std::env::temp_dir();
+    // ssh and Nix split their options at spaces, and files under it are named in them.
+    let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
+    if temp.to_string_lossy().contains(splits) {
+        return Err(format!(
+            "The temporary directory {} has a space, a quote or a backslash in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
+            temp.display()
+        ));
+    }
+    let scratch = make_scratch(&temp)?;
     let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     result
 }
 
 fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
+    // The scratch files of a machine extend a stem named by its place in the list:
+    // ssh splits the options that name them, and a host's name may hold a space.
+    let stem = |index: usize| scratch.join(index.to_string());
     // Every machine is asked what it is, all at once.
     let probes: Vec<Probe> = std::thread::scope(|scope| {
         let asked: Vec<_> = hosts
             .iter()
-            .map(|host| {
+            .enumerate()
+            .map(|(index, host)| {
                 let link = Link {
                     host: host.clone(),
                     trust: Trust::First {
-                        seen: scratch.join(format!("{}.seen", host.name)),
+                        seen: stem(index).with_extension("seen"),
                     },
                 };
                 scope.spawn(move || link.probe())
@@ -534,6 +670,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 asked.join().unwrap_or(Probe {
                     found: Found::Unreachable("no answer".to_string()),
                     arch: String::new(),
+                    user: None,
                 })
             })
             .collect()
@@ -552,32 +689,40 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         .unwrap_or(0)
         .max(output::LABEL);
     let mut to_install = Vec::new();
+    let mut failed = Vec::new();
     let mut silent = 0;
-    for (host, probe) in hosts.iter().zip(&probes) {
+    for (index, (host, probe)) in hosts.iter().zip(&probes).enumerate() {
         let name = &host.name;
-        match &probe.found {
-            Found::Managed => output::row(Mark::Done, &format!("{name:<width$}installed by nxf")),
-            Found::Installer => {
-                to_install.push((host, probe));
-                output::row(
-                    Mark::Attention,
-                    &format!("{name:<width$}NixOS installer; its disks will be erased"),
-                );
-            }
-            Found::Other(os) => {
-                to_install.push((host, probe));
-                output::row(
-                    Mark::Attention,
-                    &format!("{name:<width$}{os}; it will be erased"),
-                );
+        let (what, erased) = match &probe.found {
+            Found::Managed => {
+                output::row(Mark::Done, &format!("{name:<width$}installed by nxf"));
+                continue;
             }
             Found::Unreachable(why) => {
                 silent += 1;
                 output::row(Mark::Failed, &format!("{name:<width$}unreachable: {why}"));
+                continue;
             }
+            Found::Installer => ("NixOS installer", "its disks will be erased"),
+            Found::Other(os) => (os.as_str(), "it will be erased"),
+        };
+        // Refused here, before anything is erased: only root can install.
+        if let Some(user) = probe.user.as_deref().filter(|user| *user != "0") {
+            failed.push(host.name.as_str());
+            output::row(
+                Mark::Failed,
+                &format!("{name:<width$}{what}; not installed: the SSH user must be root, and its user id is {user}"),
+            );
+            continue;
         }
+        to_install.push((index, host, probe));
+        output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
     }
     if to_install.is_empty() {
+        if !failed.is_empty() {
+            not_rolled_out(&failed, silent, hosts.len());
+            return Ok(false);
+        }
         if silent > 0 {
             output::failure(&format!(
                 "{silent} of {} gave no answer",
@@ -591,20 +736,23 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
 
     let names: Vec<&str> = to_install
         .iter()
-        .map(|(host, _)| host.name.as_str())
+        .map(|(_, host, _)| host.name.as_str())
         .collect();
+    if !options.yes && !std::io::stdin().is_terminal() {
+        output::failure(&format!(
+            "{} would be erased; nothing was changed",
+            machines(to_install.len())
+        ));
+        output::effect_err(&format!(
+            "Add --yes to erase and install {}.",
+            names.join(", ")
+        ));
+        return Ok(false);
+    }
+    // Before the question: nobody confirms an installation that cannot start.
+    let package = package()?;
+    let (source, name) = template(&options.template)?;
     if !options.yes {
-        if !std::io::stdin().is_terminal() {
-            output::failure(&format!(
-                "{} would be erased; nothing was changed",
-                machines(to_install.len())
-            ));
-            output::effect_err(&format!(
-                "Add --yes to erase and install {}.",
-                names.join(", ")
-            ));
-            return Ok(false);
-        }
         output::line("");
         output::effect(&format!(
             "Erase the disks of {} and install NixOS? Type yes:",
@@ -620,15 +768,30 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         }
     }
 
-    let package = package()?;
-    let (source, name) = template(&options.template)?;
     let mut installed = Vec::new();
-    let mut failed = Vec::new();
-    for (host, probe) in &to_install {
-        match install(host, probe, options, &package, &source, &name, scratch) {
+    let mut unwritten = Vec::new();
+    for (index, host, probe) in &to_install {
+        match install(
+            host,
+            probe,
+            options,
+            &package,
+            &source,
+            &name,
+            &stem(*index),
+        ) {
             Ok(done) => {
-                if let Some(file) = &options.known_hosts {
-                    remember(file, host, &done.key)?;
+                // The machine is installed whatever becomes of the file.
+                let written = options
+                    .known_hosts
+                    .as_ref()
+                    .map_or(Ok(()), |file| remember(file, host, &done.key));
+                if let Err(error) = written {
+                    output::row(
+                        Mark::Failed,
+                        &format!("Its host key was not written: {error}"),
+                    );
+                    unwritten.push(host.name.as_str());
                 }
                 installed.push((*host, done));
             }
@@ -644,16 +807,21 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     }
 
     if !failed.is_empty() || silent > 0 {
+        not_rolled_out(&failed, silent, hosts.len());
+    } else if !unwritten.is_empty() {
         output::failure(&format!(
-            "{} of {} not rolled out",
-            failed.len() + silent,
-            machines(hosts.len())
+            "{} installed, but not every host key was written",
+            machines(installed.len())
         ));
-        if !failed.is_empty() {
-            output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
-        }
     } else {
         output::success(&format!("{} installed", machines(installed.len())));
+    }
+    if let (Some(file), false) = (&options.known_hosts, unwritten.is_empty()) {
+        output::effect_err(&format!(
+            "Not written to {}: {}.",
+            file.display(),
+            unwritten.join(", ")
+        ));
     }
     for (host, done) in &installed {
         let revision = done
@@ -661,11 +829,13 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
             .as_deref()
             .map(|revision| revision.chars().take(12).collect::<String>())
             .unwrap_or_default();
-        output::fact(&format!("{:<w$}", host.name, w = width - 2), &revision);
+        output::fact(&format!("{:<width$}", host.name), &revision);
         output::note(&known_hosts_line(host, &done.key));
     }
-    if !installed.is_empty() && options.known_hosts.is_none() {
+    if !unwritten.is_empty() {
+        output::note("Add the muted lines of those machines to known_hosts yourself.");
+    } else if !installed.is_empty() && options.known_hosts.is_none() {
         output::note("Add the muted lines to known_hosts, or give --known-hosts <file>.");
     }
-    Ok(failed.is_empty() && silent == 0)
+    Ok(failed.is_empty() && silent == 0 && unwritten.is_empty())
 }

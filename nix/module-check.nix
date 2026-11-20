@@ -48,6 +48,8 @@ let
         enable = true;
         schedule = "hourly";
         randomizedDelay = "20min";
+        fixedDelay = false;
+        timeout = "45min";
         gitIdentity = null;
       };
     };
@@ -131,6 +133,8 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
+    # Lines that modules add to one check must each succeed.
+    has "$healthCheck" 'set -e'
     test -x "$checkHook"
     has "$checkHook" 'set -e'
     has "$checkHook" 'test -e /run/rollout-open'
@@ -179,6 +183,9 @@ pkgs.runCommand "nxf-module-check"
     has "$rootTimerPath" 'RandomizedDelaySec=1h'
     has "$rootTimerPath" 'FixedRandomDelay=true'
     has "$rootTimerPath" 'Persistent=true'
+    # A oneshot is starting for as long as it runs, so this ends the update.
+    has "$rootServicePath" 'Type=oneshot'
+    has "$rootServicePath" 'TimeoutStartSec=3h'
 
     has "$plainServicePath" 'User=nxf'
     has "$plainServicePath" '"NXF_FLAKE=/srv/machine"'
@@ -189,6 +196,8 @@ pkgs.runCommand "nxf-module-check"
     has "$plainGitconfig" 'directory = "/srv/machine"'
     has "$plainTimerPath" 'OnCalendar=hourly'
     has "$plainTimerPath" 'RandomizedDelaySec=20min'
+    has "$plainTimerPath" 'FixedRandomDelay=false'
+    has "$plainServicePath" 'TimeoutStartSec=45min'
 
     touch $out
   ''

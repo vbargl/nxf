@@ -588,3 +588,37 @@ fn upgrade_refused() {
     refused(&[], "  --template <TEMPLATE>");
     assert!(set.calls().is_empty());
 }
+
+/// A machine that was reached and did not answer within NXF_SSH_TIMEOUT is
+/// timed out, with the limit, and not unreachable; the others still answer.
+#[test]
+fn timeout() {
+    let mut set = machines();
+    set.fx.set("NXF_SSH_TIMEOUT", "1");
+    std::fs::write(set.machine("node-2").join("env"), "exec sleep 30\n").unwrap();
+    let result = set.run(&["status"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✗ node-2    timed out after 1 second\n");
+    assert_lacks(&result.stdout, "unreachable");
+    assert_contains(&result.stdout, "\n  ! node-1    ");
+    assert_contains(&result.stderr, "✗ 1 of 3 machines gave no status");
+}
+
+/// A machine whose upgrade runs past NXF_UPGRADE_TIMEOUT is timed out, with
+/// the limit and the warning that the upgrade may still run there, and no
+/// further machine is started.
+#[test]
+fn upgrade_timeout() {
+    let mut set = machines();
+    set.fx.set("NXF_UPGRADE_TIMEOUT", "1");
+    std::fs::write(set.machine("node-1").join("env"), "exec sleep 30\n").unwrap();
+    let result = set.upgrade(&[]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-1    timed out after 1 second; the upgrade may still run on the machine\n",
+    );
+    assert_lacks(&result.stdout, "unreachable");
+    assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    assert_eq!(set.upgraded(), ["node-1.test"]);
+}

@@ -32,6 +32,17 @@ fn target() -> PathBuf {
     var("NXF_INSTALL_ROOT").unwrap_or_else(|| PathBuf::from("/mnt"))
 }
 
+/// Whether the root of the mounts that /proc/mounts lists is in memory. The
+/// last `/` line is the mount in effect; one before it lies beneath it.
+pub fn root_in_memory(mounts: &str) -> bool {
+    let root = mounts.lines().rev().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let (_, point, kind) = (fields.next(), fields.next(), fields.next());
+        (point == Some("/")).then_some(kind)
+    });
+    matches!(root.flatten(), Some("tmpfs" | "rootfs" | "ramfs"))
+}
+
 /// Whether this system runs from memory, as a NixOS installer does. A system
 /// that runs from a disk would be erased under itself. NXF_INSTALLER (yes or
 /// no) stands in for the answer in tests.
@@ -39,13 +50,18 @@ pub fn installer() -> bool {
     if let Ok(answer) = std::env::var("NXF_INSTALLER") {
         return answer == "yes";
     }
-    std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| {
-        mounts.lines().any(|line| {
-            let mut fields = line.split_whitespace();
-            let (_, point, kind) = (fields.next(), fields.next(), fields.next());
-            point == Some("/") && matches!(kind, Some("tmpfs" | "rootfs" | "ramfs"))
-        })
-    })
+    std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| root_in_memory(&mounts))
+}
+
+/// Whether nxf manages the running system: it installed it, or the system
+/// has nxf. Such a machine is not an installer, also when it runs from
+/// memory. NXF_UPDATER_STATE and NXF_SYSTEM stand in for the two places.
+fn managed() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let record = Path::new(MARKER).file_name().unwrap_or_default();
+    nixos::updater_dir().join(record).exists()
+        || std::fs::metadata(nixos::running().join("sw/bin/nxf"))
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
 fn run(command: &mut Command, what: &str) -> Result<(), String> {
@@ -166,6 +182,12 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     if !stands_in && !nixos::is_root() {
         return Err("Installing needs root".to_string());
     }
+    if managed() {
+        return Err(
+            "nxf manages this system, and installing erases disks\nStart the machine from a NixOS installer to install it again."
+                .to_string(),
+        );
+    }
     if !installer() {
         return Err(
             "This system runs from a disk, and installing erases disks\nStart the machine from a NixOS installer, or let `nxf rollout` do it."
@@ -237,7 +259,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     output::fact("Host key", &key);
     if options.reboot {
         output::effect("Restarting into the new system.");
-        let _ = Command::new("systemctl").arg("reboot").status();
+        let _ = Command::new(nixos::systemctl()).arg("reboot").status();
     } else {
         output::effect("Restart the machine to start it.");
     }

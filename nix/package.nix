@@ -5,8 +5,10 @@
   coreutils,
   dix,
   git,
+  gnutar,
   nh,
   nix,
+  openssh,
   systemd,
 }:
 
@@ -24,7 +26,6 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
       ../src
       ../nix/nxf.nix
-      ../tests
     ];
   };
   cargoLock.lockFile = ../Cargo.lock;
@@ -40,8 +41,10 @@ rustPlatform.buildRustPackage {
         coreutils
         dix
         git
+        gnutar
         nh
         nix
+        openssh
         systemd
       ]
     }
