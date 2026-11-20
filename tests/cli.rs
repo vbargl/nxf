@@ -137,15 +137,16 @@ fn refusals_have_the_shape_of_failures() {
 }
 
 /// What a command makes is writable by the group when the group may write the
-/// checkout, and the command works on that checkout: the update does, and a
-/// hold, which only writes the state of the updater, does not.
+/// checkout, and the command works on that checkout: the update does, and so
+/// does `init` of the directory nxf would use. A hold, which only writes the
+/// state of the updater, `release`, and `init` of another directory do not.
 #[test]
 fn group_sharing() {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
-    let fx = fixture();
+    let mut fx = fixture();
     std::fs::set_permissions(&fx.checkout, std::fs::Permissions::from_mode(0o2775)).unwrap();
-    let run = |args: &[&str]| {
+    let run = |fx: &common::Fixture, args: &[&str]| {
         let mut command = fx.command(args);
         // The mask of the caller decides what nxf does not.
         unsafe {
@@ -156,15 +157,63 @@ fn group_sharing() {
         };
         assert!(command.output().unwrap().status.success());
     };
-    let group_writes = |file: &str| {
-        let mode = std::fs::metadata(fx.updater.join(file))
-            .unwrap()
-            .permissions()
-            .mode();
-        mode & 0o020 != 0
+    let group_writes =
+        |file: &std::path::Path| std::fs::metadata(file).unwrap().permissions().mode() & 0o020 != 0;
+    run(&fx, &["hold", "--reason", "quiet"]);
+    assert!(!group_writes(&fx.updater.join("hold.json")));
+    run(&fx, &["auto-update"]);
+    assert!(group_writes(&fx.updater.join("update.json")));
+
+    // A template that needs nothing from the network.
+    let template = fx.dir.join("template");
+    std::fs::create_dir_all(template.join("machine")).unwrap();
+    std::fs::write(
+        template.join("flake.nix"),
+        "{ outputs = _: { templates.machine.path = ./machine; }; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        template.join("machine/flake.nix"),
+        "{ outputs = _: { nixosConfigurations.default = { options.services = { }; }; }; }\n",
+    )
+    .unwrap();
+    let reference = format!("{}#machine", template.display());
+    let base = fx.dir.clone();
+    let empty = |name: &str| {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o2775)).unwrap();
+        dir
     };
-    run(&["hold", "--reason", "quiet"]);
-    assert!(!group_writes("hold.json"));
-    run(&["auto-update"]);
-    assert!(group_writes("update.json"));
+    // The directory nxf would use, named or not.
+    let own = empty("own");
+    fx.set("NXF_FLAKE", &own);
+    run(&fx, &["init", "--template", &reference]);
+    assert!(group_writes(&own.join("nxf.nix")));
+    let named = empty("named");
+    fx.set("NXF_FLAKE", &named);
+    run(
+        &fx,
+        &["init", named.to_str().unwrap(), "--template", &reference],
+    );
+    assert!(group_writes(&named.join("nxf.nix")));
+    // Another directory than the one nxf would use.
+    let other = empty("other");
+    run(
+        &fx,
+        &["init", other.to_str().unwrap(), "--template", &reference],
+    );
+    assert!(!group_writes(&other.join("nxf.nix")));
+
+    // `release` on machines does not share either: what it starts has the mask of the caller.
+    let log = fx.dir.join("mask.log");
+    common::write_script(
+        &fx.dir.join("bin/ssh"),
+        &format!("#!/bin/sh\numask >> '{}'\n", log.display()),
+    );
+    let hosts = fx.dir.join("hosts.toml");
+    std::fs::write(&hosts, "[hosts.node.ssh]\naddress = \"node.test\"\n").unwrap();
+    fx.set("NXF_FLAKE", &fx.checkout.clone());
+    run(&fx, &["release", "--config", hosts.to_str().unwrap()]);
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "0022\n");
 }

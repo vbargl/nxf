@@ -401,7 +401,9 @@ impl Cmd {
         match self {
             Cmd::Status { machines, .. } | Cmd::Doctor { machines } => machines.config.is_none(),
             Cmd::Version { system, machines } => *system && machines.config.is_none(),
-            Cmd::Init { dir, .. } => dir.is_none(),
+            Cmd::Init { dir, .. } => dir.as_ref().is_none_or(|dir| {
+                std::path::absolute(dir).is_ok_and(|dir| dir == flake::location().dir)
+            }),
             Cmd::AutoUpdate { .. } => true,
             Cmd::Install { .. } | Cmd::Rollout { .. } | Cmd::Hold { .. } | Cmd::Release { .. } => {
                 false

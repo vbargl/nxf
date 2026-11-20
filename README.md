@@ -371,7 +371,9 @@ have no meaning to nxf. All nxf needs from the result is a flake with a
 configuration under `nixosConfigurations`; see [One configuration](#one-configuration).
 
 1. The directory is `NXF_FLAKE` or `/etc/nixos` unless one is given. It must
-   be empty or not exist; init never writes into existing content.
+   be empty or not exist; init never writes into existing content. When it is
+   the directory nxf would use, and the group may write it, the files are
+   writable by the group; for another directory they are not.
 2. The template is unpacked.
 3. With `--hardware`, `hardware.nix` is written by `nixos-generate-config`,
    without file systems: the flake describes those. Use it on the machine
@@ -815,7 +817,7 @@ The module hands over only what nxf changes: the directory, `flake.lock`, the
 state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
 its files writable by the group while the checkout is, for the commands that
 work on it: the tasks, `auto-update`, `status`, `doctor`, `version --system`
-and `init` without a directory. The module makes Git trust the checkout for
+and `init` of the directory nxf would use. The module makes Git trust the checkout for
 every user: Git refuses one that another user owns, which is the case for root
 and for the other members of the group.
 

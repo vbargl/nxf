@@ -300,6 +300,29 @@ fn reboots_through_the_stand_in() {
     assert!(!fx.dir.join("path.log").exists());
 }
 
+/// What an installation writes has the mask of the caller, also when the group
+/// may write the checkout: install does not work on that checkout.
+#[test]
+fn keeps_the_mask() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let (fx, root) = installer();
+    std::fs::set_permissions(&fx.checkout, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    let mut command = fx.command(&["install", fx.checkout.to_str().unwrap()]);
+    unsafe {
+        command.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        })
+    };
+    assert!(command.output().unwrap().status.success());
+    let marker = root.join("var/lib/nxf/installed.json");
+    assert_eq!(
+        std::fs::metadata(marker).unwrap().permissions().mode() & 0o020,
+        0
+    );
+}
+
 /// The root is in memory when the last `/` line of the mounts says so: that
 /// mount is in effect, and a `rootfs` listed before a disk lies beneath it.
 #[test]
