@@ -71,10 +71,13 @@ fn is_repo() {
     let fx = own_repository();
     assert!(git::is_repo(&fx.checkout));
     let empty = temp_dir("empty-repo");
-    assert!(!git::is_repo(&empty));
+    let without_git = git::is_repo(&empty);
     run_git(&empty, &["init", "--quiet"]);
-    assert!(!git::is_repo(&empty));
+    let without_commit = git::is_repo(&empty);
+    // Removed before the assertions, so that a failure leaves nothing behind.
     std::fs::remove_dir_all(empty).unwrap();
+    assert!(!without_git);
+    assert!(!without_commit);
 }
 
 /// A changed file is noticed and restored to HEAD, staged or not.
