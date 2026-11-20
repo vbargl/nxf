@@ -113,7 +113,7 @@ Every line is on one of four levels, each with one indentation and one style:
 
 Labels and the names of inputs share one column. A mark carries the state of a
 row: `✓` done, `✗` failed, `!` needs attention, `·` nothing happened. Colour
-only repeats the state: green, red and yellow for the marks, blue for the
+only repeats the state: green, red and yellow for the marks, cyan for the
 phase headings. Without colour the levels still read from the marks, the
 indentation and the blank lines.
 
@@ -155,7 +155,9 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   outcome is `done`, `unchanged` for an update that found nothing new, or
   `failed`, also when only some inputs failed; `detail` holds the diagnostics
   of a failure. A failure stops later tasks, which are then not listed, and
-  the exit code is non-zero.
+  the exit status is 1. A command line that nxf refuses, such as one with an
+  unknown option, exits with status 2. A refusal, or an error before the
+  first task, prints no JSON.
 - `nxf status --json` prints `checkout`, `changes` (tracked files with
   uncommitted changes), `inputs`, `running`, `built` (the system built from
   the committed checkout, or null) and `matches`. For monitoring it also
@@ -175,7 +177,7 @@ hook. These are all outcomes:
 | --- | --- | --- |
 | `done` | a task, `health` | The task ran to its end, or the health checks passed |
 | `unchanged` | `update` | The update left the lockfile as it was |
-| `failed` | a task, `health`, `hook` | The task failed, the checks still failed when their time ran out, or the failure hook failed. A run that failed before any task ran has the one result `update` `failed`. The run fails |
+| `failed` | a task, `health`, `hook` | The task failed, the checks still failed when their time ran out, or the failure hook failed. `update` `failed` is also the result of a run that cannot go on; see [Automatic updates](#automatic-updates). The run fails |
 | `skipped` | `update`, `switch` | Automatic update only. The run did not start, because of a hold, uncommitted changes or the check hook; or the switch was left out, because the revision failed its health check before. `detail` says which |
 | `flagged` | `update`, with the input in `inputs` | Automatic update only. The input could not be updated and its [strategy](#strategies) is `flag`. The run goes on and does not fail |
 | `reported` | `update`, with the input in `inputs` | The same for the strategy `report`, and the failure hook runs after the run |
@@ -193,7 +195,8 @@ records. A build is recorded only if the tracked checkout still corresponds
 to what was built, including the lockfile built before an update commits it.
 
 Without a provisioned shared directory, records stay in `<state>/systems`.
-The CLI never creates the shared directory implicitly. If shared publication
+No task creates the shared directory: the module provisions it, and
+`nxf install` creates it on the system it installs. If shared publication
 fails, nxf warns and tries the per-user location; record failures do not fail
 a successful build, update or activation. `nxf doctor` reports the destination
 and warns about an inaccessible shared directory, including group membership
@@ -323,6 +326,7 @@ seconds to connect, 10 by default, also when `rollout` runs it. A machine has
 after that its row is `timed out after <N> seconds`, with the limit, and not
 `unreachable:`. `nxf status --config <file> --json` prints one entry for each
 machine: its `status --json`, or an `error` with the text of its failed row.
+With `--config`, status takes only `--json`.
 `hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
 a member of the group `nxf`.
 
@@ -562,9 +566,14 @@ hosts.toml · 3 machines
    if any task failed. `nxf status` shows them once to each user. nxf sends
    no other notification; after a failure, or an input it is to report, it
    runs the [failure hook](#hooks) of the configuration.
-6. A run that fails before any task ran, for example because the checkout
-   names an unknown strategy, is saved as `update: failed` with the cause.
-   The failure hook runs for it too, and the service fails.
+6. A run that cannot go on is saved too: the results of the tasks that ran,
+   followed by `update` `failed` with the cause. A run that fails before any
+   task ran, for example because the checkout names an unknown strategy, has
+   that one result. The failure hook runs for it too, and the service fails.
+   When the hook fails too, the result `hook` `failed` is saved, and the
+   command shows `The failure hook failed too:` with what the hook said.
+   When the results cannot be saved, the command fails with the cause and
+   the failed save beneath it.
 
 `nxf auto-update --state <dir>` saves `update.json` in `<dir>` instead, and
 `$NXF_RESULTS` names the file there. The hold, the bad marks and the build
@@ -617,7 +626,8 @@ If checks still fail at the end:
 - the revision is marked as bad in `/var/lib/nxf/bad/<tree>`, with what the
   failing checks said;
 - nxf activates the previous system again, also when the revision could not
-  be marked as bad;
+  be marked as bad. When that activation fails, the result reads
+  `Could not return to <system>:` with the cause;
 - the run fails and reports `health: failed`. When the revision could not
   be marked, the result names that too;
 - later runs skip the switch of a marked revision until a newer revision is
@@ -646,13 +656,13 @@ services.nxf.autoUpdate = {
   starts. When it fails, the run is skipped: it reports `skipped` with the
   last line the script printed, and nothing is fetched, built or activated.
   The run does not count as failed.
-- `failureHook` becomes `/etc/nxf/hooks/failure` and runs after a run in which
-  a task failed, such as a switch or the health checks, which failed before
-  any task ran, or which could not update an input whose
-  [strategy](#strategies) is `report`. The file
-  `$NXF_RESULTS` holds the results of the run, the same JSON
-  as `/var/lib/nxf/update.json`. When the hook fails itself, that is
-  reported, as the result `hook`.
+- `failureHook` becomes `/etc/nxf/hooks/failure`. It runs after a run in
+  which a task failed, such as a switch or the health checks. It runs after
+  a run that cannot go on, also when no task ran. It runs after a run that
+  could not update an input whose [strategy](#strategies) is `report`. The
+  file `$NXF_RESULTS` holds the results of the run, the same JSON as
+  `/var/lib/nxf/update.json`. When the hook fails itself, that is reported,
+  as the result `hook`.
 - A hook fails when any of its commands does. Modules can each add lines to
   a hook, and the lines run in the order of the configuration.
 - Each hook has `hookTimeout` seconds; one that does not end is stopped and
