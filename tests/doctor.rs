@@ -2,21 +2,10 @@
 
 mod common;
 
-use common::{append, assert_contains, assert_lacks, commit, fake_systems, fixture};
-
-/// The status of a check in the doctor's output.
-fn status_of(output: &str, check: &str) -> Option<&'static str> {
-    output.lines().find_map(|line| {
-        let mut columns = line.split_whitespace();
-        let status = match columns.next()? {
-            "✓" => "ok",
-            "!" => "warn",
-            "✗" => "fail",
-            _ => return None,
-        };
-        (columns.next()? == check).then_some(status)
-    })
-}
+use common::{
+    append, assert_contains, assert_lacks, configurations, fake_systems, fixture, hostname,
+    status_of,
+};
 
 /// A healthy checkout passes; an unrecorded system only warns.
 #[test]
@@ -97,28 +86,22 @@ fn uncommitted() {
 #[test]
 fn configuration() {
     let fx = fixture();
-    let file = fx.checkout.join("flake.nix");
-    let single = std::fs::read_to_string(&file).unwrap();
-    let host = format!("nixosConfigurations.\"{}\" = {{ }};", common::hostname());
-    assert!(single.contains(&host));
+    let host = hostname();
     let only = fx.run(&["doctor"]);
     assert_eq!(status_of(&only.stdout, "config"), Some("ok"));
     assert_contains(&only.stdout, "the only configuration");
 
-    let several = single.replace(&host, &format!("{host} nixosConfigurations.other = {{ }};"));
-    std::fs::write(&file, &several).unwrap();
-    commit(&fx.checkout, "two configurations");
+    configurations(&fx, &[(&host, ""), ("other", "")], "two configurations");
     let ambiguous = fx.run(&["doctor"]);
     assert_ne!(ambiguous.code, 0);
     assert_eq!(status_of(&ambiguous.stdout, "config"), Some("fail"));
     assert_contains(&ambiguous.stdout, "none is named default");
 
-    std::fs::write(
-        &file,
-        several.replace("nixosConfigurations.other", "nixosConfigurations.default"),
-    )
-    .unwrap();
-    commit(&fx.checkout, "a default configuration");
+    configurations(
+        &fx,
+        &[(&host, ""), ("default", "")],
+        "a default configuration",
+    );
     let named = fx.run(&["doctor"]);
     named.ok();
     assert_contains(&named.stdout, "config    nixosConfigurations.default\n");

@@ -5,10 +5,19 @@ mod common;
 use common::{append, commit, fixture, git as run_git, temp_dir};
 use nxf::git;
 
+/// A fixture for calls of `nxf::git` in this process. A variable of the caller
+/// that names another repository or index would send those calls there.
+fn own_repository() -> common::Fixture {
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(std::env::var_os(name).is_none(), "{name} is set");
+    }
+    fixture()
+}
+
 /// The committed tree is HEAD's tree, and none with uncommitted changes.
 #[test]
 fn clean_tree() {
-    let fx = fixture();
+    let fx = own_repository();
     assert_eq!(git::clean_tree(&fx.checkout), Some(fx.tree()));
     append(&fx.checkout.join("flake.nix"), "# dirty\n");
     assert_eq!(git::clean_tree(&fx.checkout), None);
@@ -17,7 +26,7 @@ fn clean_tree() {
 /// A tree maps back to its commit, and an unknown tree to none.
 #[test]
 fn commit_of() {
-    let fx = fixture();
+    let fx = own_repository();
     let first = fx.tree();
     assert_eq!(
         git::commit_of(&fx.checkout, std::slice::from_ref(&first)),
@@ -36,18 +45,19 @@ fn commit_of() {
 /// The commit line shows the short hash and subject.
 #[test]
 fn commit_line() {
-    let fx = fixture();
+    let fx = own_repository();
+    // The repository's own length comes before the one of the user's configuration.
+    append(&fx.checkout.join(".git/config"), "[core]\n\tabbrev = 12\n");
     let line = git::commit_line(&fx.checkout, "HEAD");
-    assert!(
-        line.starts_with(&format!("{} init (", fx.short_head())),
-        "{line}"
-    );
+    let (short, rest) = line.split_once(' ').unwrap();
+    assert_eq!(short, &fx.head()[..12], "{line}");
+    assert!(rest.starts_with("init ("), "{line}");
 }
 
 /// A file is read as it was at a commit.
 #[test]
 fn show_file() {
-    let fx = fixture();
+    let fx = own_repository();
     let head = fx.head();
     std::fs::write(fx.checkout.join("flake.lock"), "changed\n").unwrap();
     let lock: serde_json::Value =
@@ -58,19 +68,22 @@ fn show_file() {
 /// A repository needs a commit to count.
 #[test]
 fn is_repo() {
-    let fx = fixture();
+    let fx = own_repository();
     assert!(git::is_repo(&fx.checkout));
     let empty = temp_dir("empty-repo");
-    assert!(!git::is_repo(&empty));
+    let without_git = git::is_repo(&empty);
     run_git(&empty, &["init", "--quiet"]);
-    assert!(!git::is_repo(&empty));
+    let without_commit = git::is_repo(&empty);
+    // Removed before the assertions, so that a failure leaves nothing behind.
     std::fs::remove_dir_all(empty).unwrap();
+    assert!(!without_git);
+    assert!(!without_commit);
 }
 
 /// A changed file is noticed and restored to HEAD, staged or not.
 #[test]
 fn changed_restore() {
-    let fx = fixture();
+    let fx = own_repository();
     let file = fx.checkout.join("flake.lock");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(!git::changed(&fx.checkout, "flake.lock"));
@@ -85,27 +98,26 @@ fn changed_restore() {
     assert_eq!(fx.porcelain(), "");
 }
 
-/// One file is committed while other changes stay as they are.
+/// One file is committed, as the identity that `identity` gives, while other
+/// changes stay as they are.
 #[test]
 fn commit_file() {
-    let fx = fixture();
+    let fx = own_repository();
     append(&fx.checkout.join("flake.nix"), "# kept\n");
     append(&fx.checkout.join("flake.lock"), "\n");
-    // The identity comes from the environment, as in the fixture.
-    for (name, value) in [
-        ("GIT_CONFIG_GLOBAL", "/dev/null"),
-        ("GIT_AUTHOR_NAME", "test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
-        ("GIT_COMMITTER_NAME", "test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
-    ] {
-        std::env::set_var(name, value);
-    }
-    assert_eq!(
-        git::identity(&fx.checkout).as_deref(),
-        Some("test <test@example.invalid>")
+    // This process reads the configuration of the user: the repository's own
+    // settings come before it, so that no hook and no signing key of the user
+    // is asked. Only the Git variables of the caller come before these.
+    append(
+        &fx.checkout.join(".git/config"),
+        "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n[core]\n\thooksPath = /dev/null\n",
     );
+    let identity = git::identity(&fx.checkout);
     git::commit_file(&fx.checkout, "flake.lock", "lock only").unwrap();
+    assert_eq!(
+        identity,
+        Some(run_git(&fx.checkout, &["log", "-1", "--format=%cn <%ce>"]))
+    );
     assert_eq!(
         run_git(&fx.checkout, &["log", "-1", "--format=%s"]),
         "lock only"

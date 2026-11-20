@@ -3,7 +3,7 @@
 mod common;
 
 use common::{
-    append, assert_contains, assert_lacks, commit, fake_systems, fixture, git, write_script,
+    append, assert_contains, assert_lacks, commit, fake_systems, fixture, git, saved, write_script,
     Fixture,
 };
 use serde_json::{json, Value};
@@ -43,10 +43,7 @@ fn unread_update() {
         again.ok();
         assert_lacks(&again.stdout, "Last automatic update");
     }
-    let saved: Value =
-        serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap())
-            .unwrap();
-    assert_eq!(saved["time"], 1);
+    assert_eq!(saved(&fx)["time"], 1);
 }
 
 /// Only the latest result is displayed; a new run becomes unread even if its
@@ -92,7 +89,7 @@ fn update_read_per_user() {
 
 /// Invalid status requests and other commands cannot acknowledge a summary.
 #[test]
-fn failed_status_keeps_update() {
+fn rejected_request_keeps_update() {
     let fx = fixture();
     fx.save_update(failed_update(1, "unread failure"));
     assert_ne!(fx.run(&["status", "missing-input"]).code, 0);
@@ -402,14 +399,18 @@ fn dirty() {
     assert_contains(result.stdout.lines().next().unwrap(), &fx.env["NXF_SYSTEM"]);
 }
 
-/// Status of an unrecorded system.
+/// A running system that no build record names cannot be compared: status
+/// says so, shows the revision NixOS knows, and `version --system` fails.
 #[test]
 fn unknown_system() {
     let system = &fake_systems().one;
     let fx = fixture().with("NXF_SYSTEM", system);
     let result = fx.run(&["status"]);
     result.ok();
-    assert_contains(&result.stdout, "  Flake     unknown");
+    assert_contains(
+        &result.stdout,
+        "  Flake     unknown; the system was not built by nxf or the updater\n  Revision  mock-revision\n",
+    );
     assert!(result
         .stdout
         .starts_with("! Cannot compare the running system with the checkout ("));

@@ -35,6 +35,27 @@ impl Machines {
             .map(|log| log.lines().map(str::to_string).collect())
             .unwrap_or_default()
     }
+
+    /// Makes a machine run the system that its record says the checkout built.
+    fn runs_checkout(&self, name: &str, system: &std::path::Path) {
+        let records = self.machine(name).join("state/nxf/systems");
+        std::fs::create_dir_all(&records).unwrap();
+        std::os::unix::fs::symlink(system, records.join(self.fx.tree())).unwrap();
+        std::fs::write(
+            self.machine(name).join("env"),
+            format!("export NXF_SYSTEM={}\n", system.display()),
+        )
+        .unwrap();
+    }
+
+    /// Puts a shell function with this body in the place of a machine's nxf.
+    fn answers(&self, name: &str, body: &str) {
+        std::fs::write(
+            self.machine(name).join("env"),
+            format!("nxf() {{ {body}; }}\nexport -f nxf\n"),
+        )
+        .unwrap();
+    }
 }
 
 fn machines() -> Machines {
@@ -86,14 +107,7 @@ fn status() {
     let set = machines();
     let system = &fake_systems().one;
     // node-1 runs its checkout and updated; node-2 is held; node-3 never updated.
-    let records = set.machine("node-1").join("state/nxf/systems");
-    std::fs::create_dir_all(&records).unwrap();
-    std::os::unix::fs::symlink(system, records.join(set.fx.tree())).unwrap();
-    std::fs::write(
-        set.machine("node-1").join("env"),
-        format!("export NXF_SYSTEM={}\n", system.display()),
-    )
-    .unwrap();
+    set.runs_checkout("node-1", system);
     std::fs::write(
         set.updater("node-1").join("update.json"),
         json!({"time": nxf::hold::now() - 7200, "results": []}).to_string(),
@@ -256,6 +270,71 @@ fn version_and_doctor() {
     assert!(doctor.stdout.ends_with("\n✓ Checks passed on 3 machines\n"));
 }
 
+/// When every machine runs its checkout and nothing needs attention, the
+/// one outcome says that all are up to date.
+#[test]
+fn up_to_date() {
+    let set = machines();
+    for name in ["node-1", "node-2", "node-3"] {
+        set.runs_checkout(name, &fake_systems().one);
+    }
+    let result = set.run(&["status"]);
+    result.ok();
+    assert_contains(&result.stdout, "\n  ✓ node-3    ");
+    assert!(
+        result.stdout.ends_with("\n\n✓ 3 machines up to date\n"),
+        "{}",
+        result.stdout
+    );
+    assert_eq!(result.stderr, "");
+}
+
+/// The row of a machine names all that needs attention there: a restart, a
+/// hold with its end, a failed health check, a failed update and
+/// uncommitted changes.
+#[test]
+fn attention() {
+    let set = machines();
+    set.answers(
+        "node-2",
+        r#"echo '{"revision": "0123456789abcdef", "rebootRequired": true, "hold": {"reason": "freeze", "until": 4102444800}, "bad": "units", "lastUpdate": {"time": 1, "results": [{"outcome": "failed"}]}, "changes": ["flake.nix"], "matches": false}'"#,
+    );
+    let result = set.run(&["status"]);
+    result.ok();
+    let row = result
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("  ! node-2    0123456789ab  updated "))
+        .expect("the row of node-2");
+    assert!(
+        row.ends_with(" days ago  restart needed, held: freeze (until 2100-01-01 00:00), failed its health check, last update failed, uncommitted changes"),
+        "{row}"
+    );
+}
+
+/// `version --system` asks every machine for the flake commit it runs; a
+/// machine whose system nxf did not build says so, and the command fails.
+#[test]
+fn version_system() {
+    let set = machines();
+    set.runs_checkout("node-1", &fake_systems().one);
+    let result = set.run(&["version", "--system"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        &format!("\n  ✓ node-1    {}\n", set.fx.head()),
+    );
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-2    ✗ The running system was not built by nxf or the updater.\n",
+    );
+    assert_contains(&result.stderr, "✗ No answer on 2 of 3 machines");
+    assert!(set
+        .calls()
+        .iter()
+        .all(|call| call.ends_with(" nxf version --system")));
+}
+
 /// Requests that make no sense for a set of machines, and unusable files, are refused.
 #[test]
 fn invalid_requests() {
@@ -398,6 +477,43 @@ fn upgrade_unknown_input() {
     assert_eq!(set.upgraded(), ["node-1.test"]);
 }
 
+/// An answer that nxf cannot read is a failed row that says so, in the
+/// status and in the upgrade, where it starts no other machine.
+#[test]
+fn unreadable_answers() {
+    let set = machines();
+    set.answers("node-1", "echo 'Welcome to node-1'");
+    let status = set.run(&["status"]);
+    assert_eq!(status.code, 1);
+    assert_contains(&status.stdout, "\n  ✗ node-1    unreadable answer: ");
+    let json: Value = serde_json::from_str(&set.run(&["status", "--json"]).stdout).unwrap();
+    assert_contains(
+        json["node-1"]["error"].as_str().unwrap(),
+        "unreadable answer: ",
+    );
+
+    let upgrade = set.upgrade(&[]);
+    assert_eq!(upgrade.code, 1);
+    assert_contains(&upgrade.stdout, "\n  ✗ node-1    unreadable answer\n");
+    assert_contains(&upgrade.stdout, "\n  · node-2    not started\n");
+}
+
+/// An upgrade that ends with a failure status and names no failed task
+/// fails with what the machine said last, and starts no other machine.
+#[test]
+fn upgrade_failure_status() {
+    let set = machines();
+    set.answers(
+        "node-1",
+        r#"echo '[{"task": "update", "inputs": [], "outcome": "unchanged", "detail": ""}]'; echo 'the session was closed' >&2; exit 4"#,
+    );
+    let result = set.upgrade(&[]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✗ node-1    the session was closed\n");
+    assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    assert_eq!(set.upgraded(), ["node-1.test"]);
+}
+
 /// After the first machine, a wave of --batch machines runs to its end even
 /// when one of them fails, and the named inputs are passed on.
 #[test]
@@ -432,44 +548,44 @@ fn waves() {
     assert_eq!(waves(3, 10), [0..1, 1..3]);
 }
 
-/// Install options do not go with the upgrade, nor upgrade options with the
-/// install, and a refused request reaches no machine.
+/// None of the five install options goes with the upgrade, nor an upgrade
+/// option with the install; each refusal names its cause and reaches no machine.
 #[test]
 fn upgrade_refused() {
     let set = machines();
-    for args in [
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--upgrade",
-            "--template",
-            "x#y",
-        ][..],
-        &["rollout", "--config", &set.file, "--upgrade", "--yes"],
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--upgrade",
-            "--batch",
-            "0",
-        ],
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--template",
-            "x#y",
-            "--batch",
-            "2",
-        ],
-        &["rollout", "--config", &set.file, "--template", "x#y", "a"],
-        &["rollout", "--config", &set.file],
-    ] {
-        let result = set.fx.run(args);
+    let refused = |args: &[&str], cause: &str| {
+        let result = set
+            .fx
+            .run(&[&["rollout", "--config", &set.file][..], args].concat());
         assert_ne!(result.code, 0, "{args:?}");
+        assert_contains(&result.stderr, cause);
+    };
+    for option in [
+        &["--template", "x#y"][..],
+        &["--files", "own"],
+        &["--yes"],
+        &["--kexec-url", "https://example.invalid/{arch}"],
+        &["--known-hosts", "known_hosts"],
+    ] {
+        refused(
+            &[&["--upgrade"][..], option].concat(),
+            &format!("'--upgrade' cannot be used with '{}", option[0]),
+        );
     }
+    refused(
+        &["--upgrade", "--batch", "0"],
+        "invalid value '0' for '--batch <N>'",
+    );
+    for args in [
+        &["--template", "x#y", "--batch", "2"][..],
+        &["--template", "x#y", "a"],
+    ] {
+        refused(
+            args,
+            "✗ Inputs and --batch belong to the upgrade\n  Add --upgrade, or leave them out to install.",
+        );
+    }
+    refused(&[], "  --template <TEMPLATE>");
     assert!(set.calls().is_empty());
 }
 

@@ -2,13 +2,9 @@
 
 mod common;
 
-use common::{fixture, hostname};
+use common::{assert_contains, fixture, hostname, names};
 use nxf::flake::{self, InputRow, InputUpdate};
 use serde_json::json;
-
-fn names(inputs: &[&str]) -> Vec<String> {
-    inputs.iter().map(|name| name.to_string()).collect()
-}
 
 /// Input rows carry revisions, sources and differences from another lock.
 #[test]
@@ -105,7 +101,8 @@ fn input_updates() {
     assert!(!follows[0].changed);
 }
 
-/// The lockfile is read with its root inputs.
+/// The lockfile of the checkout is read, and its root inputs are those of the
+/// flake, a and b.
 #[test]
 fn lock() {
     let fx = fixture();
@@ -141,10 +138,9 @@ fn choose() {
         flake::choose(&names(&["a", "default", "b"])).unwrap(),
         "default"
     );
-    assert!(flake::choose(&names(&["a", "b"]))
-        .unwrap_err()
-        .contains("none is named default"));
-    assert!(flake::choose(&[])
-        .unwrap_err()
-        .contains("no nixosConfigurations"));
+    assert_contains(
+        &flake::choose(&names(&["a", "b"])).unwrap_err(),
+        "none is named default",
+    );
+    assert_contains(&flake::choose(&[]).unwrap_err(), "no nixosConfigurations");
 }
