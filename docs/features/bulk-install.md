@@ -65,8 +65,8 @@ Boundaries:
   trusts the same keys: rollout writes them into one file and names it in
   `NIX_SSHOPTS`. After the installation only the key it made is accepted.
 - The options of ssh name files in the temporary directory. Rollout refuses
-  one whose path holds a space, a quote or a backslash, before any machine
-  is asked. It makes a directory of its own there for the run, for its user
+  one whose path holds whitespace, a quote or a backslash, before any machine
+  is asked; its message calls any whitespace `a space`. It makes a directory of its own there for the run, for its user
   alone, under the first of the names `nxf-rollout.<pid>.0` to
   `nxf-rollout.<pid>.99` that is free. A directory that is there before is
   never used and never changed. When the directory cannot be made, or every
@@ -113,7 +113,7 @@ Boundaries:
 | I17: A template that cannot be used | A machine to install, a terminal, no `--yes`, and a `--template` without `#<name>` | `rollout` runs | The outcome is `The template must be given as <flake>#<name>`; the question `Type yes:` is not asked; only the probe ran on each machine; the exit status is 1 |
 | I18: The old key cannot be removed | `--known-hosts <file>` holds the key of the system that was there before, and `ssh-keygen -R` fails | `rollout --yes` installs the machine | The machine has the row `✗ Its host key was not written: cannot remove the old key of <address> from <file>:` (`[<address>]:<port>` takes the place of `<address>` with a port other than 22) with the last line `ssh-keygen` printed; the file is unchanged; the machine's `known_hosts` line is printed; the exit status is 1 |
 | I19: The files are not a directory | `--files <dir>`, where `<dir>` is a file or does not exist | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is not a directory`; the exit status is 1 |
-| I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
+| I20: A temporary directory that an option cannot name | A temporary directory whose path holds whitespace, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`, with `The options of ssh cannot name a file there. Set TMPDIR to a directory without one.` beneath it; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
 | I22: A directory of the first name is there before | A machine to install, and `<temporary directory>/nxf-rollout.<pid>.0` with the mode 755, made by a `sh` that then starts rollout with `exec`, so that `<pid>` is the process id of rollout | `rollout --yes` runs | `nix copy` is given a file in `<temporary directory>/nxf-rollout.<pid>.1`, a directory with the mode 700; the directory of the run is removed; `<temporary directory>/nxf-rollout.<pid>.0` is left as it was; the exit status is 0 |
 | I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | No machine is asked; the outcome is `cannot read <file>: <cause>`, with `rollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.` beneath it; the exit status is 1 |
@@ -188,7 +188,9 @@ not run.
   port other than 22. No run by hand covers it.
 - I19: `tests/rollout.rs::files_must_be_a_directory`. No run by hand covers
   it.
-- I20: `tests/rollout.rs::unusable_scratch_is_refused`. No run by hand
+- I20: `tests/rollout.rs::unusable_scratch_is_refused`, with a path that
+  holds a space, a single quote, a double quote or a backslash. It does not
+  cover another whitespace or the line beneath the outcome. No run by hand
   covers it.
 - I21: no automated test and no run by hand covers it.
 - I22: `tests/rollout.rs::scratch_is_its_own`, with a stand-in `nix` that tells
