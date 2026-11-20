@@ -812,6 +812,26 @@ fn unusable_scratch_is_refused() {
     }
 }
 
+/// A temporary directory that is not there ends the run before any machine is
+/// asked, with the path that could not be made and the variable that names it.
+#[test]
+fn missing_temporary_directory() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let missing = fx.dir.join("missing");
+    fx.set("TMPDIR", &missing);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        &format!("✗ cannot create {}/nxf-rollout.", missing.display()),
+    );
+    assert_contains(
+        &result.stderr,
+        ": No such file or directory (os error 2)\n  rollout keeps the keys of a run there. TMPDIR names the directory it is made in.\n",
+    );
+    assert_eq!(ssh_log(&fx), "");
+}
+
 /// The scratch directory of a run is made by it, for the user alone. One that
 /// is there before, as another user could make it, is refused before any
 /// machine is asked, and is left as it is.

@@ -601,7 +601,10 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
             "{} is there already\nrollout keeps the keys of a run in a directory it makes itself. Remove that one, or set TMPDIR to another directory.",
             scratch.display()
         ),
-        _ => err.to_string(),
+        _ => format!(
+            "cannot create {}: {err}\nrollout keeps the keys of a run there. TMPDIR names the directory it is made in.",
+            scratch.display()
+        ),
     })?;
     let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
