@@ -29,13 +29,13 @@ let
   root = system {
     services.nxf.autoUpdate = {
       enable = true;
-      gitCredentialsFile = "/run/secrets/git-credentials";
+      git.credentialsFile = "/run/secrets/git-credentials";
       nixConfigFile = "/run/secrets/nix.conf";
-      healthChecks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
-      healthTimeout = 600;
-      checkHook = "test -e /run/rollout-open";
-      failureHook = "cp \"$NXF_RESULTS\" /run/rollout-paused";
-      hookTimeout = 30;
+      health.checks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
+      health.timeout = 600;
+      hooks.check = "test -e /run/rollout-open";
+      hooks.failure = "cp \"$NXF_RESULTS\" /run/rollout-paused";
+      hooks.timeout = 30;
       strategy = "flag";
       inputs.work = "off";
     };
@@ -50,7 +50,7 @@ let
         randomizedDelay = 1200;
         fixedDelay = false;
         updateTimeout = 2700;
-        gitIdentity = null;
+        git.identity = null;
       };
     };
   };
@@ -62,7 +62,17 @@ let
   accepts =
     module: (builtins.tryEval (builtins.deepSeq (system module).services.nxf.autoUpdate true)).success;
 
+  update = autoUpdate: {
+    services.nxf = {
+      autoUpdate = {
+        enable = true;
+      }
+      // autoUpdate;
+    };
+  };
+
   unit = config: name: config.systemd.units.${name}.text;
+
 in
 pkgs.runCommand "nxf-module-check"
   {
@@ -97,19 +107,22 @@ pkgs.runCommand "nxf-module-check"
     commandSudo = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) command.security.sudo.extraRules
     );
-    durationsAccepted = builtins.toJSON (accepts {
-      services.nxf.autoUpdate = {
-        enable = true;
+    durationsAccepted = builtins.toJSON (
+      accepts (update {
         randomizedDelay = 0;
         updateTimeout = 60;
-      };
-    });
-    systemdStringRefused = builtins.toJSON (accepts {
-      services.nxf.autoUpdate.randomizedDelay = "20min";
-    });
-    zeroTimeoutRefused = builtins.toJSON (accepts {
-      services.nxf.autoUpdate.updateTimeout = 0;
-    });
+      })
+    );
+    systemdStringRefused = builtins.toJSON (
+      accepts (update {
+        randomizedDelay = "20min";
+      })
+    );
+    zeroTimeoutRefused = builtins.toJSON (
+      accepts (update {
+        health.timeout = 0;
+      })
+    );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
     healthSettings = root.environment.etc."nxf/health.conf".text;

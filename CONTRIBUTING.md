@@ -204,7 +204,7 @@ change them here first.
   | --- | --- | --- |
   | `NXF_FLAKE` | `/etc/nixos` | The checkout of the machine flake |
   | `NXF_STATE` | `$XDG_STATE_HOME/nxf`, then `~/.local/state/nxf` | The per-user state |
-  | `NXF_HOOK_TIMEOUT` | 60 | Seconds each hook has to end; the module sets it from `hookTimeout` |
+  | `NXF_HOOK_TIMEOUT` | 60 | Seconds each hook has to end; the module sets it from `hooks.timeout` |
   | `NXF_SSH_CONNECT_TIMEOUT` | 10 | Seconds ssh has to connect to a machine |
   | `NXF_SSH_TIMEOUT` | 120 | Seconds a machine has to answer a command with `--config` |
   | `NXF_UPGRADE_TIMEOUT` | 10800 | Seconds a machine has for `rollout --upgrade` |

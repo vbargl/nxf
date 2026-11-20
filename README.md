@@ -290,6 +290,8 @@ alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git, Nix, OpenSSH,
 tar, coreutils and systemd for machines that do not have them on `PATH`.
 [Layout](CONTRIBUTING.md#layout) lists the programs nxf calls.
 
+The options of the module are not kept compatible between 0.x versions of nxf.
+
 ## Several machines
 
 `status`, `hold`, `release`, `version` and `doctor` take `--config <file>` and
@@ -613,28 +615,28 @@ records stay in `/var/lib/nxf`, and `nxf status` reads the results from
 | `schedule` | `*-*-* 00/6:00:00` | systemd calendar expression |
 | `randomizedDelay` | `3600` | Seconds after the schedule within which the update starts |
 | `fixedDelay` | `true` | Keep the same delay on every run, different for each machine |
-| `gitIdentity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
-| `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
-| `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
+| `updateTimeout` | `10800` | Seconds after which the update is stopped |
 | `strategy` | `report` | What the update does with an input: `off`, `flag` or `report` |
 | `inputs` | none | The strategy of single inputs, by name |
-| `checkHook` | none | Script that is asked before an update starts |
-| `healthChecks` | none | Scripts that must succeed after a switch |
-| `healthTimeout` | `300` | Seconds the checks have to pass |
-| `healthInterval` | `10` | Seconds between two rounds of checks |
-| `failureHook` | none | Script that runs after a failed update, or an input to report |
-| `hookTimeout` | `60` | Seconds each of the two hooks has to end; the module sets `NXF_HOOK_TIMEOUT` from it, which is 60 when nothing sets it |
-| `updateTimeout` | `10800` | Seconds after which the update is stopped |
+| `health.checks` | none | Scripts that must succeed after a switch |
+| `health.timeout` | `300` | Seconds the checks have to pass |
+| `health.interval` | `10` | Seconds between two rounds of checks |
+| `hooks.check` | none | Script that is asked before an update starts |
+| `hooks.failure` | none | Script that runs after a failed update, or an input to report |
+| `hooks.timeout` | `60` | Seconds each of the two hooks has to end; the module sets `NXF_HOOK_TIMEOUT` from it, which is 60 when nothing sets it |
+| `git.identity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
+| `git.credentialsFile` | none | Tokens for Git inputs over HTTPS |
+| `nixConfigFile` | none | nix.conf fragment with tokens for other fetchers |
 
 Every duration is a whole number of seconds.
 
 ### Health checks
 
 The configuration supplies the checks; nxf has none of its own. Each entry of
-`healthChecks` is a shell script, and modules can add their own entries:
+`health.checks` is a shell script, and modules can add their own entries:
 
 ```nix
-services.nxf.autoUpdate.healthChecks = {
+services.nxf.autoUpdate.health.checks = {
   "10-units" = ''test -z "$(systemctl --failed --no-legend)"'';
   "20-k3s" = "systemctl is-active --quiet k3s";
 };
@@ -642,7 +644,7 @@ services.nxf.autoUpdate.healthChecks = {
 
 The scripts become executables in `/etc/nxf/health.d`. After an automatic
 switch nxf runs those of the new configuration in name order, and repeats the
-round every `healthInterval` seconds until all pass or `healthTimeout` runs
+round every `health.interval` seconds until all pass or `health.timeout` runs
 out. A check that needs time, such as a node that becomes ready after a few
 minutes, just fails until then. The two times are those of the new
 configuration too: they are in `/etc/nxf/health.conf`, which the switch
@@ -672,21 +674,21 @@ starts, and after it failed. Each is one shell script. nxf has none of its
 own, knows nothing about what they do, and has no other hooks.
 
 ```nix
-services.nxf.autoUpdate = {
-  checkHook = ''
+services.nxf.autoUpdate.hooks = {
+  check = ''
     test "$(curl --fail --silent https://example.org/rollout)" = open
   '';
-  failureHook = ''
+  failure = ''
     curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
   '';
 };
 ```
 
-- `checkHook` becomes `/etc/nxf/hooks/check` and is asked before the update
+- `hooks.check` becomes `/etc/nxf/hooks/check` and is asked before the update
   starts. When it fails, the run is skipped: it reports `skipped` with the
   last line the script printed, and nothing is fetched, built or activated.
   The run does not count as failed.
-- `failureHook` becomes `/etc/nxf/hooks/failure`. It runs after a run in
+- `hooks.failure` becomes `/etc/nxf/hooks/failure`. It runs after a run in
   which a task failed, such as a switch or the health checks. It runs after
   a run that cannot go on, also when no task ran. It runs after a run that
   could not update an input whose [strategy](#strategies) is `report`. The
@@ -695,7 +697,7 @@ services.nxf.autoUpdate = {
   as the result `hook`.
 - A hook fails when any of its commands does. Modules can each add lines to
   a hook, and the lines run in the order of the configuration.
-- Each hook has `hookTimeout` seconds; one that does not end is stopped and
+- Each hook has `hooks.timeout` seconds; one that does not end is stopped and
   counts as failed.
 
 Tasks run by hand ask no hook and run none.
@@ -779,7 +781,7 @@ per-user.
 ### Who runs it, and who may work with it
 
 The update runs as the system user `nxf`, not as root, and commits with the
-identity of `gitIdentity`. Only the switch needs root, and nh gets it with
+identity of `git.identity`. Only the switch needs root, and nh gets it with
 sudo. The module therefore lets the group `nxf` use sudo without a password:
 an unattended run cannot answer a prompt.
 
@@ -817,11 +819,11 @@ active. The module hands it over when the machine starts, and after every
 switch that changes the module.
 
 The commits of the update carry the name `nxf` and no e-mail: they stay on the
-machine. Set `gitIdentity` for another identity, for example when the machine
+machine. Set `git.identity` for another identity, for example when the machine
 flake is pushed to a server that wants an e-mail.
 
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
-`gitCredentialsFile`, a file in the format of
+`git.credentialsFile`, a file in the format of
 [git-credential-store](https://git-scm.com/docs/git-credential-store), one
 line for each server:
 
