@@ -93,9 +93,13 @@ change them here first.
   tasks and the status report wire them together.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
-  line. Rollout and install also call `ssh`, `ssh-keygen` and `tar`, which
-  the package brings; `nixos-install`, `nixos-generate-config`,
-  `nixos-version` and `sudo` are the machine's own.
+  line. It also calls `ssh` for every command with `--config` and for
+  rollout, `ssh-keygen` for install and rollout, `tar` for rollout, `cp` for
+  init and install, `date` for the times of a hold, and `systemctl` for
+  status and `install --reboot`. The package brings these ten programs: `cp`
+  and `date` as coreutils, `systemctl` as systemd. `nixos-install`,
+  `nixos-generate-config` and `nixos-version` are the machine's own, and so
+  is the `sudo` that nh calls.
 
 ## Feature descriptions
 
@@ -119,8 +123,11 @@ change them here first.
 - `status`, `doctor`, `version`, `init`, `install`, `rollout`, `hold`,
   `release` and `auto-update` are commands: the entries of `COMMANDS` in
   `src/cli.rs`, which also holds `help`. A command is
-  recognised only as the first word and rejects extra arguments, so
-  `nxf status update` fails instead of ignoring `update`.
+  recognised only as the first word, so `nxf test status` is an unknown
+  task. A command refuses a word it does not take: `nxf version update`
+  fails instead of ignoring `update`. `status` and `rollout --upgrade` take
+  the names of inputs, so `nxf status update` fails as
+  `Unknown input: update`.
 - Everything else is a list of tasks. Unknown words are an error and nothing
   runs.
 - Tasks are the entries of `TASKS` in `src/tasks.rs` and run in that order,
@@ -160,7 +167,7 @@ change them here first.
   `just check`.
 - Each file in `tests/` mirrors a source file. Tests that change the process
   environment are in `tests/environment.rs`; they hold one lock and start no
-  process. Shared fixtures are in `tests/common/mod.rs`.
+  nxf process. Shared fixtures are in `tests/common/mod.rs`.
 - Give a test a short name that does not repeat the file name, and a doc
   comment that says what must hold.
 - Add or update tests with every change of behaviour.
@@ -183,7 +190,7 @@ change them here first.
   | `NXF_SYSTEM` | The running system, `/run/current-system` |
   | `NXF_BOOTED` | The booted system, `/run/booted-system` |
   | `NXF_UPDATER_STATE` | The updater's state, `/var/lib/nxf` |
-  | `NXF_SYSTEMCTL` | The `systemctl` that status asks about the update service |
+  | `NXF_SYSTEMCTL` | The `systemctl` that status asks about the update service and that `install --reboot` runs |
   | `NXF_HEALTH_DIR` | The directory of the health checks, `/etc/nxf/health.d`; `health.conf` is read beside it |
   | `NXF_HOOKS_DIR` | The directory of the two hooks, `/etc/nxf/hooks` |
   | `NXF_SSH` | The `ssh` program |
