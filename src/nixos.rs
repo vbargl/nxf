@@ -423,25 +423,30 @@ pub fn remember(key: &str, system: &Path) {
 
 /// Keeps the sources of the locked inputs in the Nix store, as GC roots in
 /// the state: whoever builds the flake next needs no access to where an input
-/// came from. They replace the sources kept by the build before.
+/// came from. They replace the sources kept by the build before, which stay
+/// when the new ones cannot be kept.
 pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
     let sources = state_dir().join("sources");
-    let _ = std::fs::remove_dir_all(&sources);
     std::fs::create_dir_all(&sources)
         .map_err(|err| format!("cannot create {}: {err}", sources.display()))?;
-    if paths.is_empty() {
-        return Ok(());
+    if !paths.is_empty() {
+        // Nix replaces the roots of the same name, and makes none when it fails.
+        let output = Command::new("nix")
+            .arg("build")
+            .args(paths)
+            .arg("--out-link")
+            .arg(sources.join("input"))
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| format!("cannot run nix: {err}"))?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
     }
-    let output = Command::new("nix")
-        .arg("build")
-        .args(paths)
-        .arg("--out-link")
-        .arg(sources.join("input"))
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    for root in std::fs::read_dir(&sources).into_iter().flatten().flatten() {
+        if std::fs::read_link(root.path()).is_ok_and(|source| !paths.contains(&source)) {
+            let _ = std::fs::remove_file(root.path());
+        }
     }
     Ok(())
 }
