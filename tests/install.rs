@@ -221,3 +221,17 @@ fn reboots_through_the_stand_in() {
     );
     assert!(!fx.dir.join("path.log").exists());
 }
+
+/// The root is in memory when the last `/` line of the mounts says so: that
+/// mount is in effect, and a `rootfs` listed before a disk lies beneath it.
+#[test]
+fn root_is_the_last_mount() {
+    use nxf::install::root_in_memory;
+    const DISK: &str = "/dev/sda2 / ext4 rw,relatime 0 0\n";
+    const MEMORY: &str = "rootfs / rootfs rw 0 0\n";
+    const ELSEWHERE: &str = "tmpfs /run tmpfs rw,nosuid 0 0\n";
+    assert!(!root_in_memory(&format!("{MEMORY}{ELSEWHERE}{DISK}")));
+    assert!(root_in_memory(&format!("{DISK}{ELSEWHERE}{MEMORY}")));
+    assert!(root_in_memory("tmpfs / tmpfs rw 0 0\n"));
+    assert!(!root_in_memory(ELSEWHERE));
+}

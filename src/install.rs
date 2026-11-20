@@ -32,6 +32,17 @@ fn target() -> PathBuf {
     var("NXF_INSTALL_ROOT").unwrap_or_else(|| PathBuf::from("/mnt"))
 }
 
+/// Whether the root of the mounts that /proc/mounts lists is in memory. The
+/// last `/` line is the mount in effect; one before it lies beneath it.
+pub fn root_in_memory(mounts: &str) -> bool {
+    let root = mounts.lines().rev().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let (_, point, kind) = (fields.next(), fields.next(), fields.next());
+        (point == Some("/")).then_some(kind)
+    });
+    matches!(root.flatten(), Some("tmpfs" | "rootfs" | "ramfs"))
+}
+
 /// Whether this system runs from memory, as a NixOS installer does. A system
 /// that runs from a disk would be erased under itself. NXF_INSTALLER (yes or
 /// no) stands in for the answer in tests.
@@ -39,13 +50,7 @@ pub fn installer() -> bool {
     if let Ok(answer) = std::env::var("NXF_INSTALLER") {
         return answer == "yes";
     }
-    std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| {
-        mounts.lines().any(|line| {
-            let mut fields = line.split_whitespace();
-            let (_, point, kind) = (fields.next(), fields.next(), fields.next());
-            point == Some("/") && matches!(kind, Some("tmpfs" | "rootfs" | "ramfs"))
-        })
-    })
+    std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| root_in_memory(&mounts))
 }
 
 /// Whether nxf manages the running system: it installed it, or the system
