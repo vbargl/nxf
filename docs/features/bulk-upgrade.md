@@ -92,8 +92,8 @@ checkout, so only the first one finds the new revision.
   the line `the session was closed` on standard error. It asserts the exit
   status 1, the row, the row `not started` of the second machine and that
   only the first machine was asked. It does not assert the row `not started`
-  of the third machine, the outcome, or the row `nxf exited with status
-  <code>`.
+  of the third machine, the outcome, or the row
+  `nxf exited with status <code>`.
 - `tests/fleet.rs::waves` covers the order of the waves, and
   `tests/hosts.rs::toml` that machines come in the order of their names. No
   test has two names whose byte order differs from their numeric order.
