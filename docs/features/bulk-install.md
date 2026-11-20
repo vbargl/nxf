@@ -71,7 +71,19 @@ machine is (`probe`), the `known_hosts` line of I7 (`known_hosts`) and I9
 the probe.
 
 I4 to I8 need real machines: kexec, disko, `nixos-install` and a restart.
-There is no automated test for them, and no run on a virtual machine is
-recorded here.
+There is no automated test for them. They were run by hand against three
+Incus Ubuntu 24.04 VMs with the default installer image, a template with a
+disko layout and the nxf module, and SSH as root:
+
+- The first run installed node-2 and node-3 from Ubuntu (I5). node-2 had its
+  own files and node-3 the template alone (I6). The `--known-hosts` file had
+  their Ubuntu keys replaced by the new ones (I7). node-1's files failed an
+  assertion, so its installation failed after disko had erased its disks;
+  the others were still installed and the command named node-1 (I8).
+- The second run, with node-1's files fixed, found node-1 still in the
+  installer and installed it from there (I4). A third run only probed the
+  three machines (I1).
+
+That run is not repeatable in CI.
 
 See the [operating documentation](../../README.md#from-another-computer).
