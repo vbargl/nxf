@@ -101,7 +101,8 @@ fn input_updates() {
     assert!(!follows[0].changed);
 }
 
-/// The lockfile is read with its root inputs.
+/// The lockfile of the checkout is read, and its root inputs are those of the
+/// flake, a and b.
 #[test]
 fn lock() {
     let fx = fixture();
@@ -121,8 +122,7 @@ fn update() {
     assert_eq!(fx.porcelain(), "M flake.lock");
 }
 
-/// The configurations of a flake are the attribute names under its
-/// nixosConfigurations.
+/// Configurations are the attribute names of nixosConfigurations.
 #[test]
 fn configurations() {
     let fx = fixture();
