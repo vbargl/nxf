@@ -32,8 +32,8 @@ Boundaries:
 - It installs nothing, erases nothing and does not ask; installing is
   [Bulk Install](bulk-install.md). The install options (`--template`,
   `--files`, `--yes`, `--kexec-url`, `--known-hosts`) are refused together
-  with `--upgrade` by the parser of the command line, and inputs and
-  `--batch` are refused without it by nxf. U6 has the exit statuses.
+  with `--upgrade`, and so are inputs and `--batch` without it. U6 has the
+  texts and the exit statuses.
 - It does not restart machines and does not wait for them.
 - It keeps no record of an earlier run. A second run asks every machine
   again, from the first.
