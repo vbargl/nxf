@@ -303,6 +303,8 @@ esac
         ),
     );
     fx.set("NXF_PACKAGE", "/nix/store/nxf-package");
+    // The keys the user knows are read for `nix copy`: not those of whoever runs the tests.
+    fx.set("HOME", fx.dir.join("home"));
     (fx, hosts)
 }
 
@@ -535,33 +537,102 @@ fn bad_template_before_the_question() {
     assert_eq!(ssh_log(&fx).lines().count(), 1);
 }
 
-/// `nix copy` connects with the trust of the link: the keys this run
-/// accepted and the keys the user knows, so that a key that differs from a
-/// known one is refused there too.
+/// `nix copy` connects with the trust of the link: one file holds the keys
+/// this run accepted and the keys the user knows, so that a key that differs
+/// from a known one is refused there too. No option needs a shell to split it.
 #[test]
 fn copy_trusts_as_the_link() {
     let (mut fx, hosts) = installers(&["node-1"]);
-    let home = fx.dir.join("home");
-    fx.set("HOME", &home);
-    fx.set("NXF_TEST_COPY_FAILS", "1");
+    let dir = fx.dir.join("machines");
+    let known = fx.dir.join("home/.ssh/known_hosts");
+    std::fs::create_dir_all(known.parent().unwrap()).unwrap();
+    std::fs::write(&known, "node-9 ssh-ed25519 AAAAuser").unwrap();
+    // An ssh that accepts the key of the machine into the first file it is given.
+    let ssh = dir.join("ssh-accepting");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+for option in "$@"; do
+    [[ $option == UserKnownHostsFile=* ]] || continue
+    files=${{option#*=}}
+    echo 'node-1 ssh-ed25519 AAAAseen' > "${{files%% *}}"
+done
+exec '{dir}/ssh' "$@"
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    // A nix that splits NIX_SSHOPTS at spaces alone, and keeps the file it names.
+    write_script(
+        &fx.dir.join("bin/nix"),
+        &format!(
+            r#"#!/usr/bin/env bash
+case "$1 $2" in
+    'flake prefetch') echo '{{"storePath": "/nix/store/template-source"}}' ;;
+    'copy '*)
+        echo "$* | $NIX_SSHOPTS" >> '{dir}/nix.log'
+        for option in $NIX_SSHOPTS; do
+            [[ $option != UserKnownHostsFile=* ]] || cp "${{option#*=}}" '{dir}/copy.known_hosts'
+        done
+        echo 'error: cannot connect' >&2; exit 1 ;;
+esac
+"#,
+            dir = dir.display()
+        ),
+    );
     let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
     assert_eq!(result.code, 1);
     assert_contains(&result.stdout, "\n  ✗ Copying nxf to the machine failed\n");
-    let log = std::fs::read_to_string(fx.dir.join("machines/nix.log")).unwrap();
-    let copy = log.lines().find(|line| line.starts_with("copy ")).unwrap();
-    let (command, options) = copy.split_once(" | ").unwrap();
+    let log = std::fs::read_to_string(dir.join("nix.log")).unwrap();
+    let (command, options) = log.trim_end().split_once(" | ").unwrap();
     assert_eq!(
         command,
         "copy --no-check-sigs --to ssh-ng://root@node-1 /nix/store/nxf-package /nix/store/template-source"
     );
-    assert_contains(options, "-o BatchMode=yes -o ConnectTimeout=10 ");
-    assert_contains(options, " -o StrictHostKeyChecking=accept-new ");
-    assert_contains(options, " -o 'UserKnownHostsFile=");
-    assert!(
-        options.ends_with(&format!(
-            "/node-1.seen {}/.ssh/known_hosts'",
-            home.display()
-        )),
-        "{options}"
+    assert_lacks(options, "'");
+    assert_lacks(options, "\"");
+    // Split at spaces, every option is whole: a flag and its one value.
+    let words: Vec<&str> = options.split(' ').collect();
+    let names: Vec<&str> = words
+        .chunks(2)
+        .map(|option| {
+            assert_eq!(option[0], "-o", "{options}");
+            option[1].split_once('=').unwrap().0
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "BatchMode",
+            "ConnectTimeout",
+            "StrictHostKeyChecking",
+            "UserKnownHostsFile"
+        ]
     );
+    assert_contains(options, " -o StrictHostKeyChecking=accept-new ");
+    let trusted = std::fs::read_to_string(dir.join("copy.known_hosts")).unwrap();
+    assert_contains(&trusted, "node-1 ssh-ed25519 AAAAseen\n");
+    assert_contains(&trusted, "node-9 ssh-ed25519 AAAAuser\n");
+}
+
+/// A temporary directory whose path ssh options cannot carry is refused
+/// before any machine is asked: its files are named in those options.
+#[test]
+fn unusable_scratch_is_refused() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let scratch = fx.dir.join("with space");
+    std::fs::create_dir_all(&scratch).unwrap();
+    fx.set("TMPDIR", &scratch);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        &format!(
+            "✗ The temporary directory {} has a space or a quote in its path\n",
+            scratch.display()
+        ),
+    );
+    assert_eq!(ssh_log(&fx), "");
 }

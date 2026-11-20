@@ -116,7 +116,27 @@ struct Link {
 }
 
 impl Link {
+    /// The known_hosts files whose keys the link trusts.
+    fn trusted(&self) -> Vec<PathBuf> {
+        match &self.trust {
+            Trust::First { seen } => std::iter::once(seen.clone())
+                .chain(std::env::var("HOME").map(|home| format!("{home}/.ssh/known_hosts").into()))
+                .collect(),
+            Trust::Made { known } => vec![known.clone()],
+        }
+    }
+
     fn options(&self) -> Vec<String> {
+        self.options_with(&self.trusted())
+    }
+
+    /// The options of ssh, with the given known_hosts files for those of the link.
+    fn options_with(&self, known_hosts: &[PathBuf]) -> Vec<String> {
+        let known_hosts: Vec<String> = known_hosts
+            .iter()
+            .map(|file| file.display().to_string())
+            .collect();
+        let known_hosts = format!("UserKnownHostsFile={}", known_hosts.join(" "));
         let mut options = vec![
             "-o".to_string(),
             "BatchMode=yes".to_string(),
@@ -124,22 +144,17 @@ impl Link {
             format!("ConnectTimeout={}", seconds("NXF_SSH_CONNECT_TIMEOUT", 10)),
         ];
         match &self.trust {
-            Trust::First { seen } => {
-                let own = std::env::var("HOME")
-                    .map(|home| format!(" {home}/.ssh/known_hosts"))
-                    .unwrap_or_default();
-                options.extend([
-                    "-o".to_string(),
-                    "StrictHostKeyChecking=accept-new".to_string(),
-                    "-o".to_string(),
-                    format!("UserKnownHostsFile={}{own}", seen.display()),
-                ]);
-            }
-            Trust::Made { known } => options.extend([
+            Trust::First { .. } => options.extend([
+                "-o".to_string(),
+                "StrictHostKeyChecking=accept-new".to_string(),
+                "-o".to_string(),
+                known_hosts,
+            ]),
+            Trust::Made { .. } => options.extend([
                 "-o".to_string(),
                 "StrictHostKeyChecking=yes".to_string(),
                 "-o".to_string(),
-                format!("UserKnownHostsFile={}", known.display()),
+                known_hosts,
                 "-o".to_string(),
                 "GlobalKnownHostsFile=/dev/null".to_string(),
             ]),
@@ -310,22 +325,26 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
     Ok((PathBuf::from(path), name.to_string()))
 }
 
-fn copy(link: &Link, paths: &[&Path]) -> Result<(), String> {
+fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
     if !matches!(link.trust, Trust::First { .. }) {
         return Err("the machine is already installed".to_string());
     }
-    // The options of the link, so that nix trusts the keys the link trusts.
-    // Nix 2.26 and later split them as a shell does.
-    let ssh_options: Vec<String> = link
-        .options()
+    // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
+    // as a shell does, so no option may need a quote.
+    let trusted = scratch.join("copy.known_hosts");
+    let keys: String = link
+        .trusted()
         .iter()
-        .map(|option| crate::fleet::quoted(option))
+        .filter_map(|file| std::fs::read_to_string(file).ok())
+        .map(|keys| format!("{keys}\n"))
         .collect();
+    std::fs::write(&trusted, keys)
+        .map_err(|err| format!("cannot write {}: {err}", trusted.display()))?;
     let mut nix = Command::new("nix");
     nix.args(["copy", "--no-check-sigs", "--to"])
         .arg(format!("ssh-ng://{}", link.host.destination()))
         .args(paths)
-        .env("NIX_SSHOPTS", ssh_options.join(" "));
+        .env("NIX_SSHOPTS", link.options_with(&[trusted]).join(" "));
     output::stream(&mut nix, true, &[])
         .map_err(|err| format!("Copying nxf to the machine failed\n{err}"))
 }
@@ -434,7 +453,7 @@ fn install(
     }
 
     output::start("Founding the machine flake");
-    copy(&link, &[package, source])?;
+    copy(&link, &[package, source], scratch)?;
     let nxf = format!("{}/bin/nxf", package.display());
     let mut init = format!(
         "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template path:{}#{name} --hardware",
@@ -531,6 +550,14 @@ fn machines(count: usize) -> String {
 
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
     let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
+    // ssh and Nix split their options at spaces, and files in here are named in them.
+    let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
+    if scratch.to_string_lossy().contains(splits) {
+        return Err(format!(
+            "The temporary directory {} has a space or a quote in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
+            std::env::temp_dir().display()
+        ));
+    }
     std::fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
     let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
