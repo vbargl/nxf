@@ -711,6 +711,51 @@ cp "${NIX_SSHOPTS##*UserKnownHostsFile=}" "$HOME/copied"
     assert_eq!(copied, [keys.as_slice(), b"\n"].concat());
 }
 
+/// The scratch files that ssh options name are called by the place of the
+/// machine in the list, not by its name: a host name with a space is part of
+/// no option, and every machine has files of its own.
+#[test]
+fn host_name_with_a_space() {
+    let (mut fx, _) = installers(&["node-1", "node-2"]);
+    let dir = fx.dir.join("machines");
+    let hosts = dir.join("spaced.toml");
+    std::fs::write(
+        &hosts,
+        "[hosts.\"my node\".ssh]\naddress = \"node-1\"\n[hosts.\"your node\".ssh]\naddress = \"node-2\"\n",
+    )
+    .unwrap();
+    // An ssh that keeps the files it is to know the machines by.
+    let ssh = dir.join("ssh-knowing");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+for option in "$@"; do
+    [[ $option != UserKnownHostsFile=* ]] || echo "${{option#*=}}" >> '{dir}/known.log'
+done
+exec '{dir}/ssh' "$@"
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let hosts = hosts.to_str().unwrap();
+    fx.run(&["rollout", "--config", hosts, "--template", "x#y", "--yes"])
+        .ok();
+    // Split at spaces, as ssh splits the option.
+    let log = std::fs::read_to_string(dir.join("known.log")).unwrap();
+    let mut files: Vec<&str> = log
+        .split_whitespace()
+        .map(|file| file.rsplit('/').next().unwrap())
+        .collect();
+    files.sort();
+    files.dedup();
+    assert_eq!(
+        files,
+        ["0.known", "0.seen", "1.known", "1.seen", "known_hosts"]
+    );
+}
+
 /// A temporary directory whose path ssh options cannot carry is refused
 /// before any machine is asked: its files are named in those options.
 #[test]

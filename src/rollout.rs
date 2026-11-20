@@ -332,7 +332,7 @@ fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
     }
     // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
     // as a shell does, so no option may need a quote.
-    let trusted = scratch.join("copy.known_hosts");
+    let trusted = scratch.with_extension("trusted");
     // Read as ssh reads them, as bytes; only a file that is not there is left out.
     let mut keys = Vec::new();
     for file in link.trusted() {
@@ -411,7 +411,8 @@ struct Installed {
     revision: Option<String>,
 }
 
-/// Installs one machine and returns its host key.
+/// Installs one machine and returns its host key. `scratch` is the path that
+/// the scratch files of the machine extend.
 fn install(
     host: &Host,
     probe: &Probe,
@@ -421,7 +422,7 @@ fn install(
     name: &str,
     scratch: &Path,
 ) -> Result<Installed, String> {
-    let seen = scratch.join(format!("{}.seen", host.name));
+    let seen = scratch.with_extension("seen");
     let link = Link {
         host: host.clone(),
         trust: Trust::First { seen },
@@ -495,7 +496,7 @@ fn install(
 
     output::start("Starting the system");
     let _ = link.capture("systemctl reboot", "");
-    let known = scratch.join(format!("{}.known", host.name));
+    let known = scratch.with_extension("known");
     std::fs::write(&known, format!("{}\n", known_hosts_line(host, &key)))
         .map_err(|err| err.to_string())?;
     let started = Link {
@@ -609,15 +610,19 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
 }
 
 fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
+    // The scratch files of a machine are named by its place in the list: ssh
+    // splits the options that name them, and a host's name may hold a space.
+    let place = |index: usize| scratch.join(index.to_string());
     // Every machine is asked what it is, all at once.
     let probes: Vec<Probe> = std::thread::scope(|scope| {
         let asked: Vec<_> = hosts
             .iter()
-            .map(|host| {
+            .enumerate()
+            .map(|(index, host)| {
                 let link = Link {
                     host: host.clone(),
                     trust: Trust::First {
-                        seen: scratch.join(format!("{}.seen", host.name)),
+                        seen: place(index).with_extension("seen"),
                     },
                 };
                 scope.spawn(move || link.probe())
@@ -650,7 +655,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     let mut to_install = Vec::new();
     let mut failed = Vec::new();
     let mut silent = 0;
-    for (host, probe) in hosts.iter().zip(&probes) {
+    for (index, (host, probe)) in hosts.iter().zip(&probes).enumerate() {
         let name = &host.name;
         let (what, erased) = match &probe.found {
             Found::Managed => {
@@ -674,7 +679,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
             );
             continue;
         }
-        to_install.push((host, probe));
+        to_install.push((index, host, probe));
         output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
     }
     if to_install.is_empty() {
@@ -695,7 +700,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
 
     let names: Vec<&str> = to_install
         .iter()
-        .map(|(host, _)| host.name.as_str())
+        .map(|(_, host, _)| host.name.as_str())
         .collect();
     if !options.yes && !std::io::stdin().is_terminal() {
         output::failure(&format!(
@@ -729,8 +734,9 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
 
     let mut installed = Vec::new();
     let mut unwritten = Vec::new();
-    for (host, probe) in &to_install {
-        match install(host, probe, options, &package, &source, &name, scratch) {
+    for (index, host, probe) in &to_install {
+        let scratch = place(*index);
+        match install(host, probe, options, &package, &source, &name, &scratch) {
             Ok(done) => {
                 // The machine is installed whatever becomes of the file.
                 let written = options
