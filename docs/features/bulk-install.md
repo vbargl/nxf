@@ -283,22 +283,23 @@ I1, I2 and I5 to I7 were run by hand with nxf 0.13.1, built from commit
 None of the output of that run is kept. The run is not repeatable in CI.
 
 I1 and I5 to I7 were run by hand again with nxf 0.13.1, built from commit
-ea9fe11, against one Incus Ubuntu 24.04 VM with SSH as root, with `--files`,
+306eb61, against one Incus Ubuntu 24.04 VM with SSH as root, with `--files`,
 `--known-hosts` and `--yes`:
 
 - The plan row was `Ubuntu 24.04.5 LTS; it will be erased`. The rows of the
   phases were `Started from memory`, `Founded on the machine`, `Installed`
   and `Started, and its host key is the one it was given`. The outcome was
-  `1 machine installed`, and the exit status was 0 (I5).
-- The installed machine had its own files over the template, the
-  installation record and nxf 0.13.1 (I6).
+  `1 machine installed` (I5).
+- The installed machine had its own files, the installation record and nxf
+  0.13.1 (I6).
 - The Ubuntu key in the `--known-hosts` file was replaced by the reported
   one, and the line of another machine was kept (I7).
-- During the run the directory of the run had the mode 700, and the file
-  that `nix copy` got had the mode 600 and held the accepted key and the
-  line of the user's `known_hosts`.
-- A second run only probed the machine: its row was `installed by nxf`, the
-  outcome was `1 machine installed by nxf`, and the exit status was 0 (I1).
+- During the run the directory of the run was `nxf-rollout.<pid>.0` with the
+  mode 700, and the file that `nix copy` got had the mode 600 and held the
+  accepted key and the line of the user's `known_hosts`. Afterwards no
+  directory of the run was left.
+- A second run only probed the machine: its row was `installed by nxf` and
+  the outcome was `1 machine installed by nxf` (I1).
 
 The run is not repeatable in CI.
 
