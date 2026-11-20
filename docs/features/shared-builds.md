@@ -18,9 +18,23 @@ selection and update strategies still require evaluation.
 Without a usable shared directory, publication tries per-user state. If both
 locations are the same inaccessible directory, no record can be saved.
 Metadata failures warn without failing a successful build, update or switch.
-Source roots, result links, read markers and Nix's fetcher cache keep their
-existing locations. This feature does not reuse a recorded output to activate
-a system that is not running, or solve access to private evaluation sources.
+
+Boundaries:
+
+- nxf does not create the shared directory. The module provisions it, and
+  without it records stay in per-user state.
+- Source roots, result links, read markers and Nix's fetcher cache keep their
+  per-user locations.
+- A record is a plain symlink and no GC root. It is ignored once its system
+  is garbage-collected.
+- A build with uncommitted changes is not recorded.
+- Only a publication imports old records, and only those of the caller's own
+  state. Status imports nothing.
+- A recorded output does not activate a system that is not running: `switch`
+  builds again.
+- Root, the user `nxf` and the members of the group `nxf` can replace each
+  other's records. They are trusted alike.
+- It does not solve access to private evaluation sources.
 
 ## Acceptance scenarios
 
@@ -43,19 +57,28 @@ state directories; test user permissions and garbage collection only in a VM.
 
 ## Existing verification
 
-- [Task fixtures](../../tests/tasks.rs) cover publication, fallback, migration,
-  build identity and activation behavior. `switch_builds_recorded_system`
-  explicitly covers S10; `dirty_update_identity` checks S8 with a checkout
-  that already had uncommitted changes before the update.
-- [Updater fixtures](../../tests/auto_update.rs) cover S1, including a
-  conflicting local record that must not override the shared record.
-- [Doctor fixtures](../../tests/doctor.rs) cover linked Git worktrees,
-  destination and access warnings, including when no separate fallback exists;
-  [status fixtures](../../tests/status.rs) cover JSON status and read markers.
-- The [NixOS VM test](../../nix/records-test.nix) exercises replacement across
-  users, non-member fallback, tmpfiles permission repair and per-user source
-  roots surviving garbage collection. Atomic reader visibility follows from
-  symlink replacement by rename; it is not a separate concurrent-reader test.
+Every test below runs in `just check`. The tests in `tests/` use a throwaway
+flake, the mock nh and isolated state directories. The
+[NixOS VM test](../../nix/records-test.nix) is the flake check
+`shared-records`.
+
+| ID | Covered by | Not covered |
+| --- | --- | --- |
+| S1 | `tests/auto_update.rs::manual_build_skips_service_build`, with a conflicting local record that must not override the shared one | Two Unix users: the test runs as one user, and a second `NXF_STATE` stands in for the user `nxf` |
+| S2 | `nix/records-test.nix`: alice, bob, `nxf` and root with umask `022` publish the same tree in turn, and alice replaces root's record | A reader during a replacement. That it sees a complete symlink follows from replacement by rename |
+| S3 | `tests/tasks.rs::standalone_records` | |
+| S4 | `tests/tasks.rs::shared_fallback` for `switch`; `tests/doctor.rs::record_destination` for the doctor, also when no separate fallback exists; `nix/records-test.nix` for a user outside the group | A session without its new group |
+| S5 | `tests/tasks.rs::record_failures_are_nonfatal`, for `build`, `switch` and `update` | |
+| S6 | `tests/tasks.rs::imports_legacy_records` | That no other home is scanned: the test has one state directory |
+| S7 | `tests/tasks.rs::changed_during_build`, for a tracked edit and for a new commit: no record is written | The warning is not asserted |
+| S8 | `tests/tasks.rs::update_build_identity`; `tests/tasks.rs::dirty_update_identity` for a checkout that had uncommitted changes before the update | |
+| S9 | `tests/tasks.rs::publishes_shared` for the shared records, the result link and the source roots; `tests/auto_update.rs::shared_state` for fallback records in `NXF_STATE`; `tests/tasks.rs::imports_legacy_records` for status not importing; `tests/status.rs::json` for the read marker | |
+| S10 | `tests/tasks.rs::switch_builds_recorded_system` | |
+
+Beyond the scenarios, [doctor fixtures](../../tests/doctor.rs) cover linked
+Git worktrees (`linked_worktree`), and the VM test covers the repair of the
+directory's mode by tmpfiles and per-user source roots that survive garbage
+collection.
 
 See the [operating documentation](../../README.md#status) for state paths and
 migration details.
