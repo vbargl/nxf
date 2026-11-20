@@ -199,6 +199,25 @@ fn relative_profile_links() {
     );
 }
 
+/// A restart that fails does not fail the installation: it says that the
+/// machine was not restarted and what systemctl said.
+#[test]
+fn reboot_fails() {
+    let (fx, _root) = installer();
+    write_script(
+        &fx.systemctl,
+        "#!/bin/sh\necho 'cannot reach the bus' >&2\nexit 1\n",
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--reboot"]);
+    result.ok();
+    assert_contains(
+        &result.stdout,
+        "! The machine was not restarted; restart it by hand.\n",
+    );
+    assert_contains(&result.stdout, "systemctl exited with status 1.\n");
+    assert_contains(&result.stdout, "cannot reach the bus");
+}
+
 /// With --reboot the restart is asked for once the system is installed,
 /// and the advice to restart by hand is left out.
 #[test]

@@ -113,7 +113,7 @@ fn saved_update() -> Result<Option<Value>, String> {
 /// The latest automatic update: the saved task results, and the service's
 /// failure if it ended after them, as when it was killed before saving. The id
 /// changes whenever either does. None when there is nothing to report.
-pub fn update_result() -> Result<Option<Value>, String> {
+fn update_result() -> Result<Option<Value>, String> {
     let update = saved_update()?;
     let saved_at = update
         .as_ref()

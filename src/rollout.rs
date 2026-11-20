@@ -193,7 +193,12 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
         .split_once('#')
         .ok_or("The template must be given as <flake>#<name>")?;
     let output = process::run(Command::new("nix").args(["flake", "prefetch", "--json", flake]))
-        .map_err(|err| format!("Cannot read the template {flake}\n{err}"))?;
+        .map_err(|err| {
+            format!(
+                "Cannot read the template {flake}\n{}",
+                process::cause_first(&err)
+            )
+        })?;
     let fetched: Value = serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
     let path = fetched["storePath"]
         .as_str()

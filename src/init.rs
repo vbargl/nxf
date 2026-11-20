@@ -73,11 +73,17 @@ fn module(dir: &Path, host: &str) -> Check {
     }
 }
 
+/// The directory `nxf init` founds the flake in: the one given, or the checkout
+/// nxf would use.
+pub fn directory(dir: Option<&Path>) -> Result<PathBuf, String> {
+    match dir {
+        Some(dir) => std::path::absolute(dir).map_err(|err| format!("{}: {err}", dir.display())),
+        None => Ok(flake::location().dir),
+    }
+}
+
 pub fn run(options: &Options) -> Result<(), String> {
-    let dir = match &options.dir {
-        Some(dir) => std::path::absolute(dir).map_err(|err| format!("{}: {err}", dir.display()))?,
-        None => flake::location().dir,
-    };
+    let dir = directory(options.dir.as_deref())?;
     // Checked before the first write: a failure must leave nothing behind.
     if let Some(files) = options.files.as_ref().filter(|files| !files.is_dir()) {
         return Err(format!("{} is not a directory", files.display()));
@@ -98,8 +104,12 @@ pub fn run(options: &Options) -> Result<(), String> {
     output::start("Founding the machine flake");
     output::fact("Directory", &dir.to_string_lossy());
     let template = absolute(&options.template);
-    flake::unpack(&dir, &template)
-        .map_err(|err| format!("cannot unpack the template {template}:\n{err}"))?;
+    flake::unpack(&dir, &template).map_err(|err| {
+        format!(
+            "cannot unpack the template {template}:\n{}",
+            process::cause_first(&err)
+        )
+    })?;
     output::fact("Template", &template);
     if options.hardware {
         hardware(&dir)?;

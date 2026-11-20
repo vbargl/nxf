@@ -68,7 +68,7 @@ fn disko(dir: &Path, configuration: &str) -> Result<PathBuf, String> {
             )),
     )
     .map_err(|err| {
-        format!("The configuration has no disk layout to apply\n{err}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.")
+        format!("The configuration has no disk layout to apply\n{}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.", process::cause_first(&err))
     })?;
     Ok(PathBuf::from(
         String::from_utf8_lossy(&built.stdout).trim().to_string(),
@@ -86,7 +86,14 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
             .arg(to),
     )
     .map(drop)
-    .map_err(|err| format!("cannot copy {} to {}\n{err}", from.display(), to.display()))
+    .map_err(|err| {
+        format!(
+            "cannot copy {} to {}\n{}",
+            from.display(),
+            to.display(),
+            process::cause_first(&err)
+        )
+    })
 }
 
 /// Gives the machine its SSH host key now, so that the key can be told to
@@ -231,7 +238,10 @@ pub fn run(options: &Options) -> Result<(), String> {
     output::fact("Host key", &key);
     if options.reboot {
         output::effect("Restarting into the new system.");
-        let _ = process::capture(Command::new(nixos::systemctl()).arg("reboot"));
+        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
+            output::attention("The machine was not restarted; restart it by hand.");
+            err.lines().for_each(output::detail);
+        }
     } else {
         output::effect("Restart the machine to start it.");
     }
