@@ -403,6 +403,44 @@ exec '{}/machines/ssh' "$@"
     assert_lacks(&ssh_log(&fx), "bin/nxf init");
 }
 
+/// A `--files` that is no directory is refused before any machine is asked,
+/// instead of installing from the template alone. A machine without a
+/// directory of its own in it is still installed, from the template alone.
+#[test]
+fn files_must_be_a_directory() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let rollout = |files: &std::path::Path| {
+        fx.run(&[
+            "rollout",
+            "--config",
+            &hosts,
+            "--template",
+            "x#y",
+            "--yes",
+            "--files",
+            files.to_str().unwrap(),
+        ])
+    };
+    let file = fx.dir.join("a-file");
+    std::fs::write(&file, "").unwrap();
+    for wrong in [fx.dir.join("missing"), file] {
+        let result = rollout(&wrong);
+        assert_eq!(result.code, 1);
+        assert_contains(
+            &result.stderr,
+            &format!("✗ {} is not a directory\n", wrong.display()),
+        );
+        assert_eq!(ssh_log(&fx), "");
+    }
+
+    let files = fx.dir.join("files");
+    std::fs::create_dir_all(files.join("node-2")).unwrap();
+    rollout(&files).ok();
+    let log = ssh_log(&fx);
+    assert_contains(&log, "node-1 /nix/store/nxf-package/bin/nxf install ");
+    assert_lacks(&log, "--files");
+}
+
 /// A known_hosts file that cannot be written does not end the run: the
 /// machine stays installed, the cause is shown, the next machine is still
 /// installed, both host keys are printed, and the command fails.

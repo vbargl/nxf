@@ -561,6 +561,14 @@ fn not_rolled_out(failed: &[&str], silent: usize, all: usize) {
 }
 
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
+    // Before any machine is asked: without its files a machine would be
+    // erased and installed from the template alone.
+    if let Some(files) = options.files.as_ref().filter(|files| !files.is_dir()) {
+        return Err(format!(
+            "{} is not a directory\n--files takes a directory that holds one directory of files for each machine, by name.",
+            files.display()
+        ));
+    }
     let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
     // ssh and Nix split their options at spaces, and files in here are named in them.
     let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
