@@ -8,7 +8,7 @@ use common::{
     assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture, Ran,
 };
 use nxf::hosts::Host;
-use nxf::rollout::{known_hosts_line, parse_probe, template, Found, Probe, PROBE};
+use nxf::rollout::{known_hosts_line, parse_probe, template, Found, Probe, PROBE, SCRATCH_NAMES};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -832,46 +832,84 @@ fn missing_temporary_directory() {
     assert_eq!(ssh_log(&fx), "");
 }
 
-/// The scratch directory of a run is made by it, for the user alone. One that
-/// is there before, as another user could make it, is refused before any
-/// machine is asked, and is left as it is.
-#[test]
-fn scratch_is_its_own() {
-    let (mut fx, hosts) = installers(&["node-1"]);
-    let tmp = fx.dir.join("tmp");
-    std::fs::create_dir_all(&tmp).unwrap();
-    fx.set("TMPDIR", &tmp);
-    // A shell that makes the directory of its process, and then becomes nxf.
+/// Runs rollout as a process that first made the given number of scratch
+/// directories of its own id in TMPDIR, as another user could. Returns the id.
+fn rollout_after_planting(fx: &Fixture, hosts: &str, count: usize) -> (u32, std::process::Output) {
+    let plant = r#"n=0
+while [ "$n" -lt "$1" ]; do mkdir -m 755 "$TMPDIR/nxf-rollout.$$.$n" || exit 9; n=$((n + 1)); done
+shift; exec "$@""#;
     let planted = std::process::Command::new("sh")
-        .args(["-c", r#"mkdir "$TMPDIR/nxf-rollout.$$" && exec "$@""#, "sh"])
-        .args([common::NXF, "rollout", "--config", &hosts])
+        .args(["-c", plant, "sh", &count.to_string()])
+        .args([common::NXF, "rollout", "--config", hosts])
         .args(["--template", "x#y", "--yes"])
         .env_clear()
         .envs(&fx.env)
         .stdin(std::process::Stdio::null())
-        .output()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
-    assert_eq!(planted.status.code(), Some(1));
-    let said = String::from_utf8_lossy(&planted.stderr);
-    assert_contains(&said, &format!("✗ {}/nxf-rollout.", tmp.display()));
-    assert_contains(&said, " is there already\n");
-    assert_eq!(ssh_log(&fx), "");
-    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1);
+    (planted.id(), planted.wait_with_output().unwrap())
+}
 
-    // A nix that tells the mode of the directory of the nxf that runs it.
+/// The scratch directory of a run is made by it, for the user alone. One that
+/// is there before, as another user could make it, is never used or changed:
+/// the run goes on in a directory of the next name, and removes only that one.
+#[test]
+fn scratch_is_its_own() {
+    use std::os::unix::fs::PermissionsExt;
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let tmp = fx.dir.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    fx.set("TMPDIR", &tmp);
+    // A nix that tells the directory of the file it is given, and its mode.
     write_script(
         &fx.dir.join("bin/nix"),
         r#"#!/bin/sh
 [ "$1" = copy ] || { echo '{"storePath": "/nix/store/template-source"}'; exit; }
-stat -c %a "$TMPDIR/nxf-rollout.$PPID" > "$TMPDIR/mode"
+stat -c '%n %a' "$(dirname "${NIX_SSHOPTS##*UserKnownHostsFile=}")" > "$TMPDIR/../scratch"
 "#,
     );
-    fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"])
-        .ok();
+    let (id, ran) = rollout_after_planting(&fx, &hosts, 1);
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(0), "{said}");
+    let named = |n: usize| tmp.join(format!("nxf-rollout.{id}.{n}"));
     assert_eq!(
-        std::fs::read_to_string(tmp.join("mode")).unwrap().trim(),
-        "700"
+        std::fs::read_to_string(fx.dir.join("scratch")).unwrap(),
+        format!("{} 700\n", named(1).display())
     );
+    // The planted directory is all that is left, as it was.
+    let left: Vec<_> = std::fs::read_dir(&tmp)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(left, [named(0)]);
+    assert_eq!(std::fs::read_dir(named(0)).unwrap().count(), 0);
+    let mode = std::fs::metadata(named(0)).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+}
+
+/// When every name a run tries for its scratch directory is taken, it is
+/// refused before any machine is asked, with the names, and none is removed.
+#[test]
+fn scratch_names_run_out() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let tmp = fx.dir.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    fx.set("TMPDIR", &tmp);
+    let (id, ran) = rollout_after_planting(&fx, &hosts, SCRATCH_NAMES);
+    assert_eq!(ran.status.code(), Some(1));
+    let named = |n: usize| tmp.join(format!("nxf-rollout.{id}.{n}"));
+    assert_contains(
+        &String::from_utf8_lossy(&ran.stderr),
+        &format!(
+            "✗ {} to {} are all there already\n  rollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.\n",
+            named(0).display(),
+            named(SCRATCH_NAMES - 1).display()
+        ),
+    );
+    assert_eq!(ssh_log(&fx), "");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), SCRATCH_NAMES);
 }
 
 /// What the operator names reaches the shell of the machine as one word each,

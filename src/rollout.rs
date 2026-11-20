@@ -575,6 +575,34 @@ fn not_rolled_out(failed: &[&str], silent: usize, all: usize) {
     }
 }
 
+/// How many names a run tries for its scratch directory.
+pub const SCRATCH_NAMES: usize = 100;
+
+/// Makes the scratch directory of this run in `temp`, under the first name
+/// that is free. One that is there is never used: it may be another user's,
+/// with links that lead the writes of this run elsewhere.
+fn make_scratch(temp: &Path) -> Result<PathBuf, String> {
+    let named = |n: usize| temp.join(format!("nxf-rollout.{}.{n}", std::process::id()));
+    for scratch in (0..SCRATCH_NAMES).map(named) {
+        // For the user alone, and only when this call makes it.
+        match std::fs::DirBuilder::new().mode(0o700).create(&scratch) {
+            Ok(()) => return Ok(scratch),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => {
+                return Err(format!(
+                    "cannot create {}: {err}\nrollout keeps the keys of a run there. TMPDIR names the directory it is made in.",
+                    scratch.display()
+                ))
+            }
+        }
+    }
+    Err(format!(
+        "{} to {} are all there already\nrollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.",
+        named(0).display(),
+        named(SCRATCH_NAMES - 1).display()
+    ))
+}
+
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
     // Before any machine is asked: without its files a machine would be
     // erased and installed from the template alone.
@@ -584,28 +612,16 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
             files.display()
         ));
     }
-    let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
-    // ssh and Nix split their options at spaces, and files in here are named in them.
+    let temp = std::env::temp_dir();
+    // ssh and Nix split their options at spaces, and files under it are named in them.
     let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
-    if scratch.to_string_lossy().contains(splits) {
+    if temp.to_string_lossy().contains(splits) {
         return Err(format!(
             "The temporary directory {} has a space, a quote or a backslash in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
-            std::env::temp_dir().display()
+            temp.display()
         ));
     }
-    // Made here, for this user alone: one that is there may be another user's,
-    // with links that lead the writes of this run elsewhere.
-    let made = std::fs::DirBuilder::new().mode(0o700).create(&scratch);
-    made.map_err(|err| match err.kind() {
-        std::io::ErrorKind::AlreadyExists => format!(
-            "{} is there already\nrollout keeps the keys of a run in a directory it makes itself. Remove that one, or set TMPDIR to another directory.",
-            scratch.display()
-        ),
-        _ => format!(
-            "cannot create {}: {err}\nrollout keeps the keys of a run there. TMPDIR names the directory it is made in.",
-            scratch.display()
-        ),
-    })?;
+    let scratch = make_scratch(&temp)?;
     let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     result
