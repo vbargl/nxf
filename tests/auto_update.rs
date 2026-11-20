@@ -335,3 +335,32 @@ fn keeps_the_sources() {
     versions.sort();
     assert_eq!(versions, ["1", "2"]);
 }
+
+/// A run that fails before any task ran, such as a checkout whose strategies
+/// cannot be read, is a failed update like any other: it is saved for
+/// status, the failure hook runs with it, and the command fails with the cause.
+#[test]
+fn undecided_run_is_saved() {
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let seen = fx.dir.join("seen.json");
+    common::write_script(
+        &hooks.join("failure"),
+        &format!("#!/bin/sh\ncp \"$NXF_RESULTS\" '{}'\n", seen.display()),
+    );
+    fx.set("NXF_HOOKS_DIR", &hooks);
+    strategies(&fx, "{ inputs.a = \"sometimes\"; }");
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stderr, "✗ unknown update strategy 'sometimes'");
+    let report = saved(&fx);
+    assert_eq!(outcomes(&report), [pair("update", "failed")]);
+    assert_contains(
+        report["results"][0]["detail"].as_str().unwrap(),
+        "unknown update strategy 'sometimes'",
+    );
+    let seen: Value = serde_json::from_str(&std::fs::read_to_string(&seen).unwrap()).unwrap();
+    assert_eq!(seen["results"], report["results"]);
+    assert_contains(&fx.run(&["status"]).stdout, "  ✗ update    unknown update");
+}

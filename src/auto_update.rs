@@ -121,7 +121,14 @@ fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
 
 /// Runs one update and returns whether every task succeeded.
 pub fn run(state: &Path) -> Result<bool, String> {
-    let mut results = decide()?;
+    // A run that could not go on failed too: it is saved, and the hook runs.
+    let (mut results, error) = match decide() {
+        Ok(results) => (results, None),
+        Err(error) => {
+            let failed = outcome("update", "failed", error.replace('\n', " | "));
+            (vec![failed], Some(error))
+        }
+    };
     let saved = save(state, &results)?;
     // The hook reads the saved results; when it fails, that is a result too.
     if results
@@ -132,6 +139,12 @@ pub fn run(state: &Path) -> Result<bool, String> {
             results.push(outcome("hook", "failed", failed));
             save(state, &results)?;
         }
+    }
+    if let Some(mut error) = error {
+        if let Some(hook) = results.iter().find(|result| result.task == "hook") {
+            error.push_str(&format!("\nThe failure hook failed too: {}", hook.detail));
+        }
+        return Err(error);
     }
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
     let rows = status::result_rows(&list);
