@@ -1,7 +1,7 @@
 //! Commands against the machines of a hosts file. nxf runs itself on each
 //! machine over ssh and reports one row for each; it knows a list of SSH
 //! destinations and nothing about what the machines form together. The
-//! upgrade is the one of these that changes machines, and it goes in waves.
+//! upgrade goes in waves: the first machine alone, then a batch at a time.
 
 use std::path::Path;
 use std::time::{Duration, Instant};

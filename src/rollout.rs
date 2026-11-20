@@ -158,6 +158,7 @@ fn wait_for(link: &Link, expected: impl Fn(&Found) -> bool, what: &str) -> Resul
         let probe = probe(link);
         if expected(&probe.found) {
             return Ok(());
+        // Sleeps first: just after the restart the system that was there still answers.
         }
         if Instant::now() >= deadline {
             return Err(format!(

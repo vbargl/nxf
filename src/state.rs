@@ -28,7 +28,8 @@ pub fn share_with_group(dir: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     let shared = std::fs::metadata(dir).is_ok_and(|meta| meta.permissions().mode() & 0o020 != 0);
     if shared {
-        // The mask of the process is shared by its threads; this runs before the first.
+        // SAFETY: umask takes a number and cannot fail. The mask belongs to the
+        // process, so this must run before any thread is started.
         unsafe { libc::umask(0o002) };
     }
     shared
@@ -57,6 +58,7 @@ pub fn updater_dir() -> PathBuf {
 pub fn writable_directory(path: &Path) -> bool {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
+    // SAFETY: the path is a C string that lives through the call.
     path.is_dir()
         && CString::new(path.as_os_str().as_bytes())
             .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK | libc::X_OK) == 0 })

@@ -214,7 +214,7 @@ struct Stopped {
     build: bool,
 }
 
-/// The cause in a tool's error, and the exit status line that led it.
+/// The cause in a tool's error, and the line of its exit status that leads it.
 fn cause(error: &str) -> (Vec<&str>, Option<&str>) {
     let mut lines: Vec<&str> = error.lines().collect();
     let exit = lines
@@ -603,7 +603,8 @@ impl Outcome {
     }
 }
 
-/// What a failed task said, without its styling and recovery hint.
+/// What a failed task said, without its styling and recovery hint. It reads
+/// the texts that `stopped` prints, and stops at the first of its hints.
 fn diagnostics(stderr: &str) -> String {
     strip_ansi(stderr)
         .lines()

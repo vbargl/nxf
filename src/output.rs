@@ -370,6 +370,7 @@ fn columns() -> usize {
         80
     }
 }
+    // SAFETY: winsize is plain numbers, and TIOCGWINSZ fills the one it is given.
 
 /// Redraws the two reserved rows, erasing each in full.
 fn redraw(snapshot: &[String], repaint: bool) {

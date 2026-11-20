@@ -1,6 +1,6 @@
-//! The unattended update the timer starts. The tasks do every operation and
-//! report their results; this only decides what comes next, and saves the
-//! results for `nxf status`.
+//! The unattended update the timer starts. It decides which task comes next,
+//! checks the health of the system it switched to and returns to the one before
+//! when that fails, and saves the results for `nxf status`.
 
 use std::path::{Path, PathBuf};
 

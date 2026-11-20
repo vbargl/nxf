@@ -35,6 +35,7 @@ fn on_path(tool: &str) -> bool {
 }
 
 fn writable(path: &Path) -> bool {
+    // SAFETY: the path is a C string that lives through the call.
     CString::new(path.as_os_str().as_bytes())
         .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
 }

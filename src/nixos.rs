@@ -40,7 +40,7 @@ pub fn reboot_required() -> bool {
     })
 }
 
-/// The host name nh selects the configuration by.
+/// The name of this machine, shown as the context of a run.
 pub fn hostname() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .map(|name| name.trim().to_string())
@@ -48,6 +48,7 @@ pub fn hostname() -> String {
 }
 
 pub fn is_root() -> bool {
+    // SAFETY: geteuid takes no argument and cannot fail.
     unsafe { libc::geteuid() == 0 }
 }
 
@@ -58,6 +59,8 @@ fn nh(action: &str, installable: &[&str]) -> Result<PathBuf, String> {
         .map_err(|err| format!("cannot create {}: {err}", state.display()))?;
     let result = state.join("result");
     let mut nh = Command::new("nh");
+    // nxf shows the progress and the package changes itself, from the JSON log
+    // of Nix; the out-link is what the build leaves for the activation.
     nh.args(["os", action])
         .args(installable)
         .args(["--no-nom", "--diff", "never", "--quiet"])
