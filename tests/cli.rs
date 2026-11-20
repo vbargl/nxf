@@ -213,7 +213,7 @@ fn group_sharing() {
     );
     let hosts = fx.dir.join("hosts.toml");
     std::fs::write(&hosts, "[hosts.node.ssh]\naddress = \"node.test\"\n").unwrap();
-    fx.set("NXF_FLAKE", &fx.checkout.clone());
+    fx.set("NXF_FLAKE", fx.checkout.clone());
     run(&fx, &["release", "--config", hosts.to_str().unwrap()]);
     assert_eq!(std::fs::read_to_string(log).unwrap(), "0022\n");
 }
