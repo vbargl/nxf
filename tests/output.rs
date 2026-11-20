@@ -273,3 +273,11 @@ fn revision() {
     assert_eq!(output::revision("unknown"), "unknown");
     assert_eq!(output::revision("ééééééééééééé"), "éééééééééééé");
 }
+
+/// Machines are counted in the singular for one.
+#[test]
+fn machines() {
+    assert_eq!(output::machines(0), "0 machines");
+    assert_eq!(output::machines(1), "1 machine");
+    assert_eq!(output::machines(3), "3 machines");
+}

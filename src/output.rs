@@ -143,6 +143,15 @@ pub fn line_err(text: &str) {
 /// The width of the label column that facts share.
 pub const LABEL: usize = 10;
 
+/// A count of machines, as the outcomes say it.
+pub fn machines(count: usize) -> String {
+    if count == 1 {
+        "1 machine".to_string()
+    } else {
+        format!("{count} machines")
+    }
+}
+
 /// How many characters of a revision are shown.
 pub const REVISION: usize = 12;
 

@@ -17,11 +17,11 @@ use crate::{process, time};
 
 /// What a machine answered. No code means that ssh did not end within the limit.
 struct Reply {
-    pub host: Host,
-    pub code: Option<i32>,
-    pub limit: Duration,
-    pub stdout: String,
-    pub stderr: String,
+    host: Host,
+    code: Option<i32>,
+    limit: Duration,
+    stdout: String,
+    stderr: String,
 }
 
 impl Reply {
@@ -102,16 +102,12 @@ fn run_for(hosts: &[Host], args: &[String], timeout: Duration) -> Vec<Reply> {
     })
 }
 
-fn machines(count: usize) -> String {
-    if count == 1 {
-        "1 machine".to_string()
-    } else {
-        format!("{count} machines")
-    }
-}
-
 fn header(file: &Path, hosts: &[Host]) -> usize {
-    output::context(&format!("{} · {}", file.display(), machines(hosts.len())));
+    output::context(&format!(
+        "{} · {}",
+        file.display(),
+        output::machines(hosts.len())
+    ));
     output::line("");
     output::widened(hosts.iter().map(|host| host.name.as_str()))
 }
@@ -217,17 +213,20 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
     }
     let total = hosts.len();
     if silent > 0 {
-        output::failure(&format!("{silent} of {} gave no status", machines(total)));
+        output::failure(&format!(
+            "{silent} of {} gave no status",
+            output::machines(total)
+        ));
         if attentive > 0 {
-            output::effect_err(&format!("{} need attention.", machines(attentive)));
+            output::effect_err(&format!("{} need attention.", output::machines(attentive)));
         }
     } else if attentive > 0 {
         output::caution(&format!(
             "{attentive} of {} need attention",
-            machines(total)
+            output::machines(total)
         ));
     } else {
-        output::success(&format!("{} up to date", machines(total)));
+        output::success(&format!("{} up to date", output::machines(total)));
     }
     Ok(silent == 0)
 }
@@ -256,9 +255,12 @@ pub fn each(file: &Path, args: &[&str], done: &str, failed: &str) -> Result<bool
     }
     let total = hosts.len();
     if failures > 0 {
-        output::failure(&format!("{failed} on {failures} of {}", machines(total)));
+        output::failure(&format!(
+            "{failed} on {failures} of {}",
+            output::machines(total)
+        ));
     } else {
-        output::success(&format!("{done} on {}", machines(total)));
+        output::success(&format!("{done} on {}", output::machines(total)));
     }
     Ok(failures == 0)
 }
@@ -392,13 +394,13 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
     }
     let total = hosts.len();
     if failed.is_empty() {
-        output::success(&format!("{} upgraded", machines(total)));
+        output::success(&format!("{} upgraded", output::machines(total)));
         return true;
     }
     output::failure(&format!(
         "Upgrade failed on {} of {}",
         failed.len(),
-        machines(total)
+        output::machines(total)
     ));
     if !untouched.is_empty() {
         output::effect_err(&format!(

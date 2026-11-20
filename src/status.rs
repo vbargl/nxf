@@ -170,10 +170,10 @@ fn update_summary() {
         output::row(
             Mark::Failed,
             &format!(
-                "{:<LABEL$}{}",
+                "{:<width$}{}",
                 "service",
                 failure["result"].as_str().unwrap_or("failed"),
-                LABEL = output::LABEL
+                width = output::LABEL
             ),
         );
         output::command(&format!(

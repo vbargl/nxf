@@ -67,7 +67,6 @@ echo "nxf-probe managed=$managed installer=$installer uid=$(id -u 2>/dev/null ||
 echo "nxf-os $os"
 "#;
 
-/// The script of the probe.
 pub fn probe_script() -> String {
     let record = Path::new(state::UPDATER).join(state::INSTALLED);
     PROBE.replace("{record}", &record.to_string_lossy())
@@ -420,21 +419,13 @@ fn remember(file: &Path, host: &Host, key: &str) -> Result<(), String> {
         .map_err(|err| format!("cannot write {}: {err}", file.display()))
 }
 
-fn machines(count: usize) -> String {
-    if count == 1 {
-        "1 machine".to_string()
-    } else {
-        format!("{count} machines")
-    }
-}
-
 /// The outcome when machines were left out: how many of all, and which of
 /// them were not installed. The silent ones have their rows in the plan.
 fn not_rolled_out(failed: &[&str], silent: usize, all: usize) {
     output::failure(&format!(
         "{} of {} not rolled out",
         failed.len() + silent,
-        machines(all)
+        output::machines(all)
     ));
     if !failed.is_empty() {
         output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
@@ -537,7 +528,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     output::context(&format!(
         "{} · {}",
         options.file.display(),
-        machines(hosts.len())
+        output::machines(hosts.len())
     ));
     output::line("");
     let width = output::widened(hosts.iter().map(|host| host.name.as_str()));
@@ -579,11 +570,14 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         if silent > 0 {
             output::failure(&format!(
                 "{silent} of {} gave no answer",
-                machines(hosts.len())
+                output::machines(hosts.len())
             ));
             return Ok(false);
         }
-        output::success(&format!("{} installed by nxf", machines(hosts.len())));
+        output::success(&format!(
+            "{} installed by nxf",
+            output::machines(hosts.len())
+        ));
         return Ok(true);
     }
 
@@ -594,7 +588,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     if !options.yes && !std::io::stdin().is_terminal() {
         output::failure(&format!(
             "{} would be erased; nothing was changed",
-            machines(to_install.len())
+            output::machines(to_install.len())
         ));
         output::effect_err(&format!(
             "Add --yes to erase and install {}.",
@@ -664,10 +658,10 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     } else if !unwritten.is_empty() {
         output::failure(&format!(
             "{} installed, but not every host key was written",
-            machines(installed.len())
+            output::machines(installed.len())
         ));
     } else {
-        output::success(&format!("{} installed", machines(installed.len())));
+        output::success(&format!("{} installed", output::machines(installed.len())));
     }
     if let (Some(file), false) = (&options.known_hosts, unwritten.is_empty()) {
         output::effect_err(&format!(

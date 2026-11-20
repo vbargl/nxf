@@ -127,10 +127,9 @@ impl Link {
     }
 }
 
-/// Quotes a word for the remote login shell, which is not always POSIX: a
-/// plain word stays bare, single quotes hold anything without a single quote,
-/// and double quotes hold a single quote when nothing in the word is special
-/// inside them. These three forms mean the same to sh, fish and Nushell.
+/// Quotes a word for the remote login shell, which is not always POSIX: bare,
+/// in single quotes, or in double quotes when it holds a single quote and
+/// nothing special. These forms mean the same to sh, fish and Nushell.
 pub fn quoted(word: &str) -> String {
     let bare = !word.is_empty()
         && word

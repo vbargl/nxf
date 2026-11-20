@@ -36,7 +36,6 @@ pub fn cannot_run(command: &Command, err: impl std::fmt::Display) -> String {
     )
 }
 
-/// The last `TAIL` lines of a text that are not empty.
 pub fn tail(text: &str) -> String {
     let lines: Vec<&str> = text
         .lines()
@@ -223,8 +222,7 @@ pub fn run_within(
 
 /// Runs a script of the configuration until the deadline, with the variables
 /// added to its environment. The error says why it did not pass, and is none
-/// when the deadline cut it short: what a script says itself is never taken
-/// for that.
+/// when the deadline cut it short, whatever the script said.
 pub fn script(
     path: &Path,
     deadline: Instant,
