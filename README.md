@@ -375,10 +375,11 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
    does not read them. What the template's `.gitignore` names stays out of
    the repository. A `<dir>` that is not a directory fails the command
    before anything is written.
-5. `nxf.nix` is added: a module file that enables automatic updates and shows
-   every option of the nxf module commented out with its default. It comes
-   from the nxf version that runs init. A template that brings its own
-   `nxf.nix` keeps it.
+5. `nxf.nix` is added: a module file that sets
+   `services.nxf.autoUpdate.enable` and shows `services.nxf.flake` and the
+   other options of `services.nxf.autoUpdate`, each commented out with its
+   default. It comes from the nxf version that runs init. A template that
+   brings its own `nxf.nix` keeps it.
 6. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
    identity gets `nxf`, without an e-mail, as its own.
