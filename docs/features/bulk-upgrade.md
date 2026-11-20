@@ -33,7 +33,7 @@ Boundaries:
   [Bulk Install](bulk-install.md). The install options (`--template`,
   `--files`, `--yes`, `--kexec-url`, `--known-hosts`) are refused together
   with `--upgrade`, and inputs and `--batch` are refused without it.
-- It does not reboot machines and does not wait for them.
+- It does not restart machines and does not wait for them.
 - It keeps no record of an earlier run. A second run asks every machine
   again, from the first.
 - The SSH user must be able to work with the flake and to switch: root, or a
@@ -61,19 +61,26 @@ Boundaries:
 nxf on both sides and the mock nh. In the fixtures the machines share one
 checkout, so only the first one finds the new revision.
 
-- U1: `tests/fleet.rs::upgrade`.
+- U1: `tests/fleet.rs::upgrade`. It asserts the order in which the machines
+  are asked, not that no two run at once, and the rows of the first two
+  machines, not of the third.
 - U2: `tests/fleet.rs::upgrade_stops`.
 - U3: `tests/fleet.rs::upgrade_unreachable`. It does not assert the outcome.
-- U4 and U5: `tests/fleet.rs::upgrade_batch`.
-- U6: `tests/fleet.rs::upgrade_refused` asserts that the exit status is not
-  0 and that ssh was not called, not which status or text.
-- U7: `tests/fleet.rs::upgrade_unknown_input`.
+- U4: `tests/fleet.rs::upgrade_batch`.
+- U5: `tests/fleet.rs::upgrade_batch`.
+- U6: `tests/fleet.rs::upgrade_refused` asserts the text of each refusal,
+  that the exit status is not 0 and that ssh was not called, not which exit
+  status. `tests/cli.rs::refusals_have_the_shape_of_failures` asserts the
+  exit status 2 of what clap refuses, for `nxf rollout` without `--config`.
+- U7: `tests/fleet.rs::upgrade_unknown_input`. It asserts the row
+  `not started` of the second machine, not of the third.
 - U8: no automated test covers it. `tests/fleet.rs::upgrade` covers the row
   `no input changed, switched`.
 - U9: `tests/fleet.rs::upgrade_timeout`, with a limit of 1 second and the
-  row `timed out after 1 second`. It does not assert the outcome.
+  row `timed out after 1 second`. It asserts the row `not started` of the
+  second machine, not of the third, and not the outcome.
 - `tests/fleet.rs::waves` covers the order of the waves, and
-  `tests/hosts.rs::toml` that hosts come in the order of their names. No
+  `tests/hosts.rs::toml` that machines come in the order of their names. No
   test has two names whose byte order differs from their numeric order.
 
 U1 to U5 and U7 were also run by hand against three Incus NixOS VMs, each
