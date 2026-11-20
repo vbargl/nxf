@@ -481,10 +481,12 @@ and waits until the new system answers with the host key the installation
 made. It waits up to `NXF_ROLLOUT_WAIT` seconds, 600 by default, for the
 installer to answer, and as long again for the new system; a machine that
 takes longer counts as failed and is named under `Not installed`. The flake
-never exists on your computer. `--files <dir>` gives each
-machine the content of `<dir>/<name>/`, laid over the template. A `<dir>`
-that is not a directory is refused before any machine is asked. A machine
-without `<dir>/<name>/` gets the template alone.
+never exists on your computer. `--files <dir>` gives each machine the
+content of `<dir>/<name>/`, laid over the template. The upload fails the
+machine unless both tar and ssh end well: its row is `Sending the machine's
+files failed`, and it is named under `Not installed`. A `<dir>` that is not a
+directory is refused before any machine is asked. A machine without
+`<dir>/<name>/` gets the template alone.
 
 The outcome lists the host key of every installed machine as a `known_hosts`
 line; `--known-hosts <file>` writes them into that file, replacing the key of
