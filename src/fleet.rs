@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark, Style};
 use crate::text::plain;
@@ -74,17 +75,8 @@ pub fn quoted(word: &str) -> String {
     }
 }
 
-fn seconds(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
 fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
-    let program = std::env::var_os("NXF_SSH")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "ssh".into());
+    let program = env::path(env::SSH, "ssh");
     let remote = std::iter::once("nxf".to_string())
         .chain(args.iter().map(|arg| quoted(arg)))
         .collect::<Vec<_>>()
@@ -92,7 +84,10 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
     let mut ssh = Command::new(program);
     ssh.args(["-o", "BatchMode=yes"]).args([
         "-o",
-        &format!("ConnectTimeout={}", seconds("NXF_SSH_CONNECT_TIMEOUT", 10)),
+        &format!(
+            "ConnectTimeout={}",
+            env::seconds(env::SSH_CONNECT_TIMEOUT, 10).as_secs()
+        ),
     ]);
     if let Some(port) = host.port {
         ssh.args(["-p", &port.to_string()]);
@@ -147,7 +142,7 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
 /// Runs nxf with the arguments on every host at once; replies come back in
 /// the order of the hosts.
 pub fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
-    let timeout = Duration::from_secs(seconds("NXF_SSH_TIMEOUT", 120));
+    let timeout = env::seconds(env::SSH_TIMEOUT, 120);
     run_for(hosts, args, timeout)
 }
 
@@ -412,7 +407,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
 pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> bool {
     let mut args = vec!["--json".to_string(), "upgrade".to_string()];
     args.extend(inputs.iter().cloned());
-    let timeout = Duration::from_secs(seconds("NXF_UPGRADE_TIMEOUT", 3 * 3600));
+    let timeout = env::seconds(env::UPGRADE_TIMEOUT, 3 * 3600);
     let width = header(file, hosts);
     let mut failed = Vec::new();
     let mut reached = hosts.len();

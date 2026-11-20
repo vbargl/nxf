@@ -8,7 +8,7 @@ use std::process::{Command, Stdio};
 use serde_json::json;
 
 use crate::output::{self, Mark};
-use crate::{flake, git, hold, nixos};
+use crate::{env, flake, git, hold, nixos};
 
 /// The mark of a machine that nxf installed. `nxf rollout` leaves such a
 /// machine alone.
@@ -21,15 +21,9 @@ pub struct Options {
     pub reboot: bool,
 }
 
-fn var(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
 /// Where the new system is mounted. NXF_INSTALL_ROOT stands in for it in tests.
 fn target() -> PathBuf {
-    var("NXF_INSTALL_ROOT").unwrap_or_else(|| PathBuf::from("/mnt"))
+    env::path(env::INSTALL_ROOT, "/mnt")
 }
 
 /// Whether the root of the mounts that /proc/mounts lists is in memory. The
@@ -47,7 +41,7 @@ pub fn root_in_memory(mounts: &str) -> bool {
 /// that runs from a disk would be erased under itself. NXF_INSTALLER (yes or
 /// no) stands in for the answer in tests.
 pub fn installer() -> bool {
-    if let Ok(answer) = std::env::var("NXF_INSTALLER") {
+    if let Some(answer) = env::text(env::INSTALLER) {
         return answer == "yes";
     }
     std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| root_in_memory(&mounts))
@@ -71,7 +65,7 @@ fn run(command: &mut Command, what: &str) -> Result<(), String> {
 /// The script of the configuration's disko layout that erases, formats and
 /// mounts the disks. NXF_DISKO stands in for it in tests.
 fn disko(dir: &Path, configuration: &str) -> Result<PathBuf, String> {
-    if let Some(script) = var("NXF_DISKO") {
+    if let Some(script) = env::var(env::DISKO) {
         return Ok(script);
     }
     let built = Command::new("nix")
@@ -165,7 +159,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
     let root = target();
-    let stands_in = var("NXF_INSTALL_ROOT").is_some();
+    let stands_in = env::var(env::INSTALL_ROOT).is_some();
     if !dir.join("flake.nix").exists() {
         return Err(format!(
             "{} has no flake.nix\nFound a machine flake first: nxf init <dir> --template <flake>#<name>",

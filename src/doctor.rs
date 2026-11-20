@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
 use crate::status::system_commit;
-use crate::{flake, git, nixos, output};
+use crate::{env, flake, git, nixos, output};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -30,7 +30,7 @@ pub fn check(level: Level, name: &'static str, message: String) -> Check {
 }
 
 fn on_path(tool: &str) -> bool {
-    std::env::var_os("PATH")
+    env::var(env::PATH)
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
 }
 
@@ -40,7 +40,7 @@ fn writable(path: &Path) -> bool {
 }
 
 fn user() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "you".to_string())
+    env::text(env::USER).unwrap_or_else(|| "you".to_string())
 }
 
 pub fn tools() -> Check {

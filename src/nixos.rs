@@ -8,16 +8,10 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::output;
+use crate::{env, output};
 
 pub const UPDATE_SERVICE: &str = "nxf-auto-update.service";
 pub const DEFAULT_UPDATER_STATE: &str = "/var/lib/nxf";
-
-fn var(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
 
 fn expand(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -25,12 +19,12 @@ fn expand(path: &Path) -> PathBuf {
 
 /// The running system. NXF_SYSTEM stands in for it in tests.
 pub fn running() -> PathBuf {
-    expand(&var("NXF_SYSTEM").unwrap_or_else(|| PathBuf::from("/run/current-system")))
+    expand(&env::path(env::SYSTEM, "/run/current-system"))
 }
 
 /// The system the machine booted. NXF_BOOTED stands in for it in tests.
 pub fn booted() -> PathBuf {
-    var("NXF_BOOTED").unwrap_or_else(|| PathBuf::from("/run/booted-system"))
+    env::path(env::BOOTED, "/run/booted-system")
 }
 
 /// Whether the running system has another kernel, initrd or kernel modules
@@ -73,16 +67,16 @@ pub fn share_with_group(dir: &Path) -> bool {
 
 /// Per-user state: result links, source roots, fallback records and read markers.
 pub fn state_dir() -> PathBuf {
-    var("NXF_STATE").unwrap_or_else(|| {
-        var("XDG_STATE_HOME")
-            .unwrap_or_else(|| var("HOME").unwrap_or_default().join(".local/state"))
+    env::var(env::STATE).unwrap_or_else(|| {
+        env::var(env::XDG_STATE_HOME)
+            .unwrap_or_else(|| env::var(env::HOME).unwrap_or_default().join(".local/state"))
             .join("nxf")
     })
 }
 
 /// The automatic updater's state. NXF_UPDATER_STATE stands in for it in tests.
 pub fn updater_dir() -> PathBuf {
-    var("NXF_UPDATER_STATE").unwrap_or_else(|| PathBuf::from(DEFAULT_UPDATER_STATE))
+    env::path(env::UPDATER_STATE, DEFAULT_UPDATER_STATE)
 }
 
 /// Whether this process can create and replace entries in a directory.
@@ -272,7 +266,7 @@ fn saved_update() -> Result<Option<Value>, String> {
 
 /// The command of systemd. NXF_SYSTEMCTL stands in for it in tests.
 pub fn systemctl() -> PathBuf {
-    var("NXF_SYSTEMCTL").unwrap_or_else(|| PathBuf::from("systemctl"))
+    env::path(env::SYSTEMCTL, "systemctl")
 }
 
 /// How and when the update service last ended, if it did not succeed.

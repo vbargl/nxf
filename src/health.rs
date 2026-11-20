@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use crate::env;
 use crate::text::plain;
 
 pub const DEFAULT_DIR: &str = "/etc/nxf/health.d";
@@ -25,9 +26,7 @@ pub enum Health {
 }
 
 fn dir() -> PathBuf {
-    std::env::var_os("NXF_HEALTH_DIR")
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from)
+    env::path(env::HEALTH_DIR, DEFAULT_DIR)
 }
 
 /// A time in seconds from the `name=seconds` lines of the file beside the
@@ -39,16 +38,6 @@ fn time(name: &str, default: u64) -> Duration {
         (key.trim() == name).then(|| value.trim().parse().ok())?
     });
     Duration::from_secs(value.unwrap_or(default))
-}
-
-/// Seconds from a variable of the environment.
-pub fn seconds(name: &str, default: u64) -> Duration {
-    Duration::from_secs(
-        std::env::var(name)
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(default),
-    )
 }
 
 /// The checks in name order. They are read again on every round, because a

@@ -5,8 +5,8 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::progress;
 use crate::text::{fit, strip_ansi};
+use crate::{env, progress};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -80,23 +80,19 @@ fn capturing() -> bool {
     screen().captured.is_some()
 }
 
-fn set(name: &str) -> Option<String> {
-    std::env::var(name).ok()
-}
-
 fn plain_requested() -> bool {
-    std::env::var_os("NO_COLOR").is_some() || set("CLICOLOR").as_deref() == Some("0")
+    env::is_set(env::NO_COLOR) || env::text(env::CLICOLOR).as_deref() == Some("0")
 }
 
 fn capable_terminal() -> bool {
-    std::io::stdout().is_terminal() && set("TERM").as_deref() != Some("dumb")
+    std::io::stdout().is_terminal() && env::text(env::TERM).as_deref() != Some("dumb")
 }
 
 fn colored() -> bool {
     if capturing() || plain_requested() {
         return false;
     }
-    match set("CLICOLOR_FORCE").as_deref() {
+    match env::text(env::CLICOLOR_FORCE).as_deref() {
         Some(force) if !force.is_empty() && force != "0" => true,
         _ => capable_terminal(),
     }

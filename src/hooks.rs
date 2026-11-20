@@ -6,24 +6,21 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::health;
+use crate::{env, health};
 
 pub const DEFAULT_DIR: &str = "/etc/nxf/hooks";
 
 /// The hook of that name, when the configuration has one. NXF_HOOKS_DIR
 /// stands in for the directory in tests.
 fn hook(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("NXF_HOOKS_DIR")
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| PathBuf::from(DEFAULT_DIR), PathBuf::from)
-        .join(name);
+    let path = env::path(env::HOOKS_DIR, DEFAULT_DIR).join(name);
     std::fs::metadata(&path)
         .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
         .then_some(path)
 }
 
 fn run(hook: &Path, variables: &[(&str, &Path)]) -> Option<String> {
-    let deadline = Instant::now() + health::seconds("NXF_HOOK_TIMEOUT", 60);
+    let deadline = Instant::now() + env::seconds(env::HOOK_TIMEOUT, 60);
     health::passes(hook, deadline, variables).err()
 }
 
@@ -35,5 +32,5 @@ pub fn refused() -> Option<String> {
 /// Runs the failure hook with the saved results in NXF_RESULTS, and returns
 /// what it said when it failed itself.
 pub fn failure(results: &Path) -> Option<String> {
-    run(&hook("failure")?, &[("NXF_RESULTS", results)])
+    run(&hook("failure")?, &[(env::RESULTS, results)])
 }

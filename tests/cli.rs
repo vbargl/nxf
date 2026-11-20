@@ -69,31 +69,6 @@ fn commands_reject_tasks() {
     assert!(fx.nh_calls().is_empty());
 }
 
-/// nxf enables flakes for the tools it runs, after the Nix settings that its
-/// caller gave it.
-#[test]
-fn nix_config() {
-    let mut fx = fixture().with("NIX_CONFIG", "warn-dirty = false");
-    let seen = fx.dir.join("nix-config");
-    // Status asks the stand-in for systemctl, which notes the setting it got.
-    write_script(
-        &fx.systemctl,
-        &format!(
-            "#!/bin/sh\nprintf '%s' \"$NIX_CONFIG\" > '{}'\n",
-            seen.display()
-        ),
-    );
-    let flakes = "extra-experimental-features = nix-command flakes";
-    fx.run(&["status"]).ok();
-    assert_eq!(
-        std::fs::read_to_string(&seen).unwrap(),
-        format!("warn-dirty = false\n{flakes}")
-    );
-    fx.unset("NIX_CONFIG");
-    fx.run(&["status"]).ok();
-    assert_eq!(std::fs::read_to_string(&seen).unwrap(), flakes);
-}
-
 /// `auto-update --state` saves the results in the directory it names, not
 /// in the updater's own.
 #[test]

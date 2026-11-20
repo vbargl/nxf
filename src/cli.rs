@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, flake, fleet, hold, hosts, init, install, nixos, output, rollout, status,
-    tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, nixos, output, rollout,
+    status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -427,18 +427,8 @@ fn run_command(command: Cmd) -> Result<bool, String> {
     }
 }
 
-/// nxf works with flakes, whether or not the machine enables them for people.
-fn enable_flakes() {
-    let extra = "extra-experimental-features = nix-command flakes";
-    let config = match std::env::var("NIX_CONFIG") {
-        Ok(config) if !config.is_empty() => format!("{config}\n{extra}"),
-        _ => extra.to_string(),
-    };
-    std::env::set_var("NIX_CONFIG", config);
-}
-
 pub fn main() -> ExitCode {
-    enable_flakes();
+    env::enable_flakes();
     nixos::share_with_group(&flake::location().dir);
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.

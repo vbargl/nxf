@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::env;
 use crate::fleet::quoted;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
@@ -93,13 +94,6 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
     })
 }
 
-fn seconds(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
 /// How ssh checks the machine's host key.
 #[derive(Clone)]
 enum Trust {
@@ -112,8 +106,7 @@ enum Trust {
 
 /// The known_hosts file of the user, which every link trusts before the installation.
 fn user_known_hosts() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(format!("{home}/.ssh/known_hosts").into())
+    Some(env::var(env::HOME)?.join(".ssh/known_hosts"))
 }
 
 /// The keys of a known_hosts file as ssh reads them, as bytes; none when the
@@ -158,7 +151,10 @@ impl Link {
             "-o".to_string(),
             "BatchMode=yes".to_string(),
             "-o".to_string(),
-            format!("ConnectTimeout={}", seconds("NXF_SSH_CONNECT_TIMEOUT", 10)),
+            format!(
+                "ConnectTimeout={}",
+                env::seconds(env::SSH_CONNECT_TIMEOUT, 10).as_secs()
+            ),
         ];
         match &self.trust {
             Trust::First { .. } => options.extend([
@@ -183,10 +179,7 @@ impl Link {
     }
 
     fn ssh(&self, remote: &str) -> Command {
-        let program = std::env::var_os("NXF_SSH")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "ssh".into());
-        let mut ssh = Command::new(program);
+        let mut ssh = Command::new(env::path(env::SSH, "ssh"));
         ssh.args(self.options())
             .arg(self.host.destination())
             .arg(remote);
@@ -278,7 +271,7 @@ impl Link {
 
     /// Waits until the machine is what is expected.
     fn wait_for(&self, expected: impl Fn(&Found) -> bool, what: &str) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(seconds("NXF_ROLLOUT_WAIT", 600));
+        let deadline = Instant::now() + env::seconds(env::ROLLOUT_WAIT, 600);
         loop {
             std::thread::sleep(Duration::from_secs(5));
             let probe = self.probe();
@@ -298,8 +291,8 @@ impl Link {
 /// The package this nxf runs from, which is copied to the machines.
 /// NXF_PACKAGE stands in for it when nxf does not run from the store.
 fn package() -> Result<PathBuf, String> {
-    if let Some(package) = std::env::var_os("NXF_PACKAGE").filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(package));
+    if let Some(package) = env::var(env::PACKAGE) {
+        return Ok(package);
     }
     let exe = std::env::current_exe()
         .and_then(std::fs::canonicalize)

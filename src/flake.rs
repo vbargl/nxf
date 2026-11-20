@@ -5,7 +5,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::output;
+use crate::{env, output};
 
 pub const DEFAULT_CHECKOUT: &str = "/etc/nixos";
 
@@ -17,9 +17,9 @@ pub struct Location {
 
 /// Where the flake checkout is said to be, and what said so.
 pub fn location() -> Location {
-    match std::env::var_os("NXF_FLAKE").filter(|value| !value.is_empty()) {
+    match env::var(env::FLAKE) {
         Some(dir) => Location {
-            dir: std::path::absolute(&dir).unwrap_or_else(|_| PathBuf::from(dir)),
+            dir: std::path::absolute(&dir).unwrap_or(dir),
             source: "NXF_FLAKE",
         },
         None => Location {
