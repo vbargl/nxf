@@ -77,8 +77,20 @@ impl Ran {
     }
 }
 
+/// Removes the caller's `GIT_*` variables from a command. They say where and
+/// as whom Git works: with the `GIT_DIR` of a hook, the commits of a fixture
+/// would land in the developer's repository.
+fn forget_git(command: &mut Command) -> &mut Command {
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command
+}
+
 pub fn sh(program: &str, args: &[&str]) -> String {
-    let output = Command::new(program)
+    let output = forget_git(&mut Command::new(program))
         .args(args)
         .envs(GIT_ENV)
         .stdin(Stdio::null())
@@ -145,6 +157,7 @@ pub struct Fixture {
     pub updater: PathBuf,
     pub systemctl: PathBuf,
     pub env: BTreeMap<String, String>,
+    unset: Vec<String>,
 }
 
 impl Drop for Fixture {
@@ -278,6 +291,7 @@ ln -sfn "${{NXF_TEST_BUILD:-{root}/system}}" "${{@: -1}}"
         updater,
         systemctl,
         env,
+        unset: Vec::new(),
     }
 }
 
@@ -293,17 +307,29 @@ impl Fixture {
             .insert(name.to_string(), value.as_ref().display().to_string());
     }
 
+    /// Takes a variable away from nxf, also when the caller has it.
     pub fn unset(&mut self, name: &str) {
         self.env.remove(name);
+        self.unset.push(name.to_string());
+    }
+
+    /// Sets the fixture's variables on a command, after it removed those of
+    /// the caller that would change what nxf or Git does, and the unset ones.
+    fn environment(&self, command: &mut Command) {
+        for name in INHERITED {
+            command.env_remove(name);
+        }
+        forget_git(command);
+        for name in &self.unset {
+            command.env_remove(name);
+        }
+        command.envs(&self.env);
     }
 
     pub fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(NXF);
         command.args(args).stdin(Stdio::null());
-        for name in INHERITED {
-            command.env_remove(name);
-        }
-        command.envs(&self.env);
+        self.environment(&mut command);
         command
     }
 
@@ -322,10 +348,7 @@ impl Fixture {
             ))
             .arg("/dev/null")
             .stdin(Stdio::null());
-        for name in INHERITED {
-            script.env_remove(name);
-        }
-        script.envs(&self.env);
+        self.environment(&mut script);
         script
     }
 
