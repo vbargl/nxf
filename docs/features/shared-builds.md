@@ -22,8 +22,10 @@ Metadata failures warn without failing a successful build, update or switch.
 
 Boundaries:
 
-- No task creates the shared directory: the module provisions it, and
-  `nxf install` creates it on the system it installs. Without it records
+- No task creates the shared directory for another user: the module
+  provisions it, and `nxf install` creates it on the system it installs. A
+  process whose own state is the updater's state, as the service's is,
+  creates `systems` there as its own. Without the shared directory records
   stay in per-user state.
 - Source roots, result links, read markers and Nix's fetcher cache keep their
   per-user locations.

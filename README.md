@@ -195,8 +195,8 @@ records. A build is recorded only if the tracked checkout still corresponds
 to what was built, including the lockfile built before an update commits it.
 
 Without a provisioned shared directory, records stay in `<state>/systems`.
-No task creates the shared directory: the module provisions it, and
-`nxf install` creates it on the system it installs. If shared publication
+Who creates the shared directory is in the boundaries of
+[Shared Builds](docs/features/shared-builds.md). If shared publication
 fails, nxf warns and tries the per-user location; record failures do not fail
 a successful build, update or activation. `nxf doctor` reports the destination
 and warns about an inaccessible shared directory, including group membership
