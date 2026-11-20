@@ -27,9 +27,10 @@
         shared-records = import ./nix/records-test.nix { inherit self pkgs; };
         # nix/nxf.nix is generated; `just generate` renews it.
         init-module =
-          pkgs.runCommand "nxf-init-module-check" { } "diff --unified ${./nix/nxf.nix} ${
-            self.packages.${pkgs.stdenv.hostPlatform.system}.initModule
-          } && touch $out";
+          pkgs.runCommand "nxf-init-module-check" { }
+            "diff --unified ${./nix/nxf.nix} ${
+              self.packages.${pkgs.stdenv.hostPlatform.system}.initModule
+            } && touch $out";
       });
 
       devShells = each (pkgs: {
@@ -45,6 +46,7 @@
             nh
             util-linux
             just
+            nixfmt
           ];
         };
       });
