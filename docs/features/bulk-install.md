@@ -115,7 +115,7 @@ Boundaries:
 | I19: The files are not a directory | `--files <dir>`, where `<dir>` is a file or does not exist | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is not a directory`; the exit status is 1 |
 | I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
-| I22: A directory of the first name is there before | A machine to install, and `<temporary directory>/nxf-rollout.<pid>.0` exists before the run with that process id starts | `rollout --yes` runs | `nix copy` is given a file in `<temporary directory>/nxf-rollout.<pid>.1`, a directory with the mode 700; `<temporary directory>/nxf-rollout.<pid>.0` is left as it was, and is the only directory left in the temporary directory; the exit status is 0 |
+| I22: A directory of the first name is there before | A machine to install, and `<temporary directory>/nxf-rollout.<pid>.0` with the mode 755, made by a `sh` that then starts rollout with `exec`, so that `<pid>` is the process id of rollout | `rollout --yes` runs | `nix copy` is given a file in `<temporary directory>/nxf-rollout.<pid>.1`, a directory with the mode 700; the directory of the run is removed; `<temporary directory>/nxf-rollout.<pid>.0` is left as it was; the exit status is 0 |
 | I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | No machine is asked; the outcome is `cannot read <file>: <cause>`, with `rollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.` beneath it; the exit status is 1 |
 
 ## Existing verification
@@ -193,8 +193,9 @@ not run.
 - I21: no automated test and no run by hand covers it.
 - I22: `tests/rollout.rs::scratch_is_its_own`, with a stand-in `nix` that tells
   the directory of the file it is given and its mode. The test makes the
-  directory as the same user with the mode 755, not as another user, and
-  asserts that it is empty and keeps its mode. No run by hand covers it.
+  directory as the same user, not as another user, and asserts that the
+  empty `TMPDIR` of the test holds only that directory afterwards, and that
+  it is empty and keeps its mode. No run by hand covers it.
   `tests/rollout.rs::scratch_names_run_out` covers that when the 100 names are
   all taken, no machine is asked, none of the directories is removed, the
   exit status is 1, and the outcome is
