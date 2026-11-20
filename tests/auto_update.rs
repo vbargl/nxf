@@ -27,6 +27,13 @@ fn pair(task: &str, outcome: &str) -> (String, String) {
     (task.to_string(), outcome.to_string())
 }
 
+fn failure_hook(fx: &mut Fixture, script: &str) {
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    common::write_script(&hooks.join("failure"), script);
+    fx.set("NXF_HOOKS_DIR", &hooks);
+}
+
 /// A new input revision is built, committed and switched to.
 #[test]
 fn updates_and_switches() {
@@ -332,14 +339,11 @@ fn keeps_the_sources() {
 #[test]
 fn undecided_run_is_saved() {
     let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
-    let hooks = fx.dir.join("hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
     let seen = fx.dir.join("seen.json");
-    common::write_script(
-        &hooks.join("failure"),
+    failure_hook(
+        &mut fx,
         &format!("#!/bin/sh\ncp \"$NXF_RESULTS\" '{}'\n", seen.display()),
     );
-    fx.set("NXF_HOOKS_DIR", &hooks);
     strategies(&fx, "{ inputs.a = \"sometimes\"; }");
     let result = fx.run(&["auto-update"]);
     assert_eq!(result.code, 1);
@@ -360,13 +364,7 @@ fn undecided_run_is_saved() {
 #[test]
 fn failing_hook_is_said() {
     let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
-    let hooks = fx.dir.join("hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    common::write_script(
-        &hooks.join("failure"),
-        "#!/bin/sh\necho 'the pager is down' >&2\nexit 1\n",
-    );
-    fx.set("NXF_HOOKS_DIR", &hooks);
+    failure_hook(&mut fx, "#!/bin/sh\necho 'the pager is down' >&2\nexit 1\n");
     strategies(&fx, "{ inputs.a = \"sometimes\"; }");
     let result = fx.run(&["auto-update"]);
     assert_eq!(result.code, 1);
@@ -443,13 +441,10 @@ fn unsaved_run_keeps_its_cause() {
     );
 
     // A failure hook that leaves a directory where the results are written next.
-    let hooks = fx.dir.join("hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    common::write_script(
-        &hooks.join("failure"),
+    failure_hook(
+        &mut fx,
         "#!/bin/sh\nmkdir \"$NXF_RESULTS.tmp\"\necho 'the pager is down'\nexit 1\n",
     );
-    fx.set("NXF_HOOKS_DIR", &hooks);
     let result = fx.run(&["auto-update"]);
     assert_eq!(result.code, 1);
     assert_contains(
