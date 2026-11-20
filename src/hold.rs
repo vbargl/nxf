@@ -96,6 +96,20 @@ pub fn duration(text: &str) -> Result<u64, String> {
         .ok_or_else(invalid)
 }
 
+/// The end of a hold from the options of the command: a time, a duration from
+/// now, or none. It lies in the future.
+pub fn end(until: Option<String>, duration: Option<String>) -> Result<Option<u64>, String> {
+    let end = match (until, duration) {
+        (Some(until), _) => Some(time(&until)?),
+        (None, Some(duration)) => Some(now() + self::duration(&duration)?),
+        (None, None) => None,
+    };
+    if end.is_some_and(|end| end <= now()) {
+        return Err("The hold would end in the past.".to_string());
+    }
+    Ok(end)
+}
+
 /// A point in time as `date --date` understands it, in the local time zone.
 pub fn time(text: &str) -> Result<u64, String> {
     let output = process::capture(Command::new("date").args(["--date", text, "+%s"]))?;

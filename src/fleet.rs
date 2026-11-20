@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::env;
-use crate::hosts::Host;
+use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
@@ -154,7 +154,8 @@ fn attention(status: &Value) -> Vec<String> {
 }
 
 /// The state of every machine: revision, last update, and what needs attention.
-pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
+pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
+    let hosts = &hosts::load(file)?;
     let replies = run(hosts, &["status".to_string(), "--json".to_string()]);
     let answers: Vec<(&Reply, Result<Value, String>)> = replies
         .iter()
@@ -180,7 +181,7 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
             })
             .collect();
         output::line(&serde_json::to_string_pretty(&all).unwrap_or_default());
-        return silent == 0;
+        return Ok(silent == 0);
     }
 
     let width = header(file, hosts);
@@ -231,13 +232,16 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
     } else {
         output::success(&format!("{} up to date", machines(total)));
     }
-    silent == 0
+    Ok(silent == 0)
 }
 
-/// Runs one command on every machine and reports what each said last.
-/// `done` names the outcome when all succeed, such as "Held".
-pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &str) -> bool {
-    let replies = run(hosts, args);
+/// Runs one command on every machine of the hosts file and reports what each
+/// said last. `done` names the outcome when all succeed, and `failed` the
+/// failure of some.
+pub fn each(file: &Path, args: &[&str], done: &str, failed: &str) -> Result<bool, String> {
+    let hosts = &hosts::load(file)?;
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    let replies = run(hosts, &args);
     let width = header(file, hosts);
     let mut failures = 0;
     for reply in &replies {
@@ -259,7 +263,18 @@ pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &s
     } else {
         output::success(&format!("{done} on {}", machines(total)));
     }
-    failures == 0
+    Ok(failures == 0)
+}
+
+/// Holds automatic updates back on every machine.
+pub fn hold(file: &Path, reason: &str, until: Option<u64>) -> Result<bool, String> {
+    // The end is one point in time, whatever each machine's clock zone is.
+    let until = until.map(|until| format!("@{until}"));
+    let mut args = vec!["hold", "--reason", reason];
+    if let Some(until) = &until {
+        args.extend(["--until", until]);
+    }
+    each(file, &args, "Automatic updates are held", "Not held")
 }
 
 /// The waves of an upgrade, as ranges of the hosts: the first machine alone,

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{assert_contains, fixture, outcomes, pair, write_script};
+use common::{assert_contains, fixture, outcomes, pair};
 
 /// Version prints the tool version.
 #[test]
@@ -135,4 +135,37 @@ fn refusals_have_the_shape_of_failures() {
     help.ok();
     assert!(help.stdout.contains("Usage: nxf status"), "{}", help.stdout);
     assert_eq!(help.stderr, "");
+}
+
+/// What a command makes is writable by the group when the group may write the
+/// checkout, and the command works on that checkout: the update does, and a
+/// hold, which only writes the state of the updater, does not.
+#[test]
+fn group_sharing() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let fx = fixture();
+    std::fs::set_permissions(&fx.checkout, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    let run = |args: &[&str]| {
+        let mut command = fx.command(args);
+        // The mask of the caller decides what nxf does not.
+        unsafe {
+            command.pre_exec(|| {
+                libc::umask(0o022);
+                Ok(())
+            })
+        };
+        assert!(command.output().unwrap().status.success());
+    };
+    let group_writes = |file: &str| {
+        let mode = std::fs::metadata(fx.updater.join(file))
+            .unwrap()
+            .permissions()
+            .mode();
+        mode & 0o020 != 0
+    };
+    run(&["hold", "--reason", "quiet"]);
+    assert!(!group_writes("hold.json"));
+    run(&["auto-update"]);
+    assert!(group_writes("update.json"));
 }
