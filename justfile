@@ -5,7 +5,7 @@ test *args:
 # Check formatting and lints.
 lint:
     nix develop --command cargo fmt --check
-    nix develop --command nixfmt --check flake.nix nix/*.nix
+    nix develop --command nixfmt --check $(git ls-files '*.nix')
     nix develop --command cargo clippy --all-targets -- --deny warnings
 
 # Everything CI checks.
