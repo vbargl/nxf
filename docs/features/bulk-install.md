@@ -67,15 +67,9 @@ Boundaries:
   that differs from one in `~/.ssh/known_hosts` is refused. `nix copy`
   trusts the same keys: rollout writes them into one file and names it in
   `NIX_SSHOPTS`. After the installation only the key it made is accepted.
-- The options of ssh name files in the temporary directory. Rollout refuses
-  one whose path holds whitespace, a quote or a backslash, before any machine
-  is asked; its message calls any whitespace `a space`. It makes a directory of its own there for the run, for its user
-  alone, under the first of the names `nxf-rollout.<pid>.0` to
-  `nxf-rollout.<pid>.99` that is free. A directory that is there before is
-  never used and never changed. When the directory cannot be made, or every
-  name is taken, rollout fails before any machine is asked; `TMPDIR` names
-  the directory it is made in. The files in it are named by the place of a
-  machine in the list, not by its name.
+- The options of ssh name files in a directory that rollout makes for the run
+  in the temporary directory; the rule is in the
+  [operating documentation](../../README.md#from-another-computer).
 - A `~/.ssh/known_hosts` that does not exist is left out. One that is there
   and cannot be read fails the command before any machine is asked, also
   when no machine is to be installed: a run in which every machine is managed

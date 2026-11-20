@@ -514,7 +514,8 @@ run, for its user alone, under the first of the names `nxf-rollout.<pid>.0`
 to `nxf-rollout.<pid>.99` that is free. A directory that is there before is
 never used and never changed. When the directory cannot be made, or every
 name is taken, rollout fails before any machine is asked; `TMPDIR` names the
-directory it is made in.
+directory it is made in. The files in it are named by the place of a machine
+in the list, not by its name.
 
 ### Upgrading machines
 
