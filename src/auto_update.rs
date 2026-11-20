@@ -124,29 +124,38 @@ fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+/// What failed after the run did, beneath the cause of the run; alone when
+/// the run has none.
+fn beneath(cause: Option<&str>, then: String) -> String {
+    match cause {
+        Some(cause) => format!("{cause}\n{then}"),
+        None => then,
+    }
+}
+
 /// Runs one update and returns whether every task succeeded.
 pub fn run(state: &Path) -> Result<bool, String> {
     // A run that could not go on failed too: it is saved, and the hook runs.
     let mut results = Vec::new();
-    let error = decide(&mut results).err();
+    let mut error = decide(&mut results).err();
     if let Some(error) = &error {
         results.push(outcome("update", "failed", error.replace('\n', " | ")));
     }
-    let saved = save(state, &results)?;
+    let saved = save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
     // The hook reads the saved results; when it fails, that is a result too.
     if results
         .iter()
         .any(|result| result.failed() || result.reported())
     {
         if let Some(failed) = hooks::failure(&saved) {
+            if let Some(error) = &mut error {
+                error.push_str(&format!("\nThe failure hook failed too: {failed}"));
+            }
             results.push(outcome("hook", "failed", failed));
-            save(state, &results)?;
+            save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
         }
     }
-    if let Some(mut error) = error {
-        if let Some(hook) = results.iter().find(|result| result.task == "hook") {
-            error.push_str(&format!("\nThe failure hook failed too: {}", hook.detail));
-        }
+    if let Some(error) = error {
         return Err(error);
     }
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();

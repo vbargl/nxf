@@ -430,3 +430,43 @@ fn undecided_run_keeps_what_ran() {
         "has no flake.nix",
     );
 }
+
+/// A failed run that cannot be saved either still fails with its cause, and
+/// says beneath it what could not be saved: at first, and after the hook.
+#[test]
+fn unsaved_run_keeps_its_cause() {
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    strategies(&fx, "{ inputs.a = \"sometimes\"; }");
+    // A file is where the state directory would be made.
+    let file = fx.dir.join("file");
+    std::fs::write(&file, "").unwrap();
+    let state = file.join("state");
+    let result = fx.run(&["auto-update", "--state", state.to_str().unwrap()]);
+    assert_eq!(result.code, 1);
+    const CAUSE: &str = "✗ unknown update strategy 'sometimes'; it is off, flag or report\n";
+    assert_contains(
+        &result.stderr,
+        &format!(
+            "{CAUSE}  cannot save {}: ",
+            state.join("update.json").display()
+        ),
+    );
+
+    // A failure hook that leaves a directory where the results are written next.
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    common::write_script(
+        &hooks.join("failure"),
+        "#!/bin/sh\nmkdir \"$NXF_RESULTS.tmp\"\necho 'the pager is down'\nexit 1\n",
+    );
+    fx.set("NXF_HOOKS_DIR", &hooks);
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        &format!(
+            "{CAUSE}  The failure hook failed too: the pager is down\n  cannot save {}: ",
+            fx.updater.join("update.json").display()
+        ),
+    );
+}
