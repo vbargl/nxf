@@ -41,16 +41,18 @@ pub enum Found {
 }
 
 /// Says in plain sh what the machine is. It is sent on standard input, so
-/// that no login shell has to read it.
-const PROBE: &str = r#"
+/// that no login shell has to read it. The record of the installation and
+/// nxf in the system mean a managed machine wherever its root is; nxf on the
+/// path alone may be the copy in an installer.
+pub const PROBE: &str = r#"
 root=$(awk '$2 == "/" { kind = $3 } END { print kind }' /proc/mounts)
 installer=no
 case $root in tmpfs|rootfs|ramfs) [ -e /etc/NIXOS ] && installer=yes ;; esac
 managed=no
-if [ $installer = no ]; then
-    if [ -e /var/lib/nxf/installed.json ] || [ -x /run/current-system/sw/bin/nxf ] || command -v nxf >/dev/null 2>&1; then
-        managed=yes
-    fi
+if [ -e /var/lib/nxf/installed.json ] || [ -x /run/current-system/sw/bin/nxf ]; then
+    managed=yes
+elif [ $installer = no ] && command -v nxf >/dev/null 2>&1; then
+    managed=yes
 fi
 os=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown system}")
 echo "nxf-probe managed=$managed installer=$installer arch=$(uname -m)"

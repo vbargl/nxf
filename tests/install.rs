@@ -169,3 +169,33 @@ fn failed_install() {
     assert!(!root.join("var/lib/nxf/installed.json").exists());
     assert_lacks(&result.stdout, "NixOS installed");
 }
+
+/// Install refuses on a system that nxf manages, also when it runs from
+/// memory as an installer does: one that nxf installed, or one whose system
+/// has nxf. Nothing is partitioned or installed.
+#[test]
+fn refuses_a_managed_system() {
+    let (mut fx, _) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+    let refused = |fx: &Fixture| {
+        let result = fx.run(&["install", &dir]);
+        assert_ne!(result.code, 0);
+        assert_contains(
+            &result.stderr,
+            "✗ nxf manages this system, and installing erases disks",
+        );
+        assert!(steps(fx).is_empty());
+    };
+
+    let record = fx.updater.join("installed.json");
+    std::fs::create_dir_all(&fx.updater).unwrap();
+    std::fs::write(&record, "{}\n").unwrap();
+    refused(&fx);
+    std::fs::remove_file(&record).unwrap();
+
+    let system = fx.dir.join("system");
+    std::fs::create_dir_all(system.join("sw/bin")).unwrap();
+    write_script(&system.join("sw/bin/nxf"), "#!/bin/sh\n");
+    fx.set("NXF_SYSTEM", &system);
+    refused(&fx);
+}

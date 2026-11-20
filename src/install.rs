@@ -48,6 +48,17 @@ pub fn installer() -> bool {
     })
 }
 
+/// Whether nxf manages the running system: it installed it, or the system
+/// has nxf. Such a machine is not an installer, also when it runs from
+/// memory. NXF_UPDATER_STATE and NXF_SYSTEM stand in for the two places.
+fn managed() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let record = Path::new(MARKER).file_name().unwrap_or_default();
+    nixos::updater_dir().join(record).exists()
+        || std::fs::metadata(nixos::running().join("sw/bin/nxf"))
+            .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+
 fn run(command: &mut Command, what: &str) -> Result<(), String> {
     output::stream(command, false, &[]).map_err(|err| format!("{what} failed\n{err}"))
 }
@@ -165,6 +176,12 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     }
     if !stands_in && !nixos::is_root() {
         return Err("Installing needs root".to_string());
+    }
+    if managed() {
+        return Err(
+            "nxf manages this system, and installing erases disks\nStart the machine from a NixOS installer to install it again."
+                .to_string(),
+        );
     }
     if !installer() {
         return Err(

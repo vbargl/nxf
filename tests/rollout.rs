@@ -8,7 +8,7 @@ use common::{
     assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture,
 };
 use nxf::hosts::Host;
-use nxf::rollout::{known_hosts_line, parse_probe, template, Found};
+use nxf::rollout::{known_hosts_line, parse_probe, template, Found, PROBE};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -182,4 +182,81 @@ fn unreachable() {
     );
     assert_contains(&result.stderr, "✗ 1 of 2 machines gave no answer");
     assert_lacks(&result.stdout, "will be erased");
+}
+
+/// What the probe finds on a stand-in machine: its root file system is of the
+/// given kind, the named files exist, and `on_path` says whether the shell
+/// finds nxf. The probe runs as it is sent, with its paths under a directory.
+fn probed(kind: &str, files: &[&str], on_path: bool) -> Found {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let root = temp_dir("probe");
+    let place = |file: &str| root.join(file.trim_start_matches('/'));
+    let tools = root.join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    for tool in ["awk", "uname"] {
+        let found = common::sh("sh", &["-c", &format!("command -v {tool}")]);
+        std::os::unix::fs::symlink(found, tools.join(tool)).unwrap();
+    }
+    write_script(&tools.join("id"), "#!/bin/sh\necho 0\n");
+    if on_path {
+        write_script(&tools.join("nxf"), "#!/bin/sh\n");
+    }
+    let mut script = PROBE.to_string();
+    for file in [
+        "/proc/mounts",
+        "/etc/NIXOS",
+        "/etc/os-release",
+        "/var/lib/nxf/installed.json",
+        "/run/current-system/sw/bin/nxf",
+    ] {
+        assert_contains(&script, file);
+        script = script.replace(file, place(file).to_str().unwrap());
+        std::fs::create_dir_all(place(file).parent().unwrap()).unwrap();
+    }
+    std::fs::write(place("/proc/mounts"), format!("none / {kind} rw 0 0\n")).unwrap();
+    std::fs::write(place("/etc/os-release"), "PRETTY_NAME=\"Other 1\"\n").unwrap();
+    for file in files {
+        write_script(&place(file), "");
+    }
+    let mut shell = Command::new(common::sh("sh", &["-c", "command -v sh"]))
+        .env("PATH", &tools)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    shell
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    let answer = shell.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    parse_probe(&String::from_utf8_lossy(&answer.stdout))
+        .unwrap()
+        .found
+}
+
+/// A machine that nxf installed, or whose system has nxf, is managed whatever
+/// its root file system is: one that runs from memory is not taken for an
+/// installer to erase. An installer stays one, also with nxf copied to it.
+#[test]
+fn managed_from_memory() {
+    const MARKER: &str = "/var/lib/nxf/installed.json";
+    const SYSTEM: &str = "/run/current-system/sw/bin/nxf";
+    assert_eq!(probed("tmpfs", &["/etc/NIXOS"], false), Found::Installer);
+    assert_eq!(probed("tmpfs", &["/etc/NIXOS"], true), Found::Installer);
+    for sign in [MARKER, SYSTEM] {
+        assert_eq!(
+            probed("tmpfs", &["/etc/NIXOS", sign], false),
+            Found::Managed
+        );
+        assert_eq!(probed("ext4", &[sign], false), Found::Managed);
+    }
+    assert_eq!(probed("ext4", &["/etc/NIXOS"], true), Found::Managed);
+    assert_eq!(
+        probed("ext4", &[], false),
+        Found::Other("Other 1".to_string())
+    );
 }
