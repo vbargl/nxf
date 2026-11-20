@@ -105,7 +105,9 @@ let
   storeToken = system (update {
     git.credentialsFile = builtins.toFile "git-credentials" "https://machine:token@git.example.org";
   });
-
+  pathToken = system (update {
+    git.credentialsFile = /. + "/run/secrets/git-credentials";
+  });
 in
 pkgs.runCommand "nxf-module-check"
   {
@@ -147,6 +149,7 @@ pkgs.runCommand "nxf-module-check"
     noSudoRefusals = refusals noSudo;
     noFlakeRefusals = refusals noFlake;
     storeTokenRefusals = refusals storeToken;
+    pathTokenRefusals = refusals pathToken;
     rsRule = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) withRs.security.sudo-rs.extraRules
     );
@@ -282,7 +285,8 @@ pkgs.runCommand "nxf-module-check"
     test "$rsRefusals" = '[]'
     test "$noSudoRefusals" = '["services.nxf needs sudo: the group nxf switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true."]'
     test "$noFlakeRefusals" = '["services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\"."]'
-    test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the token: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
+    test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
+    test "$pathTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"/run/secrets/nxf-git-credentials\"."]'
     # The rule for the group goes to the sudo that is enabled.
     test "$rsRule" = true
     test "$rsPlainRule" = false

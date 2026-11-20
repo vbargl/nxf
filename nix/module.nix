@@ -39,6 +39,24 @@ let
     }
   ];
 
+  # A file with tokens must stay out of the store, which everyone can read. A
+  # path literal is copied there when it is interpolated.
+  secretFile =
+    option: example: file:
+    let
+      name = "services.nxf.autoUpdate.${option}";
+    in
+    [
+      {
+        assertion = file == null || !lib.hasPrefix "${builtins.storeDir}/" (toString file);
+        message = "${name} is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"${example}\".";
+      }
+      {
+        assertion = !builtins.isPath file;
+        message = "${name} is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"${example}\".";
+      }
+    ];
+
   # systemd takes the seconds as a time span.
   span = seconds: "${toString seconds}s";
 
@@ -377,13 +395,8 @@ in
           assertion = cfg.flake != "";
           message = "services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\".";
         }
-        {
-          assertion =
-            auto.git.credentialsFile == null
-            || !lib.hasPrefix "${builtins.storeDir}/" (toString auto.git.credentialsFile);
-          message = "services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the token: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\".";
-        }
-      ];
+      ]
+      ++ secretFile "git.credentialsFile" "/run/secrets/nxf-git-credentials" auto.git.credentialsFile;
 
       environment.etc =
         lib.mapAttrs' (
