@@ -326,13 +326,13 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
     Ok((PathBuf::from(path), name.to_string()))
 }
 
-fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
+fn copy(link: &Link, paths: &[&Path], stem: &Path) -> Result<(), String> {
     if !matches!(link.trust, Trust::First { .. }) {
         return Err("the machine is already installed".to_string());
     }
     // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
     // as a shell does, so no option may need a quote.
-    let trusted = scratch.with_extension("trusted");
+    let trusted = stem.with_extension("trusted");
     // Read as ssh reads them, as bytes; only a file that is not there is left out.
     let mut keys = Vec::new();
     for file in link.trusted() {
@@ -411,8 +411,7 @@ struct Installed {
     revision: Option<String>,
 }
 
-/// Installs one machine and returns its host key. `scratch` is the path that
-/// the scratch files of the machine extend.
+/// Installs one machine and returns its host key.
 fn install(
     host: &Host,
     probe: &Probe,
@@ -420,9 +419,9 @@ fn install(
     package: &Path,
     source: &Path,
     name: &str,
-    scratch: &Path,
+    stem: &Path,
 ) -> Result<Installed, String> {
-    let seen = scratch.with_extension("seen");
+    let seen = stem.with_extension("seen");
     let link = Link {
         host: host.clone(),
         trust: Trust::First { seen },
@@ -467,7 +466,7 @@ fn install(
     }
 
     output::start("Founding the machine flake");
-    copy(&link, &[package, source], scratch)?;
+    copy(&link, &[package, source], stem)?;
     // What the operator and the file system name is one word each to the machine's shell.
     let nxf = quoted(&format!("{}/bin/nxf", package.display()));
     let template = quoted(&format!("path:{}#{name}", source.display()));
@@ -496,7 +495,7 @@ fn install(
 
     output::start("Starting the system");
     let _ = link.capture("systemctl reboot", "");
-    let known = scratch.with_extension("known");
+    let known = stem.with_extension("known");
     std::fs::write(&known, format!("{}\n", known_hosts_line(host, &key)))
         .map_err(|err| format!("cannot write {}: {err}", known.display()))?;
     let started = Link {
@@ -610,9 +609,9 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
 }
 
 fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
-    // The scratch files of a machine are named by its place in the list: ssh
-    // splits the options that name them, and a host's name may hold a space.
-    let place = |index: usize| scratch.join(index.to_string());
+    // The scratch files of a machine extend a stem named by its place in the list:
+    // ssh splits the options that name them, and a host's name may hold a space.
+    let stem = |index: usize| scratch.join(index.to_string());
     // Every machine is asked what it is, all at once.
     let probes: Vec<Probe> = std::thread::scope(|scope| {
         let asked: Vec<_> = hosts
@@ -622,7 +621,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 let link = Link {
                     host: host.clone(),
                     trust: Trust::First {
-                        seen: place(index).with_extension("seen"),
+                        seen: stem(index).with_extension("seen"),
                     },
                 };
                 scope.spawn(move || link.probe())
@@ -735,8 +734,15 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     let mut installed = Vec::new();
     let mut unwritten = Vec::new();
     for (index, host, probe) in &to_install {
-        let scratch = place(*index);
-        match install(host, probe, options, &package, &source, &name, &scratch) {
+        match install(
+            host,
+            probe,
+            options,
+            &package,
+            &source,
+            &name,
+            &stem(*index),
+        ) {
             Ok(done) => {
                 // The machine is installed whatever becomes of the file.
                 let written = options
