@@ -383,8 +383,9 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
 6. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
    identity gets `nxf`, without an e-mail, as its own.
-7. The checks of `nxf doctor` that concern the checkout run, and
-   `module` says whether the configuration imports the nxf module.
+7. The `tools` check and the checks of `nxf doctor` that concern the checkout
+   run. When none of them failed, `module` says whether the configuration
+   imports the nxf module.
 
 A flake can be founded on another computer, in any directory, and copied to
 the machine later: nothing in it has to match the computer that runs init.
