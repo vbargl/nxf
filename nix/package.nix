@@ -24,7 +24,6 @@ rustPlatform.buildRustPackage {
       ../Cargo.lock
       ../src
       ../nix/nxf.nix
-      ../tests
     ];
   };
   cargoLock.lockFile = ../Cargo.lock;
