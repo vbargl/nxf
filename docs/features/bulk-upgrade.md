@@ -17,7 +17,9 @@ the others follow in waves of `--batch` machines (default 1). A wave runs to
 its end. A failure, or a machine that does not answer, starts no later wave,
 and those machines are listed as not started. Named inputs are passed on to
 every machine. Each machine has `NXF_UPGRADE_TIMEOUT` seconds, 3 hours by
-default.
+default. A machine that takes longer is a failed row,
+`timed out after <N> seconds; the upgrade may still run on the machine`:
+ending ssh does not end the task there.
 
 Boundaries:
 
@@ -51,6 +53,7 @@ Boundaries:
 | U6: Mixed options are refused | `--upgrade` with an install option, `--batch 0`, or `--batch` or inputs without `--upgrade` | The command is given | No ssh connection is made. With an install option or `--batch 0` the error names the argument and the exit status is 2. With `--template` and `--batch` or inputs the outcome is `Inputs and --batch belong to the upgrade` and the exit status is 1; without `--template` the error asks for it and the exit status is 2 |
 | U7: An unknown input | An input that the first machine's flake does not have | `rollout --upgrade <input>` runs | The first machine's row is `Unknown task or input: <input>`, without the help beneath it; the other rows are `not started`; the exit status is 1 |
 | U8: A second run after a failed wave | An earlier run upgraded the first machine and failed on the second | `rollout --upgrade` runs again | Every machine is asked again, in the same order and from the first; a machine that finds no new revision and switches has the row `no input changed, switched` |
+| U9: A machine runs past its limit | The first machine's upgrade does not end within `NXF_UPGRADE_TIMEOUT` seconds | `rollout --upgrade` runs | Only the first machine was asked; its row is `timed out after <N> seconds; the upgrade may still run on the machine`, and no row says `unreachable`; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines`; the exit status is 1 |
 
 ## Existing verification
 
@@ -67,6 +70,8 @@ checkout, so only the first one finds the new revision.
 - U7: `tests/fleet.rs::upgrade_unknown_input`.
 - U8: no automated test covers it. `tests/fleet.rs::upgrade` covers the row
   `no input changed, switched`.
+- U9: `tests/fleet.rs::upgrade_timeout`, with a limit of 1 second and the
+  row `timed out after 1 second`. It does not assert the outcome.
 - `tests/fleet.rs::waves` covers the order of the waves, and
   `tests/hosts.rs::toml` that hosts come in the order of their names. No
   test has two names whose byte order differs from their numeric order.
