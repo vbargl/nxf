@@ -364,3 +364,31 @@ fn undecided_run_is_saved() {
     assert_eq!(seen["results"], report["results"]);
     assert_contains(&fx.run(&["status"]).stdout, "  ✗ update    unknown update");
 }
+
+/// When the failure hook fails after a run that failed before any task, the
+/// command says so beneath the cause, and the hook is a saved result too.
+#[test]
+fn failing_hook_is_said() {
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    common::write_script(
+        &hooks.join("failure"),
+        "#!/bin/sh\necho 'the pager is down' >&2\nexit 1\n",
+    );
+    fx.set("NXF_HOOKS_DIR", &hooks);
+    strategies(&fx, "{ inputs.a = \"sometimes\"; }");
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stderr, "✗ unknown update strategy 'sometimes'");
+    assert_contains(
+        &result.stderr,
+        "\n  The failure hook failed too: the pager is down\n",
+    );
+    let report = saved(&fx);
+    assert_eq!(
+        outcomes(&report),
+        [pair("update", "failed"), pair("hook", "failed")]
+    );
+    assert_eq!(report["results"][1]["detail"], "the pager is down");
+}
