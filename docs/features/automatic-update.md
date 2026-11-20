@@ -59,8 +59,9 @@ Boundaries:
 - A health check fails when any of its commands does. The module runs each
   script with `set -e`, also the lines that other modules add to the same
   check.
-- The options of the module, the configurations it refuses and the unit of its
-  durations are in the [README](../../README.md#install).
+- The configurations the module refuses are in the [README](../../README.md#install);
+  its options and the unit of its durations are in
+  [Automatic updates](../../README.md#automatic-updates).
 - The check hook can only skip the run, and the failure hook can only add
   its own failure.
 - A skipped run, a flagged input and a reported input do not fail the run.
