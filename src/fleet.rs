@@ -113,12 +113,7 @@ fn machines(count: usize) -> String {
 fn header(file: &Path, hosts: &[Host]) -> usize {
     output::context(&format!("{} · {}", file.display(), machines(hosts.len())));
     output::line("");
-    hosts
-        .iter()
-        .map(|host| host.name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL)
+    output::widened(hosts.iter().map(|host| host.name.as_str()))
 }
 
 /// What needs attention on a machine, from its `status --json`.

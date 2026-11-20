@@ -388,12 +388,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
         inputs.to_vec()
     };
     // Input names share the label column, widened for long names.
-    let width = selected
-        .iter()
-        .map(|name| name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL);
+    let width = output::widened(selected.iter().map(String::as_str));
     let mut results = Vec::new();
     for input in &selected {
         let pending = output::pending(&format!("Checking input {input}"));

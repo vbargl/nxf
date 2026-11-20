@@ -189,7 +189,12 @@ const COMMANDS: &[&str] = &[
 fn task_list() -> String {
     let mut list = String::from("Tasks:\n");
     for task in tasks::defined() {
-        list.push_str(&format!("  {:<9}{}\n", task.name, task.description));
+        list.push_str(&format!(
+            "  {:<width$}{}\n",
+            task.name,
+            task.description,
+            width = output::LABEL
+        ));
     }
     list
 }

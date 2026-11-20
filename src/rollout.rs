@@ -538,12 +538,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         machines(hosts.len())
     ));
     output::line("");
-    let width = hosts
-        .iter()
-        .map(|host| host.name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL);
+    let width = output::widened(hosts.iter().map(|host| host.name.as_str()));
     let mut to_install = Vec::new();
     let mut failed = Vec::new();
     let mut silent = 0;
@@ -685,7 +680,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
             .as_deref()
             .map(|revision| revision.chars().take(12).collect::<String>())
             .unwrap_or_default();
-        output::fact(&format!("{:<width$}", host.name), &revision);
+        output::fact_in(width, &host.name, &revision);
         output::note(&known_hosts_line(host, &done.key));
     }
     if !unwritten.is_empty() {

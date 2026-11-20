@@ -122,10 +122,11 @@ pub fn choose(names: &[String]) -> Result<String, String> {
         [] => Err("The flake has no nixosConfigurations.".to_string()),
         [only] => Ok(only.clone()),
         several => Err(format!(
-            "The flake has {} nixosConfigurations and none is named {CONFIGURATION}\n{:<10}{}\nnxf works with one configuration for each flake; name it {CONFIGURATION} or keep only one.",
+            "The flake has {} nixosConfigurations and none is named {CONFIGURATION}\n{:<LABEL$}{}\nnxf works with one configuration for each flake; name it {CONFIGURATION} or keep only one.",
             several.len(),
             "Found",
-            several.join(", ")
+            several.join(", "),
+            LABEL = output::LABEL
         )),
     }
 }

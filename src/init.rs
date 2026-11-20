@@ -152,7 +152,7 @@ pub fn run(options: &Options) -> Result<(), String> {
             checks.push(module(&dir, &configuration));
         }
     }
-    doctor::print(&checks, 2);
+    doctor::print(&checks);
     // The flake is founded whatever the checks say; they say what is left to do.
     output::success("Machine flake founded");
     match doctor::verdict(&checks) {

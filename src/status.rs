@@ -89,7 +89,7 @@ pub fn result_rows(results: &[Value]) -> Vec<ResultRow> {
                 // A long name keeps its distance from what follows.
                 text: format!(
                     "{name:<width$}{said}",
-                    width = output::LABEL.max(name.chars().count() + 2)
+                    width = output::widened([name.as_str()])
                 )
                 .trim_end()
                 .to_string(),
@@ -104,11 +104,7 @@ pub fn print_rows(rows: &[ResultRow]) {
     for row in rows {
         output::row(row.mark, &row.text);
         for more in &row.more {
-            output::line(&output::dim(&format!(
-                "{:width$}{more}",
-                "",
-                width = 4 + output::LABEL
-            )));
+            output::beneath(more);
         }
     }
 }
@@ -149,10 +145,10 @@ fn update_summary() {
         output::row(
             Mark::Failed,
             &format!(
-                "{:<width$}{}",
+                "{:<LABEL$}{}",
                 "service",
                 failure["result"].as_str().unwrap_or("failed"),
-                width = output::LABEL
+                LABEL = output::LABEL
             ),
         );
         output::command(&format!(
@@ -253,26 +249,21 @@ pub struct Options {
 /// is supporting text.
 fn input_table(lock: &Value, inputs: &[String], other: Option<&Value>) {
     let rows = flake::input_rows(lock, inputs, other);
-    let names = rows
-        .iter()
-        .map(|row| row.name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL);
+    let names = output::widened(rows.iter().map(|row| row.name.as_str()));
     let revs = rows
         .iter()
         .map(|row| row.rev.chars().count())
         .max()
         .unwrap_or(0);
     for row in rows {
-        let mut text = format!("{:<names$}{:<revs$}", row.name, row.rev);
+        let mut text = format!("{:<revs$}", row.rev);
         if let Some(change) = &row.change {
             text.push_str(&format!("  {}", output::styled(change, Style::Yellow)));
         }
         if !row.url.is_empty() {
             text.push_str(&format!("  {}", output::dim(&row.url)));
         }
-        output::effect(text.trim_end());
+        output::fact_in(names, &row.name, text.trim_end());
     }
 }
 

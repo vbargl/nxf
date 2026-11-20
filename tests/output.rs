@@ -252,3 +252,14 @@ fn stream_failure_tail() {
         )
     );
 }
+
+/// A label column is as wide as the labels, and two more than the longest
+/// name when that is wider.
+#[test]
+fn widened() {
+    assert_eq!(output::widened([]), output::LABEL);
+    assert_eq!(output::widened(["a", "node-1"]), output::LABEL);
+    assert_eq!(output::widened(["a", "a-name-of-ten"]), 15);
+    // Characters, not bytes.
+    assert_eq!(output::widened(["ééééééééééé"]), 13);
+}

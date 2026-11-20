@@ -22,10 +22,9 @@ fn help() {
     result.ok();
     assert_contains(&result.stdout, "Usage:");
     assert_contains(&result.stdout, "Tasks:");
-    assert!(result
-        .stdout
-        .lines()
-        .any(|line| line.starts_with("  switch") && line.contains(" Activate")));
+    // The names stand in the column of the labels.
+    assert_contains(&result.stdout, "\n  switch    Activate the configuration");
+    assert_contains(&result.stdout, "\n  upgrade   Update each input");
     assert_contains(&result.stdout, "auto-update");
 }
 

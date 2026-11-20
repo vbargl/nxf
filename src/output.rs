@@ -143,6 +143,17 @@ pub fn line_err(text: &str) {
 /// The width of the label column that facts share.
 pub const LABEL: usize = 10;
 
+/// The width of a label column that holds these names: `LABEL`, or the
+/// longest name and two more.
+pub fn widened<'a>(names: impl IntoIterator<Item = &'a str>) -> usize {
+    names
+        .into_iter()
+        .map(|name| name.chars().count() + 2)
+        .max()
+        .unwrap_or(0)
+        .max(LABEL)
+}
+
 /// What a row reports. The mark and its colour carry the state, so that the
 /// hierarchy also reads without colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,7 +215,12 @@ pub fn section(text: &str, note: &str) {
 
 /// A fact: a label in the shared column and its value.
 pub fn fact(label: &str, value: &str) {
-    indented(false, 2, &format!("{label:<LABEL$}{value}"));
+    fact_in(LABEL, label, value);
+}
+
+/// A fact whose label column is as wide as given, such as `widened` says.
+pub fn fact_in(width: usize, label: &str, value: &str) {
+    indented(false, 2, &format!("{label:<width$}{value}"));
 }
 
 /// A row with its state: what happened to one thing.
@@ -215,6 +231,11 @@ pub fn row(mark: Mark, text: &str) {
         text.to_string()
     };
     indented(false, 2, &format!("{} {text}", mark.styled()));
+}
+
+/// A supporting line beneath a row, in the column of its text.
+pub fn beneath(text: &str) {
+    indented(false, 4 + LABEL, &dim(text));
 }
 
 /// A supporting fact beneath a row.

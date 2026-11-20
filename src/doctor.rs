@@ -263,20 +263,17 @@ pub fn checks() -> Vec<Check> {
 
 /// Prints one row for each check. Only the state has colour; what passed is
 /// supporting text, what did not stands out.
-pub fn print(results: &[Check], indent: usize) {
+pub fn print(results: &[Check]) {
     for result in results {
         let (mark, message) = match result.level {
             Level::Ok => (Mark::Done, output::dim(&result.message)),
             Level::Warn => (Mark::Attention, result.message.clone()),
             Level::Fail => (Mark::Failed, result.message.clone()),
         };
-        output::line(&format!(
-            "{:indent$}{} {:<width$}{message}",
-            "",
-            mark.styled(),
-            result.name,
-            width = output::LABEL
-        ));
+        output::row(
+            mark,
+            &format!("{:<width$}{message}", result.name, width = output::LABEL),
+        );
     }
 }
 
@@ -310,7 +307,7 @@ pub fn verdict(results: &[Check]) -> Result<String, String> {
 
 pub fn report() -> Result<(), String> {
     let results = checks();
-    print(&results, 0);
+    print(&results);
     output::success(&verdict(&results)?);
     Ok(())
 }
