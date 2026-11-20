@@ -1,7 +1,7 @@
 //! Terminal presentation shared by the commands and tool wrappers.
 
 use std::io::{BufRead, BufReader, IsTerminal, Write};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -471,19 +471,7 @@ impl Monitor {
 /// Runs a tool with curated output. Its raw output stays hidden unless it
 /// fails; then the last diagnostic lines are part of the error.
 pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Result<(), String> {
-    let program = command.get_program().to_string_lossy().into_owned();
-    let (reader, writer) = os_pipe::pipe().map_err(|err| format!("cannot create a pipe: {err}"))?;
-    let stderr = writer
-        .try_clone()
-        .map_err(|err| format!("cannot create a pipe: {err}"))?;
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(writer)
-        .stderr(stderr)
-        .spawn()
-        .map_err(|err| format!("cannot run {program}: {err}"))?;
-    // The command keeps the write ends until it is dropped or reconfigured.
-    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let (mut child, reader) = process::spawn_merged(command)?;
 
     let mut monitor = progress.then(|| Monitor::new(inputs));
     let mut output = String::new();
@@ -509,7 +497,7 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
     }
     let status = child
         .wait()
-        .map_err(|err| format!("cannot wait for {program}: {err}"))?;
+        .map_err(|err| format!("cannot wait for {}: {err}", process::name(command)))?;
     if status.success() {
         return Ok(());
     }

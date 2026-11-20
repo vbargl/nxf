@@ -274,11 +274,16 @@ fn refuses_a_managed_system() {
 }
 
 /// With `--reboot` the machine is restarted through the stand-in for systemd,
-/// not through whichever `systemctl` the path holds.
+/// not through whichever `systemctl` the path holds, and with no input.
 #[test]
 fn reboots_through_the_stand_in() {
     let (mut fx, _) = installer();
-    let noting = |log: &str| format!("#!/bin/sh\necho \"$*\" >> '{}/{log}'\n", fx.dir.display());
+    let noting = |log: &str| {
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{0}/{log}'\nreadlink /proc/self/fd/0 >> '{0}/{log}'\n",
+            fx.dir.display()
+        )
+    };
     // The one of the path stays in front and only notes a call: a call that
     // went by the path must fail this test, not restart the machine it runs on.
     write_script(&fx.systemctl, &noting("path.log"));
@@ -290,7 +295,7 @@ fn reboots_through_the_stand_in() {
     assert_contains(&result.stdout, "\n  Restarting into the new system.\n");
     assert_eq!(
         std::fs::read_to_string(fx.dir.join("stand-in.log")).ok(),
-        Some("reboot\n".to_string())
+        Some("reboot\n/dev/null\n".to_string())
     );
     assert!(!fx.dir.join("path.log").exists());
 }

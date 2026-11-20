@@ -1,12 +1,12 @@
 //! Reaching a machine over ssh: the program, its options, how it checks the
 //! host key of the machine, and how a word is quoted for its shell.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::env;
 use crate::hosts::Host;
+use crate::process;
 
 /// How ssh checks the host key of a machine.
 #[derive(Clone)]
@@ -116,23 +116,13 @@ impl Link {
     /// Runs a remote command with the given standard input and returns
     /// whether it succeeded, and what it printed.
     pub fn capture(&self, remote: &str, input: &str) -> (bool, String, String) {
-        let mut ssh = self.command(remote);
-        ssh.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let Ok(mut child) = ssh.spawn() else {
-            return (false, String::new(), "cannot run ssh".to_string());
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(input.as_bytes());
-        }
-        match child.wait_with_output() {
+        match process::feed(&mut self.command(remote), input) {
             Ok(output) => (
                 output.status.success(),
                 String::from_utf8_lossy(&output.stdout).into_owned(),
                 String::from_utf8_lossy(&output.stderr).into_owned(),
             ),
-            Err(err) => (false, String::new(), err.to_string()),
+            Err(err) => (false, String::new(), err),
         }
     }
 }

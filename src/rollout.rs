@@ -110,16 +110,7 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
 /// the next one replaces it; what it printed is kept for the caller and,
 /// when it fails, its last lines are the error.
 fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
-    let (reader, writer) = os_pipe::pipe().map_err(|err| err.to_string())?;
-    let errors = writer.try_clone().map_err(|err| err.to_string())?;
-    let mut ssh = link.command(remote);
-    let mut child = ssh
-        .stdin(Stdio::null())
-        .stdout(writer)
-        .stderr(errors)
-        .spawn()
-        .map_err(|err| format!("cannot run ssh: {err}"))?;
-    drop(ssh);
+    let (mut child, reader) = process::spawn_merged(&mut link.command(remote))?;
     let mut said = String::new();
     let mut pending = false;
     for line in BufReader::new(reader).lines().map_while(Result::ok) {
@@ -244,33 +235,35 @@ fn copy(link: &Link, paths: &[&Path], stem: &Path) -> Result<(), String> {
 /// Sends the files of a machine as a tar stream into a directory there. tar
 /// writes into the connection, and the upload fails unless both end well.
 fn upload(link: &Link, files: &Path, to: &str) -> Result<(), String> {
-    let mut tar = Command::new("tar")
+    let mut tar_command = Command::new("tar");
+    tar_command
         .arg("--create")
         .arg("--directory")
         .arg(files)
         .arg(".")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut tar = tar_command
         .spawn()
-        .map_err(|err| format!("cannot run tar: {err}"))?;
+        .map_err(|err| process::cannot_run(&tar_command, err))?;
     let archive = tar.stdout.take().ok_or("cannot read from tar")?;
-    let mut ssh = link.command(&format!(
+    let mut ssh_command = link.command(&format!(
         "rm -rf {to} && mkdir -p {to} && tar --extract --directory {to}"
     ));
-    let sent = ssh
+    ssh_command
         .stdin(archive)
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    let sent = ssh_command.spawn();
     // The command holds the read end of the archive until it is dropped.
-    drop(ssh);
+    ssh_command.stdin(Stdio::null());
     let packed = std::thread::spawn(move || tar.wait_with_output());
     let sent = sent.and_then(|child| child.wait_with_output());
     let packed = packed.join().map_err(|_| "cannot wait for tar")?;
     let (packed, sent) = (
-        packed.map_err(|err| format!("cannot run tar: {err}"))?,
-        sent.map_err(|err| format!("cannot run ssh: {err}"))?,
+        packed.map_err(|err| process::cannot_run(&tar_command, err))?,
+        sent.map_err(|err| process::cannot_run(&ssh_command, err))?,
     );
     if !packed.status.success() || !sent.status.success() {
         let said = format!(

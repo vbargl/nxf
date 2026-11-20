@@ -99,8 +99,14 @@ change them here first.
   them together.
 - Every variable of the environment is named in `env.rs` and read through it.
   Every child process is started through `process.rs`, and every call of ssh
-  is made through `ssh.rs`. A new variable, command or program is one edit
-  there, and not a copy of what another module does.
+  is made through `ssh.rs`. Only `rollout::upload`, which pipes the output of
+  `tar` into `ssh`, starts its processes itself. A new variable, command or
+  program is one edit there, and not a copy of what another module does.
+- A failure of a program has the shape `<program> exited with status N.`, the
+  cause first and that line after it where a task reports it, with the last
+  eight lines the program said. A failure of a step of the remote
+  installation names the step and not a program: it has the shape
+  `<step> failed`, with the last lines beneath.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
   line. It also calls `ssh` for every command with `--config` and for

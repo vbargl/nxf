@@ -1,11 +1,13 @@
 //! Child processes: running them, with or without a deadline, the one shape
 //! of their failures, and the atomic write of a file.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use os_pipe::PipeReader;
 
 use crate::text::{last_line, plain};
 
@@ -26,7 +28,8 @@ pub fn name(command: &Command) -> String {
         .into_owned()
 }
 
-fn cannot_run(command: &Command, err: impl std::fmt::Display) -> String {
+/// The one spelling of a program that could not be started.
+pub fn cannot_run(command: &Command, err: impl std::fmt::Display) -> String {
     format!(
         "cannot run {}: {err}",
         command.get_program().to_string_lossy()
@@ -130,13 +133,15 @@ impl Drain {
     }
 }
 
-/// Runs a command with no input and kills it at the deadline. With `merged`
-/// its standard error goes where its standard output goes.
-pub fn run_within(
-    command: &mut Command,
-    deadline: Instant,
-    merged: bool,
-) -> Result<Finished, String> {
+/// The readers of the output of a started command.
+struct Pipes {
+    stdout: PipeReader,
+    /// None when the standard error goes where the standard output goes.
+    stderr: Option<PipeReader>,
+}
+
+/// Starts a command with no input and its output in pipes.
+fn spawn_piped(command: &mut Command, merged: bool) -> Result<(Child, Pipes), String> {
     let pipes = || os_pipe::pipe().map_err(|err| format!("cannot create a pipe: {err}"));
     let (out_reader, out_writer) = pipes()?;
     let (err_reader, err_writer) = if merged {
@@ -145,7 +150,7 @@ pub fn run_within(
         let (reader, writer) = pipes()?;
         (Some(reader), writer)
     };
-    let mut child = command
+    let child = command
         .stdin(Stdio::null())
         .stdout(out_writer)
         .stderr(err_writer)
@@ -153,6 +158,47 @@ pub fn run_within(
         .map_err(|err| cannot_run(command, err))?;
     // The command keeps the write ends until it is dropped or reconfigured.
     command.stdout(Stdio::null()).stderr(Stdio::null());
+    Ok((
+        child,
+        Pipes {
+            stdout: out_reader,
+            stderr: err_reader,
+        },
+    ))
+}
+
+/// Starts a command with no input, and its standard error merged into its
+/// standard output, which the caller reads as it comes.
+pub fn spawn_merged(command: &mut Command) -> Result<(Child, PipeReader), String> {
+    let (child, pipes) = spawn_piped(command, true)?;
+    Ok((child, pipes.stdout))
+}
+
+/// Runs a command to its end with the given input, whatever its status.
+pub fn feed(command: &mut Command, input: &str) -> Result<Output, String> {
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|err| cannot_run(command, err))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    child
+        .wait_with_output()
+        .map_err(|err| cannot_run(command, err))
+}
+
+/// Runs a command with no input and kills it at the deadline. With `merged`
+/// its standard error goes where its standard output goes.
+pub fn run_within(
+    command: &mut Command,
+    deadline: Instant,
+    merged: bool,
+) -> Result<Finished, String> {
+    let (mut child, pipes) = spawn_piped(command, merged)?;
+    let out_reader = pipes.stdout;
+    let err_reader = pipes.stderr;
     let stdout = Drain::start(out_reader);
     let stderr = err_reader.map(Drain::start);
     let status = loop {

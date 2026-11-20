@@ -234,3 +234,39 @@ fn atomic() {
     assert_lacks(&left.join(" "), ".tmp");
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// A program that is given input reads it, and its output comes back whole.
+#[test]
+fn feeding() {
+    let _serial = serial();
+    let output = process::feed(
+        &mut sh("read line; echo \"got $line\"; echo error >&2; exit 2"),
+        "text\n",
+    )
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "got text\n");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "error\n");
+    assert_contains(
+        &process::feed(&mut Command::new("/nonexistent/tool"), "").unwrap_err(),
+        "cannot run /nonexistent/tool: ",
+    );
+}
+
+/// A program started for its merged output has no input, and what it says on
+/// either stream comes in one pipe, in order.
+#[test]
+fn merged() {
+    use std::io::Read;
+    let _serial = serial();
+    let (mut child, mut reader) =
+        process::spawn_merged(&mut sh("readlink /proc/self/fd/0; echo out; echo err >&2")).unwrap();
+    let mut said = String::new();
+    reader.read_to_string(&mut said).unwrap();
+    assert!(child.wait().unwrap().success());
+    assert_eq!(said, "/dev/null\nout\nerr\n");
+    assert_contains(
+        &process::spawn_merged(&mut Command::new("/nonexistent/tool")).unwrap_err(),
+        "cannot run /nonexistent/tool: ",
+    );
+}
