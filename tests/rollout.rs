@@ -679,19 +679,21 @@ esac
 #[test]
 fn unusable_scratch_is_refused() {
     let (mut fx, hosts) = installers(&["node-1"]);
-    let scratch = fx.dir.join("with space");
-    std::fs::create_dir_all(&scratch).unwrap();
-    fx.set("TMPDIR", &scratch);
-    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
-    assert_eq!(result.code, 1);
-    assert_contains(
-        &result.stderr,
-        &format!(
-            "✗ The temporary directory {} has a space, a quote or a backslash in its path\n",
-            scratch.display()
-        ),
-    );
-    assert_eq!(ssh_log(&fx), "");
+    for name in ["with space", "with'quote", "with\"quote", "with\\backslash"] {
+        let scratch = fx.dir.join(name);
+        std::fs::create_dir_all(&scratch).unwrap();
+        fx.set("TMPDIR", &scratch);
+        let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+        assert_eq!(result.code, 1);
+        assert_contains(
+            &result.stderr,
+            &format!(
+                "✗ The temporary directory {} has a space, a quote or a backslash in its path\n",
+                scratch.display()
+            ),
+        );
+        assert_eq!(ssh_log(&fx), "");
+    }
 }
 
 /// What the operator names reaches the shell of the machine as one word each,
