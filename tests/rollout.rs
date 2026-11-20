@@ -564,6 +564,27 @@ fn old_key_is_replaced_or_said() {
     assert_contains(&result.stdout, "\n  node-1 ssh-ed25519 AAAAnode-1\n");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
 
+    // The reason is what ssh-keygen said on its standard error, whatever else it
+    // printed, and its exit line when it said nothing there.
+    for (script, reason) in [
+        (
+            "echo 'the reason' >&2\necho 'and then something else'\nexit 255",
+            "the reason",
+        ),
+        (
+            "echo 'only out'\nexit 255",
+            "ssh-keygen exited with status 255.",
+        ),
+    ] {
+        write_script(&keygen, &format!("#!/bin/sh\n{script}\n"));
+        std::fs::write(fx.dir.join("machines/node-1.probe"), ROOT_INSTALLER).unwrap();
+        let result = rollout(&fx);
+        assert_contains(
+            &result.stdout,
+            &format!("from {}: {reason}\n", file.display()),
+        );
+    }
+
     std::fs::remove_file(&keygen).unwrap();
     std::fs::write(fx.dir.join("machines/node-1.probe"), ROOT_INSTALLER).unwrap();
     rollout(&fx).ok();

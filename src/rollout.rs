@@ -397,18 +397,20 @@ fn remember(file: &Path, host: &Host, key: &str) -> Result<(), String> {
     let name = ssh::known_name(host);
     // Drop the key of the system that was there before: it must not stay trusted.
     if file.exists() {
-        process::run(
+        let removed = process::capture(
             Command::new("ssh-keygen")
                 .args(["-R", &name, "-f"])
                 .arg(file),
-        )
-        .map_err(|err| {
-            format!(
-                "cannot remove the old key of {name} from {}: {}",
-                file.display(),
-                last_line(&err).unwrap_or_default()
-            )
-        })?;
+        )?;
+        if !removed.status.success() {
+            let said = plain(&String::from_utf8_lossy(&removed.stderr));
+            let why = last_line(&said)
+                .unwrap_or_else(|| process::failure("ssh-keygen", removed.status, ""));
+            return Err(format!(
+                "cannot remove the old key of {name} from {}: {why}",
+                file.display()
+            ));
+        }
     }
     let mut known = std::fs::OpenOptions::new()
         .create(true)
