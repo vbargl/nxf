@@ -311,21 +311,21 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
 }
 
 fn copy(link: &Link, paths: &[&Path]) -> Result<(), String> {
-    let Trust::First { seen } = &link.trust else {
+    if !matches!(link.trust, Trust::First { .. }) {
         return Err("the machine is already installed".to_string());
-    };
-    let mut ssh_options = format!(
-        "-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={}",
-        seen.display()
-    );
-    if let Some(port) = link.host.port {
-        ssh_options.push_str(&format!(" -p {port}"));
     }
+    // The options of the link, so that nix trusts the keys the link trusts.
+    // Nix 2.26 and later split them as a shell does.
+    let ssh_options: Vec<String> = link
+        .options()
+        .iter()
+        .map(|option| crate::fleet::quoted(option))
+        .collect();
     let mut nix = Command::new("nix");
     nix.args(["copy", "--no-check-sigs", "--to"])
         .arg(format!("ssh-ng://{}", link.host.destination()))
         .args(paths)
-        .env("NIX_SSHOPTS", ssh_options);
+        .env("NIX_SSHOPTS", ssh_options.join(" "));
     output::stream(&mut nix, true, &[])
         .map_err(|err| format!("Copying nxf to the machine failed\n{err}"))
 }

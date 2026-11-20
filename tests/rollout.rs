@@ -534,3 +534,34 @@ fn bad_template_before_the_question() {
     // Nothing went beyond the probe.
     assert_eq!(ssh_log(&fx).lines().count(), 1);
 }
+
+/// `nix copy` connects with the trust of the link: the keys this run
+/// accepted and the keys the user knows, so that a key that differs from a
+/// known one is refused there too.
+#[test]
+fn copy_trusts_as_the_link() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let home = fx.dir.join("home");
+    fx.set("HOME", &home);
+    fx.set("NXF_TEST_COPY_FAILS", "1");
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✗ Copying nxf to the machine failed\n");
+    let log = std::fs::read_to_string(fx.dir.join("machines/nix.log")).unwrap();
+    let copy = log.lines().find(|line| line.starts_with("copy ")).unwrap();
+    let (command, options) = copy.split_once(" | ").unwrap();
+    assert_eq!(
+        command,
+        "copy --no-check-sigs --to ssh-ng://root@node-1 /nix/store/nxf-package /nix/store/template-source"
+    );
+    assert_contains(options, "-o BatchMode=yes -o ConnectTimeout=10 ");
+    assert_contains(options, " -o StrictHostKeyChecking=accept-new ");
+    assert_contains(options, " -o 'UserKnownHostsFile=");
+    assert!(
+        options.ends_with(&format!(
+            "/node-1.seen {}/.ssh/known_hosts'",
+            home.display()
+        )),
+        "{options}"
+    );
+}
