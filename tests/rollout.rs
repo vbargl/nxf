@@ -773,6 +773,19 @@ exec '{dir}/ssh' "$@"
         ),
     );
     fx.set("NXF_SSH", &ssh);
+    // A nix that keeps the file it is to know them by, with NIX_SSHOPTS split at spaces alone.
+    write_script(
+        &fx.dir.join("bin/nix"),
+        &format!(
+            r#"#!/usr/bin/env bash
+[[ $1 == copy ]] || {{ echo '{{"storePath": "/nix/store/template-source"}}'; exit; }}
+for option in $NIX_SSHOPTS; do
+    [[ $option != UserKnownHostsFile=* ]] || echo "${{option#*=}}" >> '{dir}/known.log'
+done
+"#,
+            dir = dir.display()
+        ),
+    );
     let hosts = hosts.to_str().unwrap();
     fx.run(&["rollout", "--config", hosts, "--template", "x#y", "--yes"])
         .ok();
@@ -786,7 +799,15 @@ exec '{dir}/ssh' "$@"
     files.dedup();
     assert_eq!(
         files,
-        ["0.known", "0.seen", "1.known", "1.seen", "known_hosts"]
+        [
+            "0.known",
+            "0.seen",
+            "0.trusted",
+            "1.known",
+            "1.seen",
+            "1.trusted",
+            "known_hosts"
+        ]
     );
 }
 
