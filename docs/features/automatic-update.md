@@ -25,11 +25,17 @@ starts and a signal after one failed.
 4. After a switch it runs the health checks of the new configuration, in name
    order, and repeats the round until all pass or `healthTimeout` runs out.
    When checks still fail, it marks the revision as bad in
-   `/var/lib/nxf/bad/<tree>` and activates the previous system again.
+   `/var/lib/nxf/bad/<tree>` and activates the previous system again. It
+   activates the previous system also when the mark cannot be written, and
+   the result `health` then names the failed mark too.
 5. It saves the results to `/var/lib/nxf/update.json`. When a task failed or
    an input was reported, it runs the failure hook with the saved file in
    `NXF_RESULTS`. A failure hook that fails adds the result `hook`.
 6. It exits with status 1 when a result is `failed`, and with 0 otherwise.
+
+A run that fails before any task ran, for example because the checkout names
+an unknown strategy, has the one result `update` `failed` with the cause. It
+is saved, the failure hook runs, and the exit status is 1.
 
 `nxf status` prints the saved results once to each user, as
 `Last automatic update`.
@@ -42,6 +48,9 @@ Boundaries:
   reboot, and `nxf status` says `Restart needed`.
 - nxf ships no health checks and no hooks. The configuration supplies them,
   and without health checks nothing is verified after a switch.
+- A health check fails when any of its commands does. The module runs each
+  script with `set -e`, also the lines that other modules add to the same
+  check.
 - The check hook can only skip the run, and the failure hook can only add
   its own failure.
 - A skipped run, a flagged input and a reported input do not fail the run.
@@ -83,13 +92,15 @@ otherwise. "The results" are those in `update.json`.
 | A21: JSON does not mark as read | Saved results that this user has not seen | `nxf status --json` runs | `lastUpdate` holds the time and the results; the next `nxf status` still prints the summary |
 | A22: The service ended before it saved | `nxf-auto-update.service` ended with a result other than `success`, later than the saved results | `nxf status` runs | The summary has the row `✗ service` with the result of the unit, and `journalctl -u nxf-auto-update.service` |
 | A23: A task by hand | A hold and a health check that fails | `nxf switch` runs by hand | nh builds and switches; no health check runs; the exit status is 0 |
+| A24: The bad mark cannot be written | A health check that still fails when `healthTimeout` runs out, and a `/var/lib/nxf/bad` that cannot be written | The run switches | nh switches to the previous system; the result `health` is `failed` with `<check>: ` and the last line the check printed, then `cannot write` with the path of the mark, then `Returned to <system>.`; the exit status is 1 |
+| A25: The run fails before a task | The configuration in the checkout names a strategy other than `off`, `flag` and `report`, and a failure hook | The run starts | The one result is `update` `failed` with `unknown update strategy '<name>'` in `detail`; the failure hook runs and finds the saved results in the file `$NXF_RESULTS`; the outcome starts with `unknown update strategy '<name>'`; the exit status is 1; `nxf status` shows the row `✗ update` with the cause |
 
 ## Existing verification
 
 Every test below uses the mock nh and stand-ins for the running system, the
 health checks and the hooks. No test activates a system or starts the timer
 or the service; `nix/module-check.nix`, the flake check `module`, evaluates
-the units.
+the units and checks that a health check script holds `set -e`.
 
 | ID | Covered by | Not covered |
 | --- | --- | --- |
@@ -106,7 +117,7 @@ the units.
 | A12 | `tests/health.rs::failed_switch`; `tests/hooks.rs::failed_task_runs_the_hook` | |
 | A13 | `tests/health.rs::healthy`; `tests/health.rs::passes_later` | |
 | A14 | `tests/health.rs::no_checks` | |
-| A15 | `tests/health.rs::unhealthy_returns_and_marks`; `tests/health.rs::hanging_check` for `timed out`; `tests/health.rs::times_of_the_new_configuration` for the times | |
+| A15 | `tests/health.rs::unhealthy_returns_and_marks`; `tests/health.rs::hanging_check` for `timed out`; `tests/health.rs::own_words_are_not_the_deadline` for a check that prints `timed out` itself; `tests/health.rs::times_of_the_new_configuration` for the times | |
 | A16, A17 | `tests/health.rs::unhealthy_returns_and_marks` | |
 | A18 | | No automated test covers it |
 | A19 | `tests/hooks.rs::failing_hook`, after a reported input | A failure hook that fails after a failed task |
@@ -114,5 +125,7 @@ the units.
 | A21 | `tests/status.rs::json`; `tests/status.rs::json_monitoring` for `lastUpdate` | |
 | A22 | `tests/status.rs::update_unit_result` | |
 | A23 | `tests/hold.rs::manual_tasks_run` for the hold; `tests/health.rs::manual_switch` for the health check; `tests/hooks.rs::manual_update` for `nxf update` beside a check hook that fails | |
+| A24 | `tests/health.rs::unmarked_still_returns` | |
+| A25 | `tests/auto_update.rs::undecided_run_is_saved` | |
 
 See the [operating documentation](../../README.md#automatic-updates).
