@@ -154,6 +154,79 @@ fn refuses() {
     assert!(steps(&fx).is_empty());
 }
 
+/// Install refuses a target that --mounted says is there and is not, and a
+/// flake without a lockfile; neither reaches the disks or nixos-install.
+#[test]
+fn refuses_unmounted_and_unlocked() {
+    let (fx, root) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+    let unmounted = fx.run(&["install", &dir, "--mounted"]);
+    assert_ne!(unmounted.code, 0);
+    assert_contains(
+        &unmounted.stderr,
+        &format!("✗ {} is not mounted", root.display()),
+    );
+
+    git(&fx.checkout, &["rm", "--quiet", "flake.lock"]);
+    common::commit(&fx.checkout, "no lockfile");
+    let unlocked = fx.run(&["install", &dir]);
+    assert_ne!(unlocked.code, 0);
+    assert_contains(&unlocked.stderr, &format!("✗ {dir} has no flake.lock"));
+    assert!(steps(&fx).is_empty());
+}
+
+/// The profile of the new system is followed through relative links to the
+/// store path at their end, which is recorded as the machine will see it.
+#[test]
+fn relative_profile_links() {
+    let (fx, root) = installer();
+    write_script(
+        &fx.dir.join("bin/nixos-install"),
+        &format!(
+            "#!/bin/sh\nmkdir -p '{0}'\nln -s system-1-link '{0}/system'\nln -s /nix/store/abc-nixos-system '{0}/system-1-link'\n",
+            root.join("nix/var/nix/profiles").display()
+        ),
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
+    result.ok();
+    assert_contains(
+        &result.stdout,
+        "    System    /nix/store/abc-nixos-system\n",
+    );
+    assert_eq!(
+        std::fs::read_link(root.join("var/lib/nxf/systems").join(fx.tree())).unwrap(),
+        PathBuf::from("/nix/store/abc-nixos-system")
+    );
+}
+
+/// With --reboot the restart is asked for once the system is installed,
+/// and the advice to restart by hand is left out.
+#[test]
+fn reboot() {
+    let (fx, _root) = installer();
+    // The systemctl in front on PATH is the fixture's; here it notes its call.
+    write_script(
+        &fx.systemctl,
+        &format!(
+            "#!/bin/sh\necho \"systemctl $*\" >> '{}/steps'\n",
+            fx.dir.display()
+        ),
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--reboot"]);
+    result.ok();
+    assert_eq!(
+        steps(&fx).last().map(String::as_str),
+        Some("systemctl reboot")
+    );
+    assert!(
+        result
+            .stdout
+            .ends_with("\n  Restarting into the new system.\n"),
+        "{}",
+        result.stdout
+    );
+}
+
 /// A failed nixos-install fails the command with what it said, and nothing
 /// is recorded as installed.
 #[test]

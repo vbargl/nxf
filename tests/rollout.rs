@@ -169,6 +169,55 @@ fn asks_before_erasing() {
     assert_eq!(log.lines().count(), 3);
 }
 
+/// Machines can only get the nxf of a package: one that does not run from
+/// the Nix store refuses to install, after it asked what the machines are.
+#[test]
+fn needs_its_package() {
+    let (fx, hosts) = machines(&[("node-1", UBUNTU)]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        " is not in the Nix store, so it cannot be copied to the machines\n  Run nxf from its package.",
+    );
+    let log = std::fs::read_to_string(fx.dir.join("machines/ssh.log")).unwrap();
+    assert_eq!(log.lines().count(), 1);
+}
+
+/// A machine whose installation fails is named; together with one that
+/// gave no answer, the outcome counts both as not rolled out.
+#[test]
+fn not_rolled_out() {
+    let (fx, hosts) = machines(&[("node-1", INSTALLER), ("node-2", "")]);
+    // Nix copies over the ssh on PATH: here one that reaches no machine.
+    let copies = fx.dir.join("copies");
+    write_script(
+        &fx.dir.join("bin/ssh"),
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\necho 'ssh: no machine here' >&2\nexit 255\n",
+            copies.display()
+        ),
+    );
+    let fx = fx.with("NXF_PACKAGE", &common::fake_systems().one);
+    let template = format!("{}#machine", fx.checkout.display());
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        &template,
+        "--yes",
+    ]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  · Already in a NixOS installer\n");
+    assert_contains(&result.stdout, "\n  ✗ Copying nxf to the machine failed\n");
+    assert_contains(
+        &result.stderr,
+        "✗ 2 of 2 machines not rolled out\n  Not installed: node-1.",
+    );
+    assert_contains(&std::fs::read_to_string(&copies).unwrap(), "root@node-1");
+}
+
 /// A machine that does not answer fails the command, and is never taken for
 /// one to install.
 #[test]
