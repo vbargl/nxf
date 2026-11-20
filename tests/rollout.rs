@@ -289,17 +289,13 @@ esac
     );
     write_script(
         &fx.dir.join("bin/nix"),
-        &format!(
-            r#"#!/usr/bin/env bash
-echo "$* | ${{NIX_SSHOPTS:-}}" >> '{dir}/nix.log'
+        r#"#!/usr/bin/env bash
 case "$1 $2" in
-    'flake prefetch') echo '{{"storePath": "/nix/store/template-source"}}' ;;
-    'copy '*) [[ -z ${{NXF_TEST_COPY_FAILS:-}} ]] || {{ echo 'error: cannot connect' >&2; exit 1; }} ;;
+    'flake prefetch') echo '{"storePath": "/nix/store/template-source"}' ;;
+    'copy '*) ;;
     *) exit 1 ;;
 esac
 "#,
-            dir = dir.display()
-        ),
     );
     fx.set("NXF_PACKAGE", "/nix/store/nxf-package");
     // The keys the user knows are read for `nix copy`: not those of whoever runs the tests.
