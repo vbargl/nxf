@@ -348,7 +348,9 @@ in
         lib.mapAttrs' (
           name: script:
           lib.nameValuePair "nxf/health.d/${name}" {
+            # Modules may each add lines to a check, so every command must succeed.
             source = pkgs.writeShellScript "nxf-health-${name}" ''
+              set -e
               ${tools}
               ${script}
             '';

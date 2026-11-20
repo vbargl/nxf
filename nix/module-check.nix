@@ -131,6 +131,8 @@ pkgs.runCommand "nxf-module-check"
     has "$rootServicePath" 'X-StopOnRemoval=false'
     has "$rootServicePath" 'X-RestartIfChanged=false'
     test -x "$healthCheck"
+    # Lines that modules add to one check must each succeed.
+    has "$healthCheck" 'set -e'
     test -x "$checkHook"
     has "$checkHook" 'set -e'
     has "$checkHook" 'test -e /run/rollout-open'
