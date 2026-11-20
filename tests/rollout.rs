@@ -260,3 +260,104 @@ fn managed_from_memory() {
         Found::Other("Other 1".to_string())
     );
 }
+
+const ROOT_INSTALLER: &str =
+    "nxf-probe managed=no installer=yes uid=0 arch=x86_64\nnxf-os NixOS 25.11\n";
+
+/// Installers behind a mock ssh that plays an installation: it keeps the
+/// files it is sent, reports a host key for `nxf install`, and answers as a
+/// managed machine from then on. A mock nix names the source of the template
+/// and records what `nix copy` is given; NXF_PACKAGE stands in for nxf.
+fn installers(names: &[&str]) -> (Fixture, String) {
+    let answers: Vec<(&str, &str)> = names.iter().map(|name| (*name, ROOT_INSTALLER)).collect();
+    let (mut fx, hosts) = machines(&answers);
+    let dir = fx.dir.join("machines");
+    write_script(
+        &dir.join("ssh"),
+        &format!(
+            r#"#!/usr/bin/env bash
+while [[ $1 == -* ]]; do shift 2; done
+destination=$1; shift
+name=${{destination#*@}}
+echo "$name $*" >> '{dir}/ssh.log'
+case "$*" in
+    sh) cat > /dev/null; cat '{dir}'/"$name.probe" ;;
+    *'tar --extract'*) cat > '{dir}'/"$name.tar" ;;
+    *'bin/nxf install '*)
+        echo "  Host key  ssh-ed25519 AAAA$name"
+        printf 'nxf-probe managed=yes installer=no uid=0 arch=x86_64\nnxf-os NixOS\n' > '{dir}'/"$name.probe" ;;
+    'nxf status --json') echo '{{"revision": "0123456789abcdef"}}' ;;
+esac
+"#,
+            dir = dir.display()
+        ),
+    );
+    write_script(
+        &fx.dir.join("bin/nix"),
+        &format!(
+            r#"#!/usr/bin/env bash
+echo "$* | ${{NIX_SSHOPTS:-}}" >> '{dir}/nix.log'
+case "$1 $2" in
+    'flake prefetch') echo '{{"storePath": "/nix/store/template-source"}}' ;;
+    'copy '*) [[ -z ${{NXF_TEST_COPY_FAILS:-}} ]] || {{ echo 'error: cannot connect' >&2; exit 1; }} ;;
+    *) exit 1 ;;
+esac
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_PACKAGE", "/nix/store/nxf-package");
+    (fx, hosts)
+}
+
+fn ssh_log(fx: &Fixture) -> String {
+    std::fs::read_to_string(fx.dir.join("machines/ssh.log")).unwrap_or_default()
+}
+
+/// The files of a machine are packed straight into the connection, and an
+/// archive that tar could not finish is not sent on as complete: the machine
+/// fails with what tar said, and nothing is founded from half of its files.
+#[test]
+fn unpacked_files_fail_the_machine() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let files = fx.dir.join("files");
+    std::fs::create_dir_all(files.join("node-1")).unwrap();
+    std::fs::write(files.join("node-1/identity.toml"), "name = \"node-1\"\n").unwrap();
+    let rollout = |fx: &Fixture| {
+        fx.run(&[
+            "rollout",
+            "--config",
+            &hosts,
+            "--template",
+            "x#y",
+            "--yes",
+            "--files",
+            files.to_str().unwrap(),
+        ])
+    };
+    let tar = fx.dir.join("bin/tar");
+    write_script(
+        &tar,
+        "#!/bin/sh\nprintf 'half an archive'\necho 'tar: ./secret: Cannot open: Permission denied' >&2\nexit 2\n",
+    );
+    let result = rollout(&fx);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✗ Sending the machine's files failed\n");
+    assert_contains(
+        &result.stdout,
+        "tar: ./secret: Cannot open: Permission denied",
+    );
+    assert_contains(&result.stderr, "Not installed: node-1.");
+    assert_lacks(&ssh_log(&fx), "bin/nxf init");
+
+    // With a tar that works, the machine gets its files and is installed.
+    std::fs::remove_file(&tar).unwrap();
+    std::fs::write(fx.dir.join("machines/node-1.probe"), ROOT_INSTALLER).unwrap();
+    let result = rollout(&fx);
+    result.ok();
+    let archive = fx.dir.join("machines/node-1.tar");
+    let sent = common::sh("tar", &["--list", "--file", archive.to_str().unwrap()]);
+    assert_contains(&sent, "./identity.toml");
+    assert_contains(&ssh_log(&fx), "--files /tmp/nxf-files");
+    assert_contains(&result.stdout, "\n✓ 1 machine installed\n");
+}

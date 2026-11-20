@@ -3,7 +3,7 @@
 //! repeated. Any other machine is started into a NixOS installer and
 //! installed there with `nxf init` and `nxf install`.
 
-use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -326,40 +326,46 @@ fn copy(link: &Link, paths: &[&Path]) -> Result<(), String> {
         .map_err(|err| format!("Copying nxf to the machine failed\n{err}"))
 }
 
-/// Sends the files of a machine as a tar stream into a directory there.
+/// Sends the files of a machine as a tar stream into a directory there. tar
+/// writes into the connection, and the files are sent only when both ended well.
 fn upload(link: &Link, files: &Path, to: &str) -> Result<(), String> {
     let mut tar = Command::new("tar")
         .arg("--create")
         .arg("--directory")
         .arg(files)
         .arg(".")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| format!("cannot run tar: {err}"))?;
-    let mut archive = Vec::new();
-    if let Some(mut stdout) = tar.stdout.take() {
-        stdout
-            .read_to_end(&mut archive)
-            .map_err(|err| err.to_string())?;
-    }
-    let _ = tar.wait();
+    let archive = tar.stdout.take().ok_or("cannot read from tar")?;
     let mut ssh = link.ssh(&format!(
         "rm -rf {to} && mkdir -p {to} && tar --extract --directory {to}"
     ));
-    let mut child = ssh
-        .stdin(Stdio::piped())
+    let sent = ssh
+        .stdin(archive)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("cannot run ssh: {err}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&archive).map_err(|err| err.to_string())?;
-    }
-    let output = child.wait_with_output().map_err(|err| err.to_string())?;
-    if !output.status.success() {
+        .spawn();
+    // The command holds the read end of the archive until it is dropped.
+    drop(ssh);
+    let packed = std::thread::spawn(move || tar.wait_with_output());
+    let sent = sent.and_then(|child| child.wait_with_output());
+    let packed = packed.join().map_err(|_| "cannot wait for tar")?;
+    let (packed, sent) = (
+        packed.map_err(|err| format!("cannot run tar: {err}"))?,
+        sent.map_err(|err| format!("cannot run ssh: {err}"))?,
+    );
+    if !packed.status.success() || !sent.status.success() {
+        let said = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&packed.stderr).trim(),
+            String::from_utf8_lossy(&sent.stderr).trim()
+        );
         return Err(format!(
             "Sending the machine's files failed\n{}",
-            String::from_utf8_lossy(&output.stderr).trim()
+            said.trim()
         ));
     }
     Ok(())
