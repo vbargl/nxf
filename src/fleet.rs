@@ -15,10 +15,11 @@ use crate::output::{self, Mark, Style};
 use crate::text::plain;
 use crate::{hold, status};
 
-/// What a machine answered. No code means that ssh did not end in time.
+/// What a machine answered. No code means that ssh did not end within the limit.
 pub struct Reply {
     pub host: Host,
     pub code: Option<i32>,
+    pub limit: Duration,
     pub stdout: String,
     pub stderr: String,
 }
@@ -43,7 +44,11 @@ impl Reply {
                 said().unwrap_or_else(|| "ssh failed".to_string())
             )),
             Some(code) => Some(said().unwrap_or_else(|| format!("nxf exited with status {code}"))),
-            None => Some("unreachable: no answer in time".to_string()),
+            // The machine may have been reached: it did not finish, which is not unreachable.
+            None => Some(match self.limit.as_secs() {
+                1 => "timed out after 1 second".to_string(),
+                seconds => format!("timed out after {seconds} seconds"),
+            }),
         }
     }
 }
@@ -100,6 +105,7 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
     let reply = |code, stdout, stderr| Reply {
         host: host.clone(),
         code,
+        limit: timeout,
         stdout,
         stderr,
     };
@@ -158,6 +164,7 @@ fn run_for(hosts: &[Host], args: &[String], timeout: Duration) -> Vec<Reply> {
                 asked.join().unwrap_or_else(|_| Reply {
                     host: host.clone(),
                     code: None,
+                    limit: timeout,
                     stdout: String::new(),
                     stderr: String::new(),
                 })
@@ -345,6 +352,10 @@ pub fn waves(count: usize, batch: usize) -> Vec<std::ops::Range<usize>> {
 
 /// What the upgrade did on one machine, from the outcomes its `--json` printed.
 fn upgraded(reply: &Reply) -> Result<String, String> {
+    if let (None, Some(error)) = (reply.code, reply.error()) {
+        // Ending ssh here does not end the task there.
+        return Err(format!("{error}; the upgrade may still run on the machine"));
+    }
     let outcomes = match reply.code {
         Some(255) | None => None,
         Some(_) => match serde_json::from_str::<Value>(&reply.stdout) {
