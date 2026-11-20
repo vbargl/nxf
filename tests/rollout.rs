@@ -1,6 +1,6 @@
 //! Tests for src/rollout.rs: what each machine is found to be, and what is
-//! planned for it. The installation itself needs a real machine; it is
-//! checked by hand on a virtual machine, not here.
+//! planned for it. The steps of an installation are played behind a mock ssh;
+//! a real installation is checked by hand on a virtual machine.
 
 mod common;
 
