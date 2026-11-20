@@ -805,9 +805,11 @@ sudo asks them for no password.
 The module hands over only what nxf changes: the directory, `flake.lock`, the
 `.git` repository, which it sets to `core.sharedRepository = group`, and the
 state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
-its files writable by the group while the checkout is, and the module makes
-Git trust the checkout for every user: Git refuses one that another user
-owns, which is the case for root and for the other members of the group.
+its files writable by the group while the checkout is, for the commands that
+work on it: the tasks, `auto-update`, `status`, `doctor`, `version --system`
+and `init` without a directory. The module makes Git trust the checkout for
+every user: Git refuses one that another user owns, which is the case for root
+and for the other members of the group.
 
 A flake that `nxf init` or `nxf install` founds belongs to whoever ran it,
 usually root, because the user `nxf` exists only once the configuration is

@@ -84,7 +84,7 @@ flake, the mock nh and isolated state directories. The
 Beyond the scenarios, `tests/doctor.rs::linked_worktree` covers linked Git
 worktrees, and the VM test covers the repair of the directory's mode by
 tmpfiles and per-user source roots that survive garbage collection.
-`tests/nixos.rs::sources_stay_until_replaced` covers that the source roots
+`tests/state.rs::sources_stay_until_replaced` covers that the source roots
 of a build stay until those of the next build replace them.
 
 See the [operating documentation](../../README.md#status) for state paths and

@@ -73,11 +73,16 @@ change them here first.
 | `src/rollout.rs` | Installing the machines of a hosts file that nxf does not manage |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
-| `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
+| `src/output.rs` | Terminal styles, rows, label columns, phase headings, outcomes and streaming diagnostics |
 | `src/progress.rs` | Nix activity decoding, derivation counts and active package names |
 | `src/git.rs` | Git helpers |
 | `src/flake.rs` | Flake helpers: the checkout, updating inputs, reading the lockfile |
-| `src/nixos.rs` | NixOS helpers: nh, the running system, package changes, sizes, remembered builds, the updater's results |
+| `src/nixos.rs` | NixOS helpers: nh, dix, the running system, package changes, sizes, the update service |
+| `src/env.rs` | The environment: the name of each variable nxf reads, and the readers of its values |
+| `src/process.rs` | Child processes: running them, with a deadline, the one shape of their failures, and the atomic write of a file |
+| `src/ssh.rs` | Reaching a machine over ssh: the options, the trust of its host key, the quoting of the remote command |
+| `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots, the updater's results |
+| `src/time.rs` | The clock, a time as `date` reads and writes it, and how long ago a time was |
 | `src/text.rs` | Escape-sequence removal and clipping to terminal cells |
 | `nix/package.nix` | The package |
 | `nix/module.nix` | The NixOS module |
@@ -89,8 +94,13 @@ change them here first.
 - The version lives in `Cargo.toml`; the package reads it. Bump it with every
   change of behaviour.
 - `git.rs`, `flake.rs` and `nixos.rs` each wrap one tool and do not use each
-  other. They may use `output.rs` for progress and failure diagnostics. The
-  tasks and the status report wire them together.
+  other. They may use `output.rs` for progress and failure diagnostics, and
+  `env.rs`, `process.rs` and `state.rs`. The tasks and the status report wire
+  them together.
+- Every variable of the environment is named in `env.rs` and read through it.
+  Every child process is started through `process.rs`, and every call of ssh
+  is made through `ssh.rs`. A new variable, command or program is one edit
+  there, and not a copy of what another module does.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
   line. It also calls `ssh` for every command with `--config` and for
