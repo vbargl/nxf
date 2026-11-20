@@ -78,6 +78,8 @@ Boundaries:
   when no machine is to be installed: a run in which every machine is managed
   fails on an unreadable file. A file of keys that the run wrote itself and
   cannot read fails that machine at the copy.
+- When `ssh-keygen -R` removes the old key, it leaves the original content of
+  the `--known-hosts` file as `<file>.old` beside it.
 - `--files <dir>` takes a directory. Anything else is refused before any
   machine is asked. A machine without `<dir>/<name>/` gets the template
   alone.
