@@ -70,3 +70,11 @@ pub fn fit(text: &str, width: usize) -> String {
     prefix.push('…');
     prefix
 }
+
+/// The last line of a text that is not empty, trimmed.
+pub fn last_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(str::to_string)
+}

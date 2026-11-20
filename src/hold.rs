@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::nixos;
+use crate::{nixos, process};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hold {
@@ -54,19 +54,8 @@ pub fn set(reason: &str, until: Option<u64>) -> Result<Hold, String> {
         since: now(),
         until,
     };
-    let dir = nixos::updater_dir();
-    let temporary = dir.join(format!("hold.json.{}.tmp", std::process::id()));
-    let text = format!(
-        "{:#}\n",
-        json!({"reason": hold.reason, "since": hold.since, "until": hold.until})
-    );
-    std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&temporary, text))
-        .and_then(|()| std::fs::rename(&temporary, file()))
-        .map_err(|err| {
-            let _ = std::fs::remove_file(&temporary);
-            denied("write", err)
-        })?;
+    let text = format!("{:#}\n", hold.to_json());
+    process::write_atomic(&file(), &text).map_err(|err| denied("write", err))?;
     Ok(hold)
 }
 
@@ -109,10 +98,7 @@ pub fn duration(text: &str) -> Result<u64, String> {
 
 /// A point in time as `date --date` understands it, in the local time zone.
 pub fn time(text: &str) -> Result<u64, String> {
-    let output = Command::new("date")
-        .args(["--date", text, "+%s"])
-        .output()
-        .map_err(|err| format!("cannot run date: {err}"))?;
+    let output = process::capture(Command::new("date").args(["--date", text, "+%s"]))?;
     let parsed = String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse::<u64>();
@@ -126,9 +112,7 @@ pub fn time(text: &str) -> Result<u64, String> {
 
 /// A time for people, in the local time zone.
 pub fn shown(time: u64) -> String {
-    Command::new("date")
-        .args(["--date", &format!("@{time}"), "+%Y-%m-%d %H:%M"])
-        .output()
+    process::capture(Command::new("date").args(["--date", &format!("@{time}"), "+%Y-%m-%d %H:%M"]))
         .ok()
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())

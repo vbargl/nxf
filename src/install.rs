@@ -3,12 +3,12 @@
 //! the machine's /etc/nixos.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use serde_json::json;
 
 use crate::output::{self, Mark};
-use crate::{env, flake, git, hold, nixos};
+use crate::{env, flake, git, hold, nixos, process};
 
 /// The mark of a machine that nxf installed. `nxf rollout` leaves such a
 /// machine alone.
@@ -58,32 +58,23 @@ fn managed() -> bool {
             .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
 
-fn run(command: &mut Command, what: &str) -> Result<(), String> {
-    output::stream(command, false, &[]).map_err(|err| format!("{what} failed\n{err}"))
-}
-
 /// The script of the configuration's disko layout that erases, formats and
 /// mounts the disks. NXF_DISKO stands in for it in tests.
 fn disko(dir: &Path, configuration: &str) -> Result<PathBuf, String> {
     if let Some(script) = env::var(env::DISKO) {
         return Ok(script);
     }
-    let built = Command::new("nix")
-        .args(["build", "--no-link", "--print-out-paths"])
-        .arg(format!(
-            "{}#nixosConfigurations.\"{configuration}\".config.system.build.diskoScript",
-            dir.display()
-        ))
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !built.status.success() {
-        return Err(format!(
-            "The configuration has no disk layout to apply\n{}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.",
-            String::from_utf8_lossy(&built.stderr).trim()
-        ));
-    }
+    let built = process::run(
+        Command::new("nix")
+            .args(["build", "--no-link", "--print-out-paths"])
+            .arg(format!(
+                "{}#nixosConfigurations.\"{configuration}\".config.system.build.diskoScript",
+                dir.display()
+            )),
+    )
+    .map_err(|err| {
+        format!("The configuration has no disk layout to apply\n{err}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.")
+    })?;
     Ok(PathBuf::from(
         String::from_utf8_lossy(&built.stdout).trim().to_string(),
     ))
@@ -93,20 +84,14 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|err| format!("{}: {err}", parent.display()))?;
     }
-    let status = Command::new("cp")
-        .args(["--archive", "--no-target-directory"])
-        .arg(from)
-        .arg(to)
-        .status()
-        .map_err(|err| format!("cannot run cp: {err}"))?;
-    if !status.success() {
-        return Err(format!(
-            "cannot copy {} to {}",
-            from.display(),
-            to.display()
-        ));
-    }
-    Ok(())
+    process::run(
+        Command::new("cp")
+            .args(["--archive", "--no-target-directory"])
+            .arg(from)
+            .arg(to),
+    )
+    .map(drop)
+    .map_err(|err| format!("cannot copy {} to {}\n{err}", from.display(), to.display()))
 }
 
 /// Gives the machine its SSH host key now, so that the key can be told to
@@ -116,18 +101,11 @@ fn host_key(root: &Path) -> Result<String, String> {
     let public = key.with_extension("pub");
     if !public.exists() {
         std::fs::create_dir_all(root.join("etc/ssh")).map_err(|err| err.to_string())?;
-        let made = Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"])
-            .arg(&key)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| format!("cannot run ssh-keygen: {err}"))?;
-        if !made.status.success() {
-            return Err(format!(
-                "ssh-keygen failed: {}",
-                String::from_utf8_lossy(&made.stderr).trim()
-            ));
-        }
+        process::run(
+            Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"])
+                .arg(&key),
+        )?;
     }
     let line = std::fs::read_to_string(&public)
         .map_err(|err| format!("cannot read {}: {err}", public.display()))?;
@@ -155,7 +133,7 @@ fn installed_system(root: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn run_install(options: &Options) -> Result<(), String> {
+pub fn run(options: &Options) -> Result<(), String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
     let root = target();
@@ -198,7 +176,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     if !options.mounted {
         output::start("Partitioning the disks");
         let script = disko(&dir, &configuration)?;
-        run(&mut Command::new(&script), "Partitioning the disks")?;
+        output::stream(&mut Command::new(&script), false, &[])?;
         output::row(Mark::Done, "Erased, formatted and mounted");
         output::sub("Layout", &format!("nixosConfigurations.{configuration}"));
     }
@@ -222,7 +200,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
         .arg("--flake")
         .arg(format!("{}#{configuration}", home.display()))
         .args(["--no-root-passwd", "--no-channel-copy"]);
-    run(&mut install, "nixos-install")?;
+    output::stream(&mut install, false, &[])?;
     let system = installed_system(&root);
     output::row(Mark::Done, "Installed");
     output::sub("Flake", "/etc/nixos");

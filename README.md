@@ -540,7 +540,7 @@ the one before has ended without a failure.
 hosts.toml · 3 machines
 
   ✓ node-1    inputs updated, switched
-  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | Command exited with status 1. | Some changes may already be active.
+  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | nh exited with status 1. | Some changes may already be active.
   · node-3    not started
 
 ✗ Upgrade failed on 1 of 3 machines

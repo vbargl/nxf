@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{flake, hold, hooks, nixos, output, status, strategy};
+use crate::{flake, hold, hooks, nixos, output, process, status, strategy};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -116,10 +116,7 @@ fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
     let report = json!({"time": time, "results": list});
     let file = state.join("update.json");
-    let temporary = state.join("update.json.tmp");
-    std::fs::create_dir_all(state)
-        .and_then(|()| std::fs::write(&temporary, format!("{report:#}\n")))
-        .and_then(|()| std::fs::rename(&temporary, &file))
+    process::write_atomic(&file, &format!("{report:#}\n"))
         .map_err(|err| format!("cannot save {}: {err}", file.display()))?;
     Ok(file)
 }

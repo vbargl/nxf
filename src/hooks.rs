@@ -6,7 +6,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::{env, health};
+use crate::env;
+use crate::process::{self, TIMED_OUT};
 
 pub const DEFAULT_DIR: &str = "/etc/nxf/hooks";
 
@@ -21,7 +22,9 @@ fn hook(name: &str) -> Option<PathBuf> {
 
 fn run(hook: &Path, variables: &[(&str, &Path)]) -> Option<String> {
     let deadline = Instant::now() + env::seconds(env::HOOK_TIMEOUT, 60);
-    health::passes(hook, deadline, variables).err()
+    process::script(hook, deadline, variables)
+        .err()
+        .map(|why| why.unwrap_or_else(|| TIMED_OUT.to_string()))
 }
 
 /// What the check hook said when it did not let the update start.

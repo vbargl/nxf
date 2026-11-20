@@ -3,9 +3,8 @@
 //! destinations and nothing about what the machines form together. The
 //! upgrade is the one of these that changes machines, and it goes in waves.
 
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -13,8 +12,8 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark, Style};
-use crate::text::plain;
-use crate::{hold, status};
+use crate::text::{last_line, plain};
+use crate::{hold, process, status};
 
 /// What a machine answered. No code means that ssh did not end within the limit.
 pub struct Reply {
@@ -26,17 +25,9 @@ pub struct Reply {
 }
 
 impl Reply {
-    fn last(text: &str) -> Option<String> {
-        plain(text)
-            .lines()
-            .map(str::trim)
-            .rfind(|line| !line.is_empty())
-            .map(str::to_string)
-    }
-
     /// Why the machine gave no usable answer, if it did not.
     fn error(&self) -> Option<String> {
-        let said = || Self::last(&self.stderr).or_else(|| Self::last(&self.stdout));
+        let said = || last_line(&plain(&self.stderr)).or_else(|| last_line(&plain(&self.stdout)));
         match self.code {
             Some(0) => None,
             // ssh itself exits with 255 when it cannot connect.
@@ -92,11 +83,7 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
     if let Some(port) = host.port {
         ssh.args(["-p", &port.to_string()]);
     }
-    ssh.arg(host.destination())
-        .arg(remote)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    ssh.arg(host.destination()).arg(remote);
     let reply = |code, stdout, stderr| Reply {
         host: host.clone(),
         code,
@@ -104,39 +91,15 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
         stdout,
         stderr,
     };
-    let mut child = match ssh.spawn() {
-        Ok(child) => child,
-        Err(err) => return reply(Some(255), String::new(), format!("cannot run ssh: {err}")),
-    };
-    // Each pipe is read on its own thread, so that a full pipe cannot stall the machine.
-    let collect = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut text);
-            }
-            String::from_utf8_lossy(&text).into_owned()
-        })
-    };
-    let stdout = collect(child.stdout.take().map(|pipe| Box::new(pipe) as _));
-    let stderr = collect(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-    let deadline = Instant::now() + timeout;
-    let code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status.code().unwrap_or(255)),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    reply(
-        code,
-        stdout.join().unwrap_or_default(),
-        stderr.join().unwrap_or_default(),
-    )
+    match process::run_within(&mut ssh, Instant::now() + timeout, false) {
+        // A signal ends ssh without a code of its own.
+        Ok(done) => reply(
+            done.status.map(|status| status.code().unwrap_or(255)),
+            done.stdout,
+            done.stderr,
+        ),
+        Err(err) => reply(Some(255), String::new(), err),
+    }
 }
 
 /// Runs nxf with the arguments on every host at once; replies come back in
@@ -314,7 +277,7 @@ pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &s
                 output::row(Mark::Failed, &format!("{name:<width$}{error}"));
             }
             None => {
-                let said = Reply::last(&reply.stdout).unwrap_or_default();
+                let said = last_line(&plain(&reply.stdout)).unwrap_or_default();
                 output::row(Mark::Done, &format!("{name:<width$}{said}"));
             }
         }

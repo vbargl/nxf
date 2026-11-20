@@ -15,6 +15,7 @@ pub mod init;
 pub mod install;
 pub mod nixos;
 pub mod output;
+pub mod process;
 pub mod progress;
 pub mod rollout;
 pub mod status;

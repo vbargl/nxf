@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::doctor::{self, Check, Level};
-use crate::{flake, git, output};
+use crate::{flake, git, output, process};
 
 /// The module file every founded flake gets. `nix/init-module.nix` generates
 /// it from the options of the NixOS module, and a flake check compares them.
@@ -38,17 +38,11 @@ fn absolute(template: &str) -> String {
 }
 
 fn hardware(dir: &Path) -> Result<(), String> {
-    let output = Command::new("nixos-generate-config")
-        // The flake describes the file systems; the disks may not be partitioned yet.
-        .args(["--show-hardware-config", "--no-filesystems"])
-        .output()
-        .map_err(|err| format!("cannot run nixos-generate-config: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "nixos-generate-config failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+    let output = process::run(
+        Command::new("nixos-generate-config")
+            // The flake describes the file systems; the disks may not be partitioned yet.
+            .args(["--show-hardware-config", "--no-filesystems"]),
+    )?;
     std::fs::write(dir.join("hardware.nix"), output.stdout)
         .map_err(|err| format!("cannot write hardware.nix: {err}"))
 }
@@ -113,15 +107,13 @@ pub fn run(options: &Options) -> Result<(), String> {
     }
     if let Some(files) = &options.files {
         // The machine's own values: laid over the template, never read by nxf.
-        let copied = Command::new("cp")
-            .args(["--recursive", "--no-target-directory"])
-            .arg(files)
-            .arg(&dir)
-            .status()
-            .map_err(|err| format!("cannot run cp: {err}"))?;
-        if !copied.success() {
-            return Err(format!("cannot copy {} into the flake", files.display()));
-        }
+        process::run(
+            Command::new("cp")
+                .args(["--recursive", "--no-target-directory"])
+                .arg(files)
+                .arg(&dir),
+        )
+        .map_err(|err| format!("cannot copy {} into the flake\n{err}", files.display()))?;
         output::fact("Files", &files.to_string_lossy());
     }
     let module_file = dir.join(MODULE_FILE);

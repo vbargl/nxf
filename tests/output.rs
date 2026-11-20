@@ -226,7 +226,7 @@ fn stream_failure() {
     failing.args(["-c", "echo diagnostic >&2; exit 3"]);
     assert_eq!(
         output::stream(&mut failing, true, &[]).unwrap_err(),
-        "Command exited with status 3.\ndiagnostic"
+        "sh exited with status 3.\ndiagnostic"
     );
     let mut missing = Command::new("/nonexistent/tool");
     assert_contains(
@@ -244,7 +244,7 @@ fn stream_failure_tail() {
     assert_eq!(
         error,
         format!(
-            "Command exited with status 1.\n{}",
+            "sh exited with status 1.\n{}",
             (13..=20)
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()

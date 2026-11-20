@@ -5,7 +5,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::{env, output};
+use crate::{env, output, process};
 
 pub const DEFAULT_CHECKOUT: &str = "/etc/nixos";
 
@@ -54,15 +54,12 @@ pub fn update(dir: &Path, inputs: &[String]) -> Result<(), String> {
 
 /// The NixOS configurations a flake directory defines.
 pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
-    let output = Command::new("nix")
-        .args(["eval", "--json"])
-        .arg(format!("{}#nixosConfigurations", dir.display()))
-        .args(["--apply", "builtins.attrNames"])
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(
+        Command::new("nix")
+            .args(["eval", "--json"])
+            .arg(format!("{}#nixosConfigurations", dir.display()))
+            .args(["--apply", "builtins.attrNames"]),
+    )?;
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
@@ -70,22 +67,18 @@ pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
 /// its inputs: the strategy for all of them and those of single ones, from
 /// `services.nxf.autoUpdate`. Null and empty where it does not have the option.
 pub fn update_settings(dir: &Path, configuration: &str) -> Result<Value, String> {
-    let output = Command::new("nix")
-        .args(["eval", "--json"])
-        .arg(format!(
-            "{}#nixosConfigurations.\"{configuration}\"",
-            dir.display()
-        ))
-        .args([
-            "--apply",
-            "c: { strategy = c.config.services.nxf.autoUpdate.strategy or null; inputs = c.config.services.nxf.autoUpdate.inputs or { }; }",
-        ])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(
+        Command::new("nix")
+            .args(["eval", "--json"])
+            .arg(format!(
+                "{}#nixosConfigurations.\"{configuration}\"",
+                dir.display()
+            ))
+            .args([
+                "--apply",
+                "c: { strategy = c.config.services.nxf.autoUpdate.strategy or null; inputs = c.config.services.nxf.autoUpdate.inputs or { }; }",
+            ]),
+    )?;
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
@@ -300,15 +293,7 @@ pub fn input_rows(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<I
 }
 
 fn nix(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("nix")
-        .args(args)
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(Command::new("nix").args(args).current_dir(dir))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

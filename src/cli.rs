@@ -330,7 +330,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             dir,
             mounted,
             reboot,
-        } => install::run_install(&install::Options {
+        } => install::run(&install::Options {
             dir,
             mounted,
             reboot,

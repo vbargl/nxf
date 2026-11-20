@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::text::{fit, strip_ansi};
-use crate::{env, progress};
+use crate::{env, process, progress};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -490,15 +490,5 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
         .collect::<Vec<_>>()
         .join("\n")
         .replace('\r', "\n");
-    let lines: Vec<&str> = decoded.lines().filter(|line| !line.is_empty()).collect();
-    let tail = lines[lines.len().saturating_sub(8)..].join("\n");
-    let code = status
-        .code()
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "signal".to_string());
-    Err(if tail.is_empty() {
-        format!("Command exited with status {code}.")
-    } else {
-        format!("Command exited with status {code}.\n{tail}")
-    })
+    Err(process::failure(&process::name(command), status, &decoded))
 }

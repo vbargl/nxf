@@ -105,11 +105,11 @@ fn failed_build_is_restored() {
     assert_eq!(report["results"][1]["inputs"], json!(["a"]));
     assert_contains(
         report["results"][1]["detail"].as_str().unwrap(),
-        "Command exited with status 3.",
+        "nh exited with status 3.",
     );
     assert_contains(
         &fx.run(&["status"]).stdout,
-        "\n  · update a  reported, Command exited with status 3.",
+        "\n  · update a  reported, nh exited with status 3.",
     );
 }
 
@@ -421,10 +421,10 @@ fn unsaved_run_keeps_its_cause() {
         ),
     );
 
-    // A failure hook that leaves a directory where the results are written next.
+    // A failure hook that leaves a directory where the results are replaced next.
     failure_hook(
         &mut fx,
-        "#!/bin/sh\nmkdir \"$NXF_RESULTS.tmp\"\necho 'the pager is down'\nexit 1\n",
+        "#!/bin/sh\nrm \"$NXF_RESULTS\"\nmkdir \"$NXF_RESULTS\"\necho 'the pager is down'\nexit 1\n",
     );
     let result = fx.run(&["auto-update"]);
     assert_eq!(result.code, 1);

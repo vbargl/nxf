@@ -2,19 +2,16 @@
 //! executables in one directory, with their times in a file beside them; all
 //! must pass before the time runs out.
 
-use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::env;
-use crate::text::plain;
+use crate::process::{self, TIMED_OUT};
 
 pub const DEFAULT_DIR: &str = "/etc/nxf/health.d";
 /// The file beside the directory of the checks that holds their times.
 const SETTINGS: &str = "health.conf";
-const TIMED_OUT: &str = "timed out";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Health {
@@ -62,61 +59,6 @@ fn checks() -> Vec<PathBuf> {
     checks
 }
 
-/// Runs one script until the deadline, with the given variables added to its
-/// environment; an error says why it did not pass.
-pub fn passes(check: &Path, deadline: Instant, variables: &[(&str, &Path)]) -> Result<(), String> {
-    attempt(check, deadline, variables).map_err(|why| why.unwrap_or_else(|| TIMED_OUT.to_string()))
-}
-
-/// The same, with no reason when the deadline cut the script short: what a
-/// script says itself is never taken for that.
-fn attempt(
-    check: &Path,
-    deadline: Instant,
-    variables: &[(&str, &Path)],
-) -> Result<(), Option<String>> {
-    let (mut reader, writer) = os_pipe::pipe().map_err(|err| err.to_string())?;
-    let stderr = writer.try_clone().map_err(|err| err.to_string())?;
-    let mut command = Command::new(check);
-    let mut child = command
-        .envs(variables.iter().copied())
-        .stdin(Stdio::null())
-        .stdout(writer)
-        .stderr(stderr)
-        .spawn()
-        .map_err(|err| format!("cannot run: {err}"))?;
-    drop(command);
-    let said = std::thread::spawn(move || {
-        let mut text = Vec::new();
-        let _ = reader.read_to_end(&mut text);
-        String::from_utf8_lossy(&text).into_owned()
-    });
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    let Some(status) = status else {
-        return Err(None);
-    };
-    if status.success() {
-        return Ok(());
-    }
-    let said = plain(&said.join().unwrap_or_default());
-    let last = said.lines().map(str::trim).rfind(|line| !line.is_empty());
-    Err(Some(match (last, status.code()) {
-        (Some(line), _) => line.to_string(),
-        (None, Some(code)) => format!("exit status {code}"),
-        (None, None) => "killed by a signal".to_string(),
-    }))
-}
-
 /// Runs all checks, again and again, until all pass or the time runs out.
 pub fn check() -> Health {
     if checks().is_empty() {
@@ -135,7 +77,7 @@ pub fn check() -> Health {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let (cut, result) = match attempt(&check, deadline, &[]) {
+            let (cut, result) = match process::script(&check, deadline, &[]) {
                 Ok(()) => (false, None),
                 Err(Some(why)) => (false, Some(why)),
                 Err(None) => (true, Some(TIMED_OUT.to_string())),

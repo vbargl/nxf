@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::output::Mark;
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
-use crate::{flake, git, nixos, output};
+use crate::{flake, git, nixos, output, process};
 
 pub struct Task {
     pub name: &'static str,
@@ -219,7 +219,7 @@ fn cause(error: &str) -> (Vec<&str>, Option<&str>) {
     let mut lines: Vec<&str> = error.lines().collect();
     let exit = lines
         .first()
-        .is_some_and(|line| line.starts_with("Command exited with status"))
+        .is_some_and(|line| process::is_failure_line(line))
         .then(|| lines.remove(0));
     (lines, exit)
 }

@@ -1,31 +1,23 @@
-//! Git queries on a repository.
+//! Git on a repository: what its history and its work tree say, and the
+//! commits and restores nxf makes.
 
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::Command;
 
-fn git(dir: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run git: {err}"))
+use crate::process;
+
+fn git(dir: &Path, args: &[&str]) -> Command {
+    let mut git = Command::new("git");
+    git.arg("-C").arg(dir).args(args);
+    git
 }
 
 fn succeeds(dir: &Path, args: &[&str]) -> bool {
-    git(dir, args).is_ok_and(|output| output.status.success())
+    process::capture(&mut git(dir, args)).is_ok_and(|output| output.status.success())
 }
 
 fn text(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = git(dir, args)?;
-    if !output.status.success() {
-        return Err(format!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+    let output = process::run(&mut git(dir, args))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -123,19 +115,11 @@ pub fn changed_files(dir: &Path) -> Vec<String> {
 
 /// Commits one file, leaving everything else as it is.
 pub fn commit_file(dir: &Path, file: &str, message: &str) -> Result<(), String> {
-    let output = git(
+    text(
         dir,
         &["commit", "--quiet", "--message", message, "--", file],
-    )?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let said = [
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    ]
-    .join("\n");
-    Err(format!("git commit failed: {}", said.trim()))
+    )
+    .map(drop)
 }
 
 /// Makes the directory a repository without a remote.
@@ -152,14 +136,5 @@ pub fn set_identity(dir: &Path, name: &str, email: &str) -> Result<(), String> {
 /// Commits every file that is not ignored.
 pub fn commit_all(dir: &Path, message: &str) -> Result<(), String> {
     text(dir, &["add", "--all"])?;
-    let output = git(dir, &["commit", "--quiet", "--message", message])?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let said = [
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    ]
-    .join("\n");
-    Err(format!("git commit failed: {}", said.trim()))
+    text(dir, &["commit", "--quiet", "--message", message]).map(drop)
 }

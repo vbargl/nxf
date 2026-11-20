@@ -2,13 +2,13 @@
 //! systems, and remembering which source built which system.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::{env, output};
+use crate::{env, output, process};
 
 pub const UPDATE_SERVICE: &str = "nxf-auto-update.service";
 pub const DEFAULT_UPDATER_STATE: &str = "/var/lib/nxf";
@@ -140,10 +140,7 @@ pub fn activate(action: &str, system: &Path) -> Result<PathBuf, String> {
 /// Whether dix takes the two systems after the word `diff`, as it does from
 /// dix 3. An unreadable version counts as a current one.
 fn dix_has_commands() -> bool {
-    let version = Command::new("dix")
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
+    let version = process::capture(Command::new("dix").arg("--version"))
         .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
         .unwrap_or_default();
     let major = version
@@ -198,14 +195,7 @@ fn counts(text: &str) -> Vec<String> {
 /// What changes between two systems, as labelled facts: the changed, added
 /// and removed package counts, and the closure size.
 pub fn changes(old: &Path, new: &Path) -> Result<Vec<(&'static str, String)>, String> {
-    let output = diff(old, new)
-        .arg("--color=never")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run dix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(diff(old, new).arg("--color=never"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let counts = counts(&text);
     let mut facts = vec![(
@@ -224,21 +214,17 @@ pub fn changes(old: &Path, new: &Path) -> Result<Vec<(&'static str, String)>, St
 
 /// The closure size of a system in bytes.
 pub fn size(system: &Path) -> Result<u64, String> {
-    let output = Command::new("nix")
-        .args([
-            "path-info",
-            "--json",
-            "--json-format",
-            "1",
-            "--closure-size",
-        ])
-        .arg(system)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(
+        Command::new("nix")
+            .args([
+                "path-info",
+                "--json",
+                "--json-format",
+                "1",
+                "--closure-size",
+            ])
+            .arg(system),
+    )?;
     let info: Value = serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
     let first = match &info {
         Value::Object(paths) => paths.values().next(),
@@ -271,36 +257,18 @@ pub fn systemctl() -> PathBuf {
 
 /// How and when the update service last ended, if it did not succeed.
 fn service_failure() -> Option<Value> {
-    let mut child = Command::new(systemctl())
-        .args(["show", UPDATE_SERVICE])
+    let mut show = Command::new(systemctl());
+    show.args(["show", UPDATE_SERVICE])
         .args([
             "--property=Result,ExecMainExitTimestamp",
             "--timestamp=unix",
         ])
-        .arg("--no-pager")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+        .arg("--no-pager");
     // Bounded: an unavailable system manager must not hold status up.
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
-    let shown = child.wait_with_output().ok()?;
-    if !shown.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&shown.stdout);
+    let shown = process::run_within(&mut show, Instant::now() + Duration::from_secs(1), false)
+        .ok()
+        .filter(|shown| shown.status.is_some_and(|status| status.success()))?;
+    let text = shown.stdout;
     let property = |name: &str| {
         text.lines()
             .filter_map(|line| line.split_once('='))
@@ -428,17 +396,13 @@ pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
         .map_err(|err| format!("cannot create {}: {err}", sources.display()))?;
     if !paths.is_empty() {
         // Nix replaces the roots of the same name, and makes none when it fails.
-        let output = Command::new("nix")
-            .arg("build")
-            .args(paths)
-            .arg("--out-link")
-            .arg(sources.join("input"))
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| format!("cannot run nix: {err}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-        }
+        process::run(
+            Command::new("nix")
+                .arg("build")
+                .args(paths)
+                .arg("--out-link")
+                .arg(sources.join("input")),
+        )?;
     }
     for root in std::fs::read_dir(&sources).into_iter().flatten().flatten() {
         if std::fs::read_link(root.path()).is_ok_and(|source| !paths.contains(&source)) {

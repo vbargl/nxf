@@ -485,7 +485,7 @@ fn upgrade_build_failure() {
     assert_lacks(&result.stdout, "Activating configuration");
     assert_lacks(&result.stdout, "Upgrade applied");
     // The cause comes first and names its input.
-    assert_contains(&result.stderr, "failed\n  a: Command exited with status 3.");
+    assert_contains(&result.stderr, "failed\n  a: nh exited with status 3.");
 }
 
 /// A no-change upgrade still reports the activation it performed.

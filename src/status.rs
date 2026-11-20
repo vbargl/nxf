@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::nixos::Remembered;
 use crate::output::{self, Mark, Style};
 use crate::text::plain;
-use crate::{flake, git, hold, nixos};
+use crate::{flake, git, hold, nixos, process};
 
 /// A size in the largest binary unit that keeps it above one.
 fn human(bytes: u64) -> String {
@@ -169,14 +169,7 @@ fn update_summary() {
 }
 
 fn mark_read(marker: &Path, id: &str) -> Result<(), String> {
-    let dir = marker.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    let temporary = dir.join(format!("update-read.{}.tmp", std::process::id()));
-    let written = std::fs::write(&temporary, id).and_then(|()| std::fs::rename(&temporary, marker));
-    written.map_err(|err| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("{}: {err}", marker.display())
-    })
+    process::write_atomic(marker, id).map_err(|err| format!("{}: {err}", marker.display()))
 }
 
 /// The flake commit that built a system, if one is remembered. Several commits
@@ -383,14 +376,14 @@ pub fn report(options: &Options) -> Result<(), String> {
                 input_table(lock, &options.inputs, Some(&status.lock));
             }
             _ => {
-                let revision = std::process::Command::new("nixos-version")
-                    .arg("--configuration-revision")
-                    .output()
-                    .ok()
-                    .filter(|output| output.status.success())
-                    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-                    .filter(|revision| !revision.is_empty())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let revision = process::capture(
+                    std::process::Command::new("nixos-version").arg("--configuration-revision"),
+                )
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|revision| !revision.is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
                 output::fact(
                     "Flake",
                     "unknown; the system was not built by nxf or the updater",

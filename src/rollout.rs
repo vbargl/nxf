@@ -15,7 +15,8 @@ use crate::env;
 use crate::fleet::quoted;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
-use crate::text::plain;
+use crate::process;
+use crate::text::{last_line, plain};
 
 /// The installer image nxf starts on a machine that runs another system.
 pub const KEXEC_URL: &str = "https://github.com/nix-community/nixos-images/releases/download/nixos-25.11/nixos-kexec-installer-noninteractive-{arch}-linux.tar.gz";
@@ -239,14 +240,7 @@ impl Link {
         if status.success() {
             return Ok(said);
         }
-        let lines: Vec<&str> = said
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .collect();
-        Err(format!(
-            "{what} failed\n{}",
-            lines[lines.len().saturating_sub(8)..].join("\n")
-        ))
+        Err(format!("{what} failed\n{}", process::tail(&said)))
     }
 
     fn probe(&self) -> Probe {
@@ -254,14 +248,9 @@ impl Link {
         match parse_probe(&stdout) {
             Some(probe) if ok => probe,
             _ => {
-                let said = plain(&stderr);
-                let why = said
-                    .lines()
-                    .map(str::trim)
-                    .rfind(|line| !line.is_empty())
-                    .unwrap_or("no answer");
+                let why = last_line(&plain(&stderr)).unwrap_or_else(|| "no answer".to_string());
                 Probe {
-                    found: Found::Unreachable(why.to_string()),
+                    found: Found::Unreachable(why),
                     arch: String::new(),
                     user: None,
                 }
@@ -317,17 +306,8 @@ pub fn template(reference: &str) -> Result<(PathBuf, String), String> {
     let (flake, name) = reference
         .split_once('#')
         .ok_or("The template must be given as <flake>#<name>")?;
-    let output = Command::new("nix")
-        .args(["flake", "prefetch", "--json", flake])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Cannot read the template {flake}\n{}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+    let output = process::run(Command::new("nix").args(["flake", "prefetch", "--json", flake]))
+        .map_err(|err| format!("Cannot read the template {flake}\n{err}"))?;
     let fetched: Value = serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())?;
     let path = fetched["storePath"]
         .as_str()
@@ -455,13 +435,9 @@ fn install(
         let (ok, stdout, stderr) = link.capture("sh", &script);
         if !ok {
             let said = plain(&format!("{stdout}\n{stderr}"));
-            let lines: Vec<&str> = said
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .collect();
             return Err(format!(
                 "Starting the installer failed\n{}",
-                lines[lines.len().saturating_sub(8)..].join("\n")
+                process::tail(&said)
             ));
         }
         link.wait_for(|found| *found == Found::Installer, "The installer")?;
@@ -533,21 +509,18 @@ fn remember(file: &Path, host: &Host, key: &str) -> Result<(), String> {
     };
     // Drop the key of the system that was there before: it must not stay trusted.
     if file.exists() {
-        let removed = Command::new("ssh-keygen")
-            .args(["-R", &name, "-f"])
-            .arg(file)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| format!("cannot run ssh-keygen: {err}"))?;
-        if !removed.status.success() {
-            let said = plain(&String::from_utf8_lossy(&removed.stderr));
-            let why = said.lines().map(str::trim).rfind(|line| !line.is_empty());
-            return Err(format!(
+        process::run(
+            Command::new("ssh-keygen")
+                .args(["-R", &name, "-f"])
+                .arg(file),
+        )
+        .map_err(|err| {
+            format!(
                 "cannot remove the old key of {name} from {}: {}",
                 file.display(),
-                why.unwrap_or("ssh-keygen failed")
-            ));
-        }
+                last_line(&err).unwrap_or_default()
+            )
+        })?;
     }
     let mut known = std::fs::OpenOptions::new()
         .create(true)
