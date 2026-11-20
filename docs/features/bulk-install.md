@@ -57,7 +57,10 @@ Boundaries:
   is not a NixOS installer.
 - The SSH user must be root. The probe reports the user id, and a machine to
   install that answers with another id is refused in the plan, before
-  anything is erased. A managed machine is left alone whatever the user is.
+  anything is erased. A probe answer in which `id` is missing reports
+  `uid=unknown`, and the machine is refused with
+  `the SSH user must be root, and its user id is unknown`. A managed machine
+  is left alone whatever the user is.
 - The machine needs a way to the internet for the installer image and the
   inputs.
 - The first connection to a machine nobody knows accepts its host key; a key
