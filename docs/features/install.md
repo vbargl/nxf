@@ -15,20 +15,20 @@ this, in this order:
 
 1. It refuses unless `<dir>` has a `flake.nix`, is a Git repository without
    uncommitted changes and has a `flake.lock`, nxf runs as root, and the
-   system runs from memory. A system runs from memory when `/` in
-   `/proc/mounts` is a `tmpfs`, a `rootfs` or a `ramfs`. It also refuses on
-   a system that nxf manages, whether or not it runs from memory: one that
-   has `/var/lib/nxf/installed.json`, or an executable
+   system runs from memory. A system runs from memory when the last `/`
+   line of `/proc/mounts` names a `tmpfs`, a `rootfs` or a `ramfs`. It also
+   refuses on a system that nxf manages, whether or not it runs from memory:
+   one that has `/var/lib/nxf/installed.json`, or an executable
    `/run/current-system/sw/bin/nxf`. `--mounted` does not change this.
 2. It builds the script of the configuration's
    [disko](https://github.com/nix-community/disko) layout and runs it: the
    disks are erased, formatted and mounted at `/mnt`. With `--mounted` it
    skips this and uses what is mounted at `/mnt`.
-3. It refuses when `/mnt` is not a directory or `/mnt/etc/nixos` holds
-   something. It copies the flake there, as the same Git repository, and
-   runs `nixos-install` with `--root /mnt`,
-   `--flake /mnt/etc/nixos#<configuration>`, `--no-root-passwd` and
-   `--no-channel-copy`.
+3. It refuses when `/mnt` is not a directory. With `--mounted` it refuses a
+   target whose `/etc/nixos` is not empty. It copies the flake to
+   `/mnt/etc/nixos`, as the same Git repository, and runs `nixos-install`
+   with `--root /mnt`, `--flake /mnt/etc/nixos#<configuration>`,
+   `--no-root-passwd` and `--no-channel-copy`.
 4. It records the installed system under the flake's tree in
    `/mnt/var/lib/nxf/systems`.
 5. It makes the ed25519 SSH host key, unless the target has one, and writes
@@ -49,6 +49,10 @@ Boundaries:
   manages it.
 - Without `--mounted` the check that `/mnt/etc/nixos` is empty comes after
   the disks were partitioned.
+- `--mounted` does not check that something is mounted at `/mnt`: it checks
+  only that `/mnt` is a directory. With nothing mounted there, the flake is
+  copied and `nixos-install` installs into the directory, which is in the
+  installer's memory.
 - A failed installation is not rolled back. Disks that were erased stay
   erased, and `installed.json` is not written.
 - It sets no root password.
@@ -66,7 +70,7 @@ Boundaries:
 | N3: Outside an installer | The system runs from a disk | `nxf install <dir>` runs | Nothing is partitioned; the outcome is `This system runs from a disk, and installing erases disks`; the exit status is 1 |
 | N4: No flake | `<dir>` has no `flake.nix` | `nxf install <dir>` runs | Nothing is partitioned; the outcome is `<dir> has no flake.nix`; the exit status is 1 |
 | N5: Uncommitted changes | `<dir>` has uncommitted changes | `nxf install <dir>` runs | Nothing is partitioned; the outcome is `<dir> has uncommitted changes or is not a Git repository`; the exit status is 1 |
-| N6: The target holds something | `/mnt/etc/nixos` holds a file | `nxf install <dir> --mounted` runs | `nixos-install` is not called; the outcome is `/mnt/etc/nixos already holds something; the target is not empty`; the exit status is 1 |
+| N6: The target holds something | A target whose `/etc/nixos` is not empty | `nxf install <dir> --mounted` runs | `nixos-install` is not called; the outcome is `/mnt/etc/nixos already holds something; the target is not empty`; the exit status is 1 |
 | N7: nixos-install fails | `nixos-install` exits with an error | `nxf install <dir>` runs | The outcome is `nixos-install failed`, with the exit status of the tool and its last lines beneath; `installed.json` is not written; `NixOS installed` is not printed; the exit status is 1 |
 | N8: No lockfile | `<dir>` is committed and has no `flake.lock` | `nxf install <dir>` runs | Nothing is partitioned; the outcome is `<dir> has no flake.lock`; the exit status is 1 |
 | N9: Not root | A committed machine flake, and a user other than root | `nxf install <dir>` runs | Nothing is partitioned; the outcome is `Installing needs root`; the exit status is 1 |
@@ -74,6 +78,7 @@ Boundaries:
 | N11: Nothing is mounted | `/mnt` is not a directory | `nxf install <dir> --mounted` runs | The outcome is `/mnt is not mounted`; the exit status is 1 |
 | N12: Restart | The conditions of N1 | `nxf install <dir> --reboot` runs | After the outcome of N1 the last line is `Restarting into the new system.` instead of `Restart the machine to start it.`, and `systemctl reboot` runs |
 | N13: A system that nxf manages | The system runs from memory and has `/var/lib/nxf/installed.json`, or an executable `/run/current-system/sw/bin/nxf` | `nxf install <dir>` runs | Nothing is partitioned and `nixos-install` is not called; the outcome is `nxf manages this system, and installing erases disks` with `Start the machine from a NixOS installer to install it again.`; the exit status is 1 |
+| N14: A directory with nothing mounted | `/mnt` is a directory and nothing is mounted on it | `nxf install <dir> --mounted` runs | Nothing refuses: `/mnt/etc/nixos` holds the flake, `nixos-install` runs with `--root /mnt`, and the outcome is `NixOS installed` |
 
 ## Existing verification
 
@@ -82,20 +87,28 @@ for `/mnt` (`NXF_INSTALL_ROOT`), a script for the disk layout (`NXF_DISKO`),
 a mock `nixos-install`, and `NXF_INSTALLER` for the answer whether the system
 runs from memory. `NXF_UPDATER_STATE` stands in for `/var/lib/nxf` and
 `NXF_SYSTEM` for `/run/current-system`. No test partitions a disk, runs the
-real `nixos-install` or reads `/proc/mounts`.
+real `nixos-install` or reads the `/proc/mounts` of the machine.
 
 | ID | Covered by | Not covered |
 | --- | --- | --- |
 | N1 | `tests/install.rs::partitions_and_records` | The disko script of a real configuration, the real `nixos-install`, and the reading of `/proc/mounts` |
-| N2 | `tests/install.rs::mounted` | |
-| N3, N4, N5, N6 | `tests/install.rs::refuses`. It asserts that the exit status is not 0, not which one | For N3, the reading of `/proc/mounts` |
-| N7 | `tests/install.rs::failure_records_nothing`. It asserts that the exit status is not 0, not which one | |
-| N8 | `tests/install.rs::refuses_unmounted_and_unlocked`. It asserts that the exit status is not 0, not which one | |
+| N2 | `tests/install.rs::mounted` | A mounted file system: the stand-in for `/mnt` is a directory |
+| N3 | `tests/install.rs::refuses` | Which exit status: the test asserts that it is not 0. The reading of `/proc/mounts`: `NXF_INSTALLER` gives the answer |
+| N4 | `tests/install.rs::refuses` | `<dir>` in the outcome: the test asserts only `has no flake.nix`. Which exit status: the test asserts that it is not 0 |
+| N5 | `tests/install.rs::refuses` | The rest of the outcome: the test asserts only `has uncommitted changes`. Which exit status: the test asserts that it is not 0 |
+| N6 | `tests/install.rs::refuses` | The rest of the outcome: the test asserts only `already holds something`. Which exit status: the test asserts that it is not 0 |
+| N7 | `tests/install.rs::failure_records_nothing` | Which exit status: the test asserts that it is not 0 |
+| N8 | `tests/install.rs::refuses_unmounted_and_unlocked` | Which exit status: the test asserts that it is not 0 |
 | N9 | | No automated test covers it; with `NXF_INSTALL_ROOT` set, install does not require root |
 | N10 | | No automated test covers it; `NXF_DISKO` replaces the build of the layout |
-| N11 | `tests/install.rs::refuses_unmounted_and_unlocked`, with `NXF_INSTALL_ROOT` in the place of `/mnt`. It asserts that the exit status is not 0, not which one | |
-| N12 | `tests/install.rs::reboot`, with a mock `systemctl` that notes its call | A real restart |
-| N13 | `tests/install.rs::refuses_a_managed_system`. It asserts that the exit status is not 0, not which one, and not the line beneath the outcome | The same with `--mounted` |
+| N11 | `tests/install.rs::refuses_unmounted_and_unlocked`, with `NXF_INSTALL_ROOT` in the place of `/mnt` | Which exit status: the test asserts that it is not 0 |
+| N12 | `tests/install.rs::reboot`, with a `systemctl` that notes its call; `tests/install.rs::reboots_through_the_stand_in` for the restart through `NXF_SYSTEMCTL` and not through the `systemctl` of `PATH` | A real restart |
+| N13 | `tests/install.rs::refuses_a_managed_system` | Which exit status: the test asserts that it is not 0. The line beneath the outcome. The same with `--mounted` |
+| N14 | `tests/install.rs::mounted`: its stand-in for `/mnt` is a directory with nothing mounted on it | What `/mnt/etc/nixos` holds, the arguments of `nixos-install` and the outcome: the test asserts the exit status 0, one call of `nixos-install` and the `Host key` line. That the system lands in memory |
+
+`tests/install.rs::root_is_the_last_mount` covers which line of
+`/proc/mounts` decides whether the system runs from memory, on text it is
+given.
 
 The installation of real machines through `nxf rollout`, which runs
 `nxf install` on each, is recorded in [Bulk Install](bulk-install.md).
