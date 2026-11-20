@@ -293,3 +293,182 @@ fn quoting() {
     assert_eq!(quoted("say \"no\" & $HOME"), "'say \"no\" & $HOME'");
     assert_eq!(quoted("it's $HOME"), "'it'\\''s $HOME'");
 }
+
+impl Machines {
+    fn upgrade(&self, args: &[&str]) -> common::Ran {
+        self.fx
+            .run(&[&["rollout", "--config", &self.file, "--upgrade"][..], args].concat())
+    }
+
+    fn fail_switch(&self, name: &str) {
+        std::fs::write(
+            self.machine(name).join("env"),
+            "export NXF_TEST_NH_FAIL_ACTION=switch\n",
+        )
+        .unwrap();
+    }
+
+    fn upgraded(&self) -> Vec<String> {
+        self.calls()
+            .iter()
+            .filter(|call| call.contains("nxf --json upgrade"))
+            .filter_map(|call| {
+                call.split_whitespace()
+                    .find_map(|word| word.split_once('@').map(|(_, host)| host.to_string()))
+            })
+            .collect()
+    }
+}
+
+/// The upgrade runs `nxf upgrade` on every machine, the first alone and then
+/// one at a time, and says what each did.
+#[test]
+fn upgrade() {
+    let set = machines();
+    set.fx.bump(&["a"]);
+    let result = set.upgrade(&[]);
+    result.ok();
+    assert_contains(&result.stdout, &format!("{} · 3 machines\n\n", set.file));
+    assert_contains(&result.stdout, "\n  ✓ node-1    inputs updated, switched\n");
+    // The machines share the checkout here, so the first one took the update.
+    assert_contains(
+        &result.stdout,
+        "\n  ✓ node-2    no input changed, switched\n",
+    );
+    assert!(
+        result.stdout.ends_with("\n✓ 3 machines upgraded\n"),
+        "{}",
+        result.stdout
+    );
+    assert_eq!(
+        set.upgraded(),
+        ["node-1.test", "node-2.test", "node-3.test"]
+    );
+    assert!(set
+        .calls()
+        .iter()
+        .all(|call| call.ends_with("nxf --json upgrade")));
+}
+
+/// A failure on the first machine starts no other.
+#[test]
+fn upgrade_stops() {
+    let set = machines();
+    set.fail_switch("node-1");
+    let result = set.upgrade(&[]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-1    switch failed: Upgrade stopped: activation did not finish",
+    );
+    assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    assert_contains(&result.stdout, "\n  · node-3    not started\n");
+    assert_contains(
+        &result.stderr,
+        "✗ Upgrade failed on 1 of 3 machines\n  Not started: node-2, node-3. Run the rollout again once the failure is fixed.",
+    );
+    assert_eq!(set.upgraded(), ["node-1.test"]);
+}
+
+/// A machine that does not answer stops the upgrade as a failure does.
+#[test]
+fn upgrade_unreachable() {
+    let set = machines();
+    std::fs::write(set.machine("node-2").join("down"), "").unwrap();
+    let result = set.upgrade(&[]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✓ node-1    ");
+    assert_contains(&result.stdout, "\n  ✗ node-2    unreachable: ssh: connect");
+    assert_contains(&result.stdout, "\n  · node-3    not started\n");
+    assert_eq!(set.upgraded(), ["node-1.test", "node-2.test"]);
+}
+
+/// An input the first machine does not know is refused there, with the
+/// cause in its row, and no other machine is asked.
+#[test]
+fn upgrade_unknown_input() {
+    let set = machines();
+    let result = set.upgrade(&["nosuch"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    assert_eq!(set.upgraded(), ["node-1.test"]);
+}
+
+/// After the first machine, a wave of --batch machines runs to its end even
+/// when one of them fails, and the named inputs are passed on.
+#[test]
+fn upgrade_batch() {
+    let set = machines();
+    set.fail_switch("node-2");
+    let result = set.upgrade(&["--batch", "2", "b"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✓ node-1    ");
+    assert_contains(&result.stdout, "\n  ✗ node-2    switch failed");
+    assert_contains(&result.stdout, "\n  ✓ node-3    ");
+    assert_lacks(&result.stdout, "not started");
+    assert_contains(&result.stderr, "✗ Upgrade failed on 1 of 3 machines\n");
+    assert_lacks(&result.stderr, "Not started");
+    assert_eq!(set.upgraded()[0], "node-1.test");
+    assert_eq!(set.upgraded().len(), 3);
+    assert!(set
+        .calls()
+        .iter()
+        .all(|call| call.ends_with("nxf --json upgrade b")));
+}
+
+/// The first machine is a wave of its own; the others follow in waves of the batch.
+#[allow(clippy::single_range_in_vec_init)]
+#[test]
+fn waves() {
+    use nxf::fleet::waves;
+    assert_eq!(waves(0, 2), Vec::<std::ops::Range<usize>>::new());
+    assert_eq!(waves(1, 2), [0..1]);
+    assert_eq!(waves(4, 1), [0..1, 1..2, 2..3, 3..4]);
+    assert_eq!(waves(6, 2), [0..1, 1..3, 3..5, 5..6]);
+    assert_eq!(waves(3, 10), [0..1, 1..3]);
+}
+
+/// Install options do not go with the upgrade, nor upgrade options with the
+/// install, and a refused request reaches no machine.
+#[test]
+fn upgrade_refused() {
+    let set = machines();
+    for args in [
+        &[
+            "rollout",
+            "--config",
+            &set.file,
+            "--upgrade",
+            "--template",
+            "x#y",
+        ][..],
+        &["rollout", "--config", &set.file, "--upgrade", "--yes"],
+        &[
+            "rollout",
+            "--config",
+            &set.file,
+            "--upgrade",
+            "--batch",
+            "0",
+        ],
+        &[
+            "rollout",
+            "--config",
+            &set.file,
+            "--template",
+            "x#y",
+            "--batch",
+            "2",
+        ],
+        &["rollout", "--config", &set.file, "--template", "x#y", "a"],
+        &["rollout", "--config", &set.file],
+    ] {
+        let result = set.fx.run(args);
+        assert_ne!(result.code, 0, "{args:?}");
+    }
+    assert!(set.calls().is_empty());
+}

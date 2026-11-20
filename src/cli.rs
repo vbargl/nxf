@@ -115,14 +115,24 @@ enum Cmd {
         #[arg(long)]
         reboot: bool,
     },
-    /// Bring every machine of a hosts file to the same state: installed by nxf.
+    /// Install every machine of a hosts file that nxf has not installed, or with --upgrade upgrade them in waves.
     Rollout {
         /// The hosts file.
         #[arg(long, value_name = "FILE")]
         config: PathBuf,
         /// The template of the machine flake, as `<flake>#<name>`.
-        #[arg(long)]
-        template: String,
+        #[arg(long, required_unless_present = "upgrade")]
+        template: Option<String>,
+        /// Run `nxf upgrade` on the machines instead: the first alone, then in waves.
+        #[arg(long, conflicts_with_all = ["template", "files", "yes", "kexec_url", "known_hosts"])]
+        upgrade: bool,
+        /// How many machines upgrade at once after the first; 1 when not given.
+        #[arg(long, value_name = "N",
+              value_parser = clap::value_parser!(u32).range(1..))]
+        batch: Option<u32>,
+        /// Upgrade only these flake inputs.
+        #[arg(value_name = "INPUT")]
+        inputs: Vec<String>,
         /// A directory with one directory of files for each machine, by name.
         #[arg(long, value_name = "DIR")]
         files: Option<PathBuf>,
@@ -314,16 +324,33 @@ fn run_command(command: Cmd) -> Result<bool, String> {
         Cmd::Rollout {
             config,
             template,
+            upgrade,
+            batch,
+            inputs,
             files,
             yes,
             kexec_url,
             known_hosts,
         } => {
+            if !upgrade && (batch.is_some() || !inputs.is_empty()) {
+                return Err(
+                    "Inputs and --batch belong to the upgrade\nAdd --upgrade, or leave them out to install."
+                        .to_string(),
+                );
+            }
             let machines = hosts::load(&config)?;
+            if upgrade {
+                return Ok(fleet::upgrade(
+                    &config,
+                    &machines,
+                    &inputs,
+                    batch.unwrap_or(1) as usize,
+                ));
+            }
             rollout::run(
                 &rollout::Options {
                     file: config,
-                    template,
+                    template: template.unwrap_or_default(),
                     files,
                     yes,
                     kexec_url,

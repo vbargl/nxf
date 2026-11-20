@@ -26,9 +26,12 @@ change them here first.
   health checks, and a template given by reference.
 - Remote work is nxf running itself on each machine over ssh. `status`,
   `hold`, `release`, `version` and `doctor` take `--config`; tasks never do.
-  `rollout` is the one command that changes machines, and only those that
-  nxf has not installed: it must stay repeatable, and it must ask before it
-  erases a disk. The hosts file stays a list of SSH destinations: nxf reads
+  `rollout` is the one command that changes machines. Without `--upgrade`
+  it changes only those that nxf has not installed: it must stay repeatable,
+  and it must ask before it erases a disk. With `--upgrade` it runs the task
+  `upgrade` on each machine, the first alone and then in waves of `--batch`,
+  and a failure starts no further wave. No other task runs on a set of
+  machines. The hosts file stays a list of SSH destinations: nxf reads
   `hosts.<name>.ssh` and must keep ignoring everything else.
 - `nxf init` does not edit the files of a template. It adds `nxf.nix` and
   reports whether the configuration imports the module.
@@ -56,7 +59,7 @@ change them here first.
 | `src/hold.rs` | The hold on automatic updates |
 | `src/hooks.rs` | The configuration's check hook before an automatic update and its failure hook after a failed one |
 | `src/hosts.rs` | The hosts file: SSH destinations, with everything else ignored |
-| `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh |
+| `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh, and the upgrade in waves |
 | `src/init.rs` | Founding a machine flake from a template |
 | `src/install.rs` | Installing from an installer: disks, nixos-install, host key, records |
 | `src/rollout.rs` | Installing the machines of a hosts file that nxf has not installed |
