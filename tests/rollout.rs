@@ -315,7 +315,7 @@ fn ssh_log(fx: &Fixture) -> String {
 /// archive that tar could not finish is not sent on as complete: the machine
 /// fails with what tar said, and nothing is founded from half of its files.
 #[test]
-fn unpacked_files_fail_the_machine() {
+fn half_packed_files_fail_the_machine() {
     let (fx, hosts) = installers(&["node-1"]);
     let files = fx.dir.join("files");
     std::fs::create_dir_all(files.join("node-1")).unwrap();
