@@ -349,7 +349,7 @@ fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
 }
 
 /// Sends the files of a machine as a tar stream into a directory there. tar
-/// writes into the connection, and the files are sent only when both ended well.
+/// writes into the connection, and the upload fails unless both end well.
 fn upload(link: &Link, files: &Path, to: &str) -> Result<(), String> {
     let mut tar = Command::new("tar")
         .arg("--create")
