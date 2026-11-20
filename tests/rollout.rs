@@ -8,7 +8,9 @@ use common::{
     assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture, Ran,
 };
 use nxf::hosts::Host;
-use nxf::rollout::{known_hosts_line, parse_probe, template, Found, Probe, PROBE, SCRATCH_NAMES};
+use nxf::rollout::{
+    known_hosts_line, parse_probe, probe_script, template, Found, Probe, SCRATCH_NAMES,
+};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -251,7 +253,7 @@ fn probed(kind: &str, files: &[&str], on_path: bool) -> Probe {
     if on_path {
         write_script(&tools.join("nxf"), "#!/bin/sh\n");
     }
-    let mut script = PROBE.to_string();
+    let mut script = probe_script();
     for file in [
         "/proc/mounts",
         "/etc/NIXOS",

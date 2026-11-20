@@ -8,11 +8,7 @@ use std::process::Command;
 use serde_json::json;
 
 use crate::output::{self, Mark};
-use crate::{env, flake, git, hold, nixos, process};
-
-/// The mark of a machine that nxf installed. `nxf rollout` leaves such a
-/// machine alone.
-pub const MARKER: &str = "var/lib/nxf/installed.json";
+use crate::{env, flake, git, hold, nixos, process, state};
 
 pub struct Options {
     pub dir: PathBuf,
@@ -52,8 +48,7 @@ pub fn installer() -> bool {
 /// memory. NXF_UPDATER_STATE and NXF_SYSTEM stand in for the two places.
 fn managed() -> bool {
     use std::os::unix::fs::PermissionsExt;
-    let record = Path::new(MARKER).file_name().unwrap_or_default();
-    nixos::updater_dir().join(record).exists()
+    state::updater_dir().join(state::INSTALLED).exists()
         || std::fs::metadata(nixos::running().join("sw/bin/nxf"))
             .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
 }
@@ -202,11 +197,13 @@ pub fn run(options: &Options) -> Result<(), String> {
         .args(["--no-root-passwd", "--no-channel-copy"]);
     output::stream(&mut install, false, &[])?;
     let system = installed_system(&root);
+    // The state of the updater, as the new machine will have it.
+    let updater = root.join(state::UPDATER.trim_start_matches('/'));
     output::row(Mark::Done, "Installed");
     output::sub("Flake", "/etc/nixos");
     if let Some(inside) = &system {
         output::sub("System", &inside.to_string_lossy());
-        let records = root.join("var/lib/nxf/systems");
+        let records = updater.join(state::SYSTEMS);
         std::fs::create_dir_all(&records).map_err(|err| err.to_string())?;
         let record = records.join(&tree);
         let _ = std::fs::remove_file(&record);
@@ -215,7 +212,7 @@ pub fn run(options: &Options) -> Result<(), String> {
 
     output::start("Preparing the first start");
     let key = host_key(&root)?;
-    let marker = root.join(MARKER);
+    let marker = updater.join(state::INSTALLED);
     std::fs::create_dir_all(marker.parent().unwrap_or(&root)).map_err(|err| err.to_string())?;
     std::fs::write(
         &marker,

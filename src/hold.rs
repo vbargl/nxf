@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::{nixos, process};
+use crate::{process, state};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hold {
@@ -23,7 +23,7 @@ pub fn now() -> u64 {
 }
 
 fn file() -> PathBuf {
-    nixos::updater_dir().join("hold.json")
+    state::updater_dir().join("hold.json")
 }
 
 /// The hold as saved, even when it has ended.

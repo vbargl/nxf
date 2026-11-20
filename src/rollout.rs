@@ -16,6 +16,7 @@ use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::process;
 use crate::ssh::{self, quoted, Link, Trust};
+use crate::state;
 use crate::text::{last_line, plain};
 
 /// The installer image nxf starts on a machine that runs another system.
@@ -47,12 +48,12 @@ pub enum Found {
 /// Says in plain sh what the machine is; sent on standard input, so that no
 /// login shell reads it. The installation record or nxf in the system mean
 /// managed wherever the root is; nxf on the path alone may be an installer's copy.
-pub const PROBE: &str = r#"
+const PROBE: &str = r#"
 root=$(awk '$2 == "/" { kind = $3 } END { print kind }' /proc/mounts)
 installer=no
 case $root in tmpfs|rootfs|ramfs) [ -e /etc/NIXOS ] && installer=yes ;; esac
 managed=no
-if [ -e /var/lib/nxf/installed.json ] || [ -x /run/current-system/sw/bin/nxf ]; then
+if [ -e {record} ] || [ -x /run/current-system/sw/bin/nxf ]; then
     managed=yes
 elif [ $installer = no ] && command -v nxf >/dev/null 2>&1; then
     managed=yes
@@ -61,6 +62,12 @@ os=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown system}")
 echo "nxf-probe managed=$managed installer=$installer uid=$(id -u 2>/dev/null || echo unknown) arch=$(uname -m)"
 echo "nxf-os $os"
 "#;
+
+/// The script of the probe.
+pub fn probe_script() -> String {
+    let record = Path::new(state::UPDATER).join(state::INSTALLED);
+    PROBE.replace("{record}", &record.to_string_lossy())
+}
 
 pub struct Probe {
     pub found: Found,
@@ -129,7 +136,7 @@ fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
 }
 
 fn probe(link: &Link) -> Probe {
-    let (ok, stdout, stderr) = link.capture("sh", PROBE);
+    let (ok, stdout, stderr) = link.capture("sh", &probe_script());
     match parse_probe(&stdout) {
         Some(probe) if ok => probe,
         _ => {

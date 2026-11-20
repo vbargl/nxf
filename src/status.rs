@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::nixos::Remembered;
 use crate::output::{self, Mark, Style};
+use crate::state::Remembered;
 use crate::text::plain;
-use crate::{flake, git, hold, nixos, process};
+use crate::{flake, git, hold, nixos, process, state};
 
 /// A size in the largest binary unit that keeps it above one.
 fn human(bytes: u64) -> String {
@@ -116,7 +116,7 @@ pub fn print_rows(rows: &[ResultRow]) {
 /// Prints the latest unread summary, then acknowledges this exact snapshot for
 /// the invoking user. The updater's result is shared and is never modified.
 fn update_summary() {
-    let snapshot = match nixos::update_result() {
+    let snapshot = match state::update_result() {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return,
         Err(err) => {
@@ -128,7 +128,7 @@ fn update_summary() {
         }
     };
     let id = snapshot["id"].as_str().unwrap_or_default();
-    let marker = nixos::state_dir().join("update-read");
+    let marker = state::dir().join("update-read");
     let seen = std::fs::read_to_string(&marker).unwrap_or_default();
     if seen.trim() == id {
         return;
@@ -190,7 +190,7 @@ pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Op
 /// The flake commit of the running system.
 pub fn running_commit() -> Result<String, String> {
     let dir = flake::checkout()?;
-    system_commit(&dir, &nixos::running(), &nixos::remembered())
+    system_commit(&dir, &nixos::running(), &state::remembered())
         .ok_or_else(|| "The running system was not built by nxf or the updater.".to_string())
 }
 
@@ -211,7 +211,7 @@ pub fn compare() -> Result<Comparison, String> {
     let dir = flake::checkout()?;
     let lock = flake::lock(&dir)?;
     let running = nixos::running();
-    let remembered = nixos::remembered();
+    let remembered = state::remembered();
     let tree = git::clean_tree(&dir);
     let built = tree.as_ref().and_then(|tree| {
         remembered
@@ -321,8 +321,8 @@ pub fn report(options: &Options) -> Result<(), String> {
             "revision": status.running_commit,
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
-            "bad": status.tree.as_deref().and_then(nixos::bad),
-            "lastUpdate": nixos::update_result()
+            "bad": status.tree.as_deref().and_then(state::bad),
+            "lastUpdate": state::update_result()
                 .ok()
                 .flatten()
                 .map(|result| result["update"].clone()),
@@ -356,7 +356,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             plain(&hold.describe())
         ));
     }
-    if let Some(reason) = status.tree.as_deref().and_then(nixos::bad) {
+    if let Some(reason) = status.tree.as_deref().and_then(state::bad) {
         output::attention(&format!(
             "The checkout failed its health check and is not activated automatically: {}",
             plain(&reason)

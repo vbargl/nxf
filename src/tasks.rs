@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::output::Mark;
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
-use crate::{flake, git, nixos, output, process};
+use crate::{flake, git, nixos, output, process, state};
 
 pub struct Task {
     pub name: &'static str,
@@ -300,7 +300,7 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
                 && base.as_ref().and_then(|tree| git::worktree_diff(dir, tree)) == source
             {
                 if let Some(tree) = git::clean_tree(dir) {
-                    nixos::remember(&tree, &system);
+                    state::remember(&tree, &system);
                 }
             } else {
                 output::warning("checkout changed during the update build: this build cannot be identified by nxf status.");
@@ -350,7 +350,7 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
 /// The sources of the locked inputs stay in the Nix store, so that the next
 /// build, by whoever, needs no access to where an input came from.
 fn keep_inputs(dir: &Path) {
-    let kept = flake::archive(dir).and_then(|paths| nixos::keep_sources(&paths));
+    let kept = flake::archive(dir).and_then(|paths| state::keep_sources(&paths));
     if let Err(err) = kept {
         let cause = err.lines().last().unwrap_or_default().trim();
         output::warning(&format!(
@@ -496,7 +496,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
     })?;
     match tree.filter(|before| git::clean_tree(dir).as_ref() == Some(before)) {
         Some(tree) => {
-            nixos::remember(&tree, &built);
+            state::remember(&tree, &built);
             keep_inputs(dir);
         }
         None => {

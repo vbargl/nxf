@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{flake, hold, hooks, nixos, output, process, status, strategy};
+use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -33,7 +33,7 @@ fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
         Health::Unhealthy(failed) => failed,
     };
     // A mark that cannot be written is said, and never keeps the unhealthy system.
-    if let Some(Err(err)) = tree.map(|tree| nixos::mark_bad(tree, &failed)) {
+    if let Some(Err(err)) = tree.map(|tree| state::mark_bad(tree, &failed)) {
         failed.push_str(&format!(" | {err}"));
     }
     output::capture();
@@ -92,7 +92,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     if checkout.matches {
         return Ok(());
     }
-    if let Some(reason) = checkout.tree.as_deref().and_then(nixos::bad) {
+    if let Some(reason) = checkout.tree.as_deref().and_then(state::bad) {
         results.push(outcome(
             "switch",
             "skipped",
@@ -109,13 +109,13 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     Ok(())
 }
 
-fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
+fn save(dir: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
     let report = json!({"time": time, "results": list});
-    let file = state.join("update.json");
+    let file = state::update_file(dir);
     process::write_atomic(&file, &format!("{report:#}\n"))
         .map_err(|err| format!("cannot save {}: {err}", file.display()))?;
     Ok(file)

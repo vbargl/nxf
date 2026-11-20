@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
 use crate::status::system_commit;
-use crate::{env, flake, git, nixos, output};
+use crate::{env, flake, git, nixos, output, state};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -172,7 +172,7 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
 }
 
 fn state() -> Check {
-    let dir = nixos::state_dir();
+    let dir = state::dir();
     // The state directory may not exist yet; its nearest existing parent decides.
     let mut existing: PathBuf = dir.clone();
     while !existing.exists() {
@@ -181,7 +181,7 @@ fn state() -> Check {
             None => break,
         }
     }
-    if nixos::writable_directory(&existing) {
+    if state::writable_directory(&existing) {
         check(
             Level::Ok,
             "state",
@@ -203,9 +203,9 @@ fn state() -> Check {
 }
 
 fn records() -> Check {
-    let shared = nixos::updater_dir().join("systems");
-    let destination = nixos::record_dir();
-    if shared.exists() && !nixos::writable_directory(&shared) {
+    let shared = state::shared_records();
+    let destination = state::record_dir();
+    if shared.exists() && !state::writable_directory(&shared) {
         let effect = if destination == shared {
             "build records cannot be saved".to_string()
         } else {
@@ -233,7 +233,7 @@ fn running(dir: Option<&Path>) -> Check {
             "skipped until the checkout checks pass".to_string(),
         );
     };
-    match system_commit(dir, &nixos::running(), &nixos::remembered()) {
+    match system_commit(dir, &nixos::running(), &state::remembered()) {
         Some(commit) => check(
             Level::Ok,
             "running",
