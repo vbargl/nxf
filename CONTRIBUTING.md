@@ -177,8 +177,9 @@ change them here first.
 - `tests/rollout.rs` plays an installation without a machine. Its mock ssh
   keeps the files it is sent, reports a host key for `nxf install` and
   answers as a managed machine from then on. A mock `nix` names the source
-  of the template and records what `nix copy` is given. This does not
-  replace the run against a virtual machine.
+  of the template and does nothing on `nix copy`; a test that looks at what
+  `nix copy` is given puts a `nix` of its own in its place that records it.
+  This does not replace the run against a virtual machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh, and variables of the environment stand in for what belongs to
   the machine. The shipped program reads them too.
