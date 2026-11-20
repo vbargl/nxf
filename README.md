@@ -480,7 +480,8 @@ installer to answer, and as long again for the new system; a machine that
 takes longer counts as failed and is named under `Not installed`. The flake
 never exists on your computer. `--files <dir>` gives each
 machine the content of `<dir>/<name>/`, laid over the template. A `<dir>`
-that is not a directory is refused before any machine is asked.
+that is not a directory is refused before any machine is asked. A machine
+without `<dir>/<name>/` gets the template alone.
 
 The outcome lists the host key of every installed machine as a `known_hosts`
 line; `--known-hosts <file>` writes them into that file, replacing the key of
