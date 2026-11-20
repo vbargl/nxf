@@ -360,6 +360,50 @@ fn unpacked_files_fail_the_machine() {
     assert_contains(&result.stdout, "\n✓ 1 machine installed\n");
 }
 
+/// The upload fails as well when the machine could not unpack what it was
+/// sent: the machine fails with what ssh said, and nothing is founded there.
+#[test]
+fn unreceived_files_fail_the_machine() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let files = fx.dir.join("files");
+    std::fs::create_dir_all(files.join("node-1")).unwrap();
+    std::fs::write(files.join("node-1/identity.toml"), "name = \"node-1\"\n").unwrap();
+    // An ssh whose machine takes the whole archive and cannot unpack it.
+    let ssh = fx.dir.join("machines/ssh-full");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+if [[ ${{*: -1}} == *'tar --extract'* ]]; then
+    cat > /dev/null
+    echo 'tar: ./identity.toml: Cannot write: No space left on device' >&2
+    exit 2
+fi
+exec '{}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--files",
+        files.to_str().unwrap(),
+    ]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ Sending the machine's files failed\n    tar: ./identity.toml: Cannot write: No space left on device\n",
+    );
+    assert_contains(&result.stderr, "Not installed: node-1.");
+    assert_lacks(&ssh_log(&fx), "bin/nxf init");
+}
+
 /// A known_hosts file that cannot be written does not end the run: the
 /// machine stays installed, the cause is shown, the next machine is still
 /// installed, both host keys are printed, and the command fails.
