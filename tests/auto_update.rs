@@ -392,3 +392,41 @@ fn failing_hook_is_said() {
     );
     assert_eq!(report["results"][1]["detail"], "the pager is down");
 }
+
+/// A run that cannot go on after tasks ran keeps what ran: the results of
+/// the tasks and the record of an input stay saved, followed by the failure.
+#[test]
+fn undecided_run_keeps_what_ran() {
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", &fake_systems().one)
+        .with("NXF_SYSTEM", &fake_systems().two);
+    lose(&fx, "a");
+    fx.bump(&["b"]);
+    // An nh that builds, and leaves a checkout that cannot be compared afterwards.
+    let nh = fx.dir.join("bin/nh");
+    std::fs::rename(&nh, fx.dir.join("bin/nh-building")).unwrap();
+    common::write_script(
+        &nh,
+        &format!(
+            "#!/bin/sh\n'{0}/bin/nh-building' \"$@\" && rm '{0}/flake/flake.nix'\n",
+            fx.dir.display()
+        ),
+    );
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stderr, "has no flake.nix");
+    let report = saved(&fx);
+    assert_eq!(
+        outcomes(&report),
+        [
+            pair("update", "done"),
+            pair("update", "reported"),
+            pair("update", "failed")
+        ]
+    );
+    assert_eq!(report["results"][1]["inputs"], json!(["a"]));
+    assert_contains(
+        report["results"][2]["detail"].as_str().unwrap(),
+        "has no flake.nix",
+    );
+}
