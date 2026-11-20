@@ -498,7 +498,7 @@ fn install(
     let _ = link.capture("systemctl reboot", "");
     let known = scratch.with_extension("known");
     std::fs::write(&known, format!("{}\n", known_hosts_line(host, &key)))
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| format!("cannot write {}: {err}", known.display()))?;
     let started = Link {
         host: host.clone(),
         trust: Trust::Made { known },

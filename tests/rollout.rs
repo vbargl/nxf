@@ -711,6 +711,40 @@ cp "${NIX_SSHOPTS##*UserKnownHostsFile=}" "$HOME/copied"
     assert_eq!(copied, [keys.as_slice(), b"\n"].concat());
 }
 
+/// When the file with the key the installation made cannot be written, the
+/// machine fails with the name of that file and the cause.
+#[test]
+fn unwritten_key_names_its_file() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let dir = fx.dir.join("machines");
+    let tmp = fx.dir.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    fx.set("TMPDIR", &tmp);
+    // An ssh whose installation leaves a directory where the key it made is to be written.
+    let ssh = dir.join("ssh-blocking");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+for option in "$@"; do
+    [[ ${{*: -1}} == *'bin/nxf install '* && $option == UserKnownHostsFile=* ]] || continue
+    seen=${{option#*=}}
+    mkdir "${{seen%%.seen *}}.known"
+done
+exec '{dir}/ssh' "$@"
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    let cause = format!("\n  ✗ cannot write {}/nxf-rollout.", tmp.display());
+    assert_contains(&result.stdout, &cause);
+    assert_contains(&result.stdout, "/0.known: ");
+    assert_contains(&result.stderr, "Not installed: node-1.");
+}
+
 /// The scratch files that ssh options name are called by the place of the
 /// machine in the list, not by its name: a host name with a space is part of
 /// no option, and every machine has files of its own.
