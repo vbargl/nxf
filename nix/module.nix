@@ -112,8 +112,14 @@ in
         type = lib.types.nullOr (
           lib.types.submodule {
             options = {
-              name = lib.mkOption { type = lib.types.str; };
-              email = lib.mkOption { type = lib.types.str; };
+              name = lib.mkOption {
+                type = lib.types.str;
+                description = "The name of the author and the committer.";
+              };
+              email = lib.mkOption {
+                type = lib.types.str;
+                description = "Their e-mail address; it may be empty.";
+              };
             };
           }
         );
