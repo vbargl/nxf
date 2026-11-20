@@ -92,7 +92,7 @@ fn update_read_per_user() {
 
 /// Invalid status requests and other commands cannot acknowledge a summary.
 #[test]
-fn failed_status_keeps_update() {
+fn rejected_request_keeps_update() {
     let fx = fixture();
     fx.save_update(failed_update(1, "unread failure"));
     assert_ne!(fx.run(&["status", "missing-input"]).code, 0);
@@ -409,7 +409,10 @@ fn unknown_system() {
     let fx = fixture().with("NXF_SYSTEM", system);
     let result = fx.run(&["status"]);
     result.ok();
-    assert_contains(&result.stdout, "  Flake     unknown");
+    assert_contains(
+        &result.stdout,
+        "  Flake     unknown; the system was not built by nxf or the updater\n  Revision  mock-revision\n",
+    );
     assert!(result
         .stdout
         .starts_with("! Cannot compare the running system with the checkout ("));

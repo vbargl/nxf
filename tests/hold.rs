@@ -24,7 +24,7 @@ fn durations() {
 
 /// A hold stops the automatic update, is shown by status, and ends on release.
 #[test]
-fn hold_and_release() {
+fn until_released() {
     let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
     let before = fx.locked("a");
     fx.bump(&["a"]);

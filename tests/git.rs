@@ -38,10 +38,10 @@ fn commit_of() {
 fn commit_line() {
     let fx = fixture();
     let line = git::commit_line(&fx.checkout, "HEAD");
-    assert!(
-        line.starts_with(&format!("{} init (", fx.short_head())),
-        "{line}"
-    );
+    // How long the short hash is belongs to the Git configuration of the user.
+    let (short, rest) = line.split_once(' ').unwrap();
+    assert!(fx.head().starts_with(short), "{line}");
+    assert!(rest.starts_with("init ("), "{line}");
 }
 
 /// A file is read as it was at a commit.
@@ -91,16 +91,12 @@ fn commit_file() {
     let fx = fixture();
     append(&fx.checkout.join("flake.nix"), "# kept\n");
     append(&fx.checkout.join("flake.lock"), "\n");
-    // The identity comes from the environment, as in the fixture.
-    for (name, value) in [
-        ("GIT_CONFIG_GLOBAL", "/dev/null"),
-        ("GIT_AUTHOR_NAME", "test"),
-        ("GIT_AUTHOR_EMAIL", "test@example.invalid"),
-        ("GIT_COMMITTER_NAME", "test"),
-        ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
-    ] {
-        std::env::set_var(name, value);
-    }
+    // The repository's own settings come before those of the user, whose
+    // configuration this process reads.
+    append(
+        &fx.checkout.join(".git/config"),
+        "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n",
+    );
     assert_eq!(
         git::identity(&fx.checkout).as_deref(),
         Some("test <test@example.invalid>")

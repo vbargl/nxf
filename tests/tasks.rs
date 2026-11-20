@@ -662,7 +662,7 @@ fn failure_stops() {
 
 /// Unknown tasks run nothing.
 #[test]
-fn unknown_task() {
+fn unknown_word() {
     let fx = fixture();
     let result = fx.run(&["test", "status"]);
     assert_ne!(result.code, 0);

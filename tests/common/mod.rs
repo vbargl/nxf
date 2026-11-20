@@ -197,6 +197,11 @@ ln -sfn "${{NXF_TEST_BUILD:-{root}/system}}" "${{@: -1}}"
     );
     let systemctl = bin.join("systemctl");
     write_script(&systemctl, "#!/bin/sh\nexit 0\n");
+    // Status asks nixos-version about a system that no build record names.
+    write_script(
+        &bin.join("nixos-version"),
+        "#!/bin/sh\n[ \"$1\" = --configuration-revision ] && echo mock-revision\n",
+    );
 
     let state = dir.join("state");
     let updater = dir.join("updater");

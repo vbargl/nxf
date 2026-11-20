@@ -50,7 +50,7 @@ fn steps(fx: &Fixture) -> Vec<String> {
 /// Install partitions, installs from the copied flake, makes the host key and
 /// records the installation; the flake becomes the machine's /etc/nixos.
 #[test]
-fn installs() {
+fn partitions_and_records() {
     let (fx, root) = installer();
     let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
     result.ok();
@@ -157,7 +157,7 @@ fn refuses() {
 /// A failed nixos-install fails the command with what it said, and nothing
 /// is recorded as installed.
 #[test]
-fn failed_install() {
+fn failure_records_nothing() {
     let (fx, root) = installer();
     let fx = fx.with("NXF_TEST_INSTALL_FAILS", "1");
     let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);

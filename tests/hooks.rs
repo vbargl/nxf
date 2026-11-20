@@ -58,7 +58,7 @@ fn results(fx: &Fixture) -> Value {
 
 /// Without hooks the update runs as before.
 #[test]
-fn no_hooks() {
+fn absent() {
     let fx = updating();
     let old = fx.locked("a");
     fx.run(&["auto-update"]).ok();
@@ -130,7 +130,7 @@ fn manual_update() {
 /// runs and finds the saved results in NXF_RESULTS; when it passes it adds
 /// nothing to them, and the run does not fail.
 #[test]
-fn failure_hook() {
+fn failure_sees_results() {
     let fx = failing();
     let copy = fx.dir.join("copy.json");
     hook(
@@ -148,7 +148,7 @@ fn failure_hook() {
 
 /// A flagged input that could not be updated is a record only: no hook runs.
 #[test]
-fn flagged_runs_no_hook() {
+fn flagged_runs_none() {
     let system = &fake_systems().one;
     let fx = updating()
         .with("NXF_SYSTEM", system)
@@ -163,7 +163,7 @@ fn flagged_runs_no_hook() {
 
 /// A task that fails runs the failure hook, and the run fails.
 #[test]
-fn failed_task_runs_the_hook() {
+fn failed_task_runs_failure() {
     let fx = updating().with("NXF_TEST_NH_FAIL_ACTION", "switch");
     let mark = marking(&fx);
     assert_eq!(fx.run(&["auto-update"]).code, 1);
@@ -175,7 +175,7 @@ fn failed_task_runs_the_hook() {
 
 /// A failure hook that fails itself is a result of its own.
 #[test]
-fn failing_hook() {
+fn failure_of_its_own() {
     let fx = failing();
     hook(&fx, FAILURE, "echo 'cannot pause' >&2; exit 4");
     let result = fx.run(&["auto-update"]);
