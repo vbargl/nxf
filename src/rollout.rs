@@ -547,6 +547,19 @@ fn machines(count: usize) -> String {
     }
 }
 
+/// The outcome when machines were left out: how many of all, and which of
+/// them were not installed. The silent ones have their rows in the plan.
+fn not_rolled_out(failed: &[&str], silent: usize, all: usize) {
+    output::failure(&format!(
+        "{} of {} not rolled out",
+        failed.len() + silent,
+        machines(all)
+    ));
+    if !failed.is_empty() {
+        output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
+    }
+}
+
 pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
     let scratch = std::env::temp_dir().join(format!("nxf-rollout.{}", std::process::id()));
     // ssh and Nix split their options at spaces, and files in here are named in them.
@@ -634,12 +647,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     }
     if to_install.is_empty() {
         if !failed.is_empty() {
-            output::failure(&format!(
-                "{} of {} not rolled out",
-                failed.len() + silent,
-                machines(hosts.len())
-            ));
-            output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
+            not_rolled_out(&failed, silent, hosts.len());
             return Ok(false);
         }
         if silent > 0 {
@@ -718,14 +726,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     }
 
     if !failed.is_empty() || silent > 0 {
-        output::failure(&format!(
-            "{} of {} not rolled out",
-            failed.len() + silent,
-            machines(hosts.len())
-        ));
-        if !failed.is_empty() {
-            output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
-        }
+        not_rolled_out(&failed, silent, hosts.len());
     } else if !unwritten.is_empty() {
         output::failure(&format!(
             "{} installed, but not every host key was written",
