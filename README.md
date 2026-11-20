@@ -425,12 +425,14 @@ nxf install /tmp/machine
 3. It makes the SSH host key and prints it, and records the installation in
    `/var/lib/nxf/installed.json` and which system the flake built.
 
-`--reboot` restarts into the new system. Install refuses outside an installer
-(a system that runs from a disk), on a system that nxf manages (one it
-installed, or one whose system has nxf, also when it runs from memory), with
-uncommitted changes in the flake, and into a target that already holds a
-flake. Inputs are fetched on the machine, so a private input needs its
-credentials in the installer.
+`--reboot` restarts into the new system. Install needs root: another user
+gets `Installing needs root`. It refuses outside an installer (a system that
+runs from a disk), on a system that nxf manages (one it installed, or one
+whose system has nxf, also when it runs from memory), with uncommitted
+changes in the flake, and, with `--mounted`, into a target whose `/etc/nixos`
+is not empty. A system runs from memory when the last `/` line of
+`/proc/mounts` names a `tmpfs`, a `rootfs` or a `ramfs`. Inputs are fetched
+on the machine, so a private input needs its credentials in the installer.
 
 ### From another computer
 
@@ -455,7 +457,9 @@ The command can be repeated: machines that are installed are not touched, so
 a second run only installs what the first one could not. Installing erases
 disks, so rollout shows the plan and asks before it erases anything; `--yes`
 confirms without a question, and without a terminal nothing is erased unless
-`--yes` is given.
+`--yes` is given. Before the question rollout finds its own package and reads
+the template. A template that cannot be read, or an nxf that does not run
+from the Nix store, ends the command: nothing is asked and nothing is erased.
 
 For each machine it installs, rollout copies this nxf and the template to
 the machine, runs `nxf init --hardware` and `nxf install` there, restarts it,
@@ -464,7 +468,8 @@ made. It waits up to `NXF_ROLLOUT_WAIT` seconds, 600 by default, for the
 installer to answer, and as long again for the new system; a machine that
 takes longer counts as failed and is named under `Not installed`. The flake
 never exists on your computer. `--files <dir>` gives each
-machine the content of `<dir>/<name>/`, laid over the template.
+machine the content of `<dir>/<name>/`, laid over the template. A `<dir>`
+that is not a directory is refused before any machine is asked.
 
 The outcome lists the host key of every installed machine as a `known_hosts`
 line; `--known-hosts <file>` writes them into that file, replacing the key of
@@ -481,10 +486,11 @@ its user id is <id>`. It is not installed, the other machines are, and the
 command fails. The machine needs a way to the internet for the installer
 image and the inputs. The first connection to a machine nobody has connected
 to accepts its host key; a key that differs from one you already know is
-refused. `nix copy`, which brings nxf and the template to the machine, gets
-the SSH options of that connection in `NIX_SSHOPTS` and trusts the same keys.
-The options are quoted as for a shell, and Nix 2.26 and later split them as a
-shell does.
+refused. `nix copy`, which brings nxf and the template to the machine,
+trusts the same keys: rollout writes them into one file and names it in
+`NIX_SSHOPTS`. The options of ssh name files in the temporary directory, so
+rollout refuses one whose path holds a space, a quote or a backslash, before
+any machine is asked.
 
 ### Upgrading machines
 
@@ -505,7 +511,7 @@ the one before has ended without a failure.
 hosts.toml · 3 machines
 
   ✓ node-1    inputs updated, switched
-  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully
+  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | Command exited with status 1. | Some changes may already be active.
   · node-3    not started
 
 ✗ Upgrade failed on 1 of 3 machines
@@ -514,6 +520,8 @@ hosts.toml · 3 machines
 
 - A failure, or a machine that does not answer, lets its own wave end and
   starts no other. The machines of a later wave are listed as not started.
+  The row of a failed task holds what the task said on the machine, its
+  lines joined by ` | `.
 - Each machine updates its own flake, so each commits its own `flake.lock`;
   the machines get the same revisions only when they fetch at the same time.
   A machine with no new revision still switches to its committed flake.
