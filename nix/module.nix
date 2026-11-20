@@ -26,6 +26,19 @@ let
     value = "store --file=${auto.git.credentialsFile}";
   };
 
+  # nh switches with sudo, and an unattended run cannot answer a prompt.
+  sudoRules = [
+    {
+      groups = [ group ];
+      commands = [
+        {
+          command = "ALL";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
+  ];
+
   # systemd takes the seconds as a time span.
   span = seconds: "${toString seconds}s";
 
@@ -293,15 +306,14 @@ in
         inherit group;
         description = "nxf automatic updates";
       };
-      security.sudo.extraRules = [
+      # The rule goes to whichever of the two implementations is enabled.
+      security.sudo.extraRules = lib.mkIf config.security.sudo.enable sudoRules;
+      security.sudo-rs.extraRules = lib.mkIf config.security.sudo-rs.enable sudoRules;
+
+      assertions = [
         {
-          groups = [ group ];
-          commands = [
-            {
-              command = "ALL";
-              options = [ "NOPASSWD" ];
-            }
-          ];
+          assertion = config.security.sudo.enable || config.security.sudo-rs.enable;
+          message = "services.nxf needs sudo: the group ${group} switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true.";
         }
       ];
 
@@ -360,6 +372,19 @@ in
     })
 
     (lib.mkIf auto.enable {
+      assertions = [
+        {
+          assertion = cfg.flake != "";
+          message = "services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\".";
+        }
+        {
+          assertion =
+            auto.git.credentialsFile == null
+            || !lib.hasPrefix "${builtins.storeDir}/" (toString auto.git.credentialsFile);
+          message = "services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the token: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\".";
+        }
+      ];
+
       environment.etc =
         lib.mapAttrs' (
           name: script:

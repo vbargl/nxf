@@ -281,14 +281,17 @@ The flake provides the package and a NixOS module:
 
 `services.nxf.enable` installs the command and sets `NXF_FLAKE` to
 `services.nxf.flake` (default `/etc/nixos`). It also creates the user and the
-group `nxf`, lets the group use sudo without a password, creates
+group `nxf`, lets the group use sudo without a password (the rule goes to
+`security.sudo` or to `security.sudo-rs`, whichever is enabled), creates
 `/var/lib/nxf`, hands the flake directory and that state over to the user and
 the group, and makes Git trust the flake directory for every user; see
 [Who runs it, and who may work with it](#who-runs-it-and-who-may-work-with-it).
-`services.nxf.autoUpdate.enable` does the same and adds the timer. The package
-alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git, Nix, OpenSSH,
-tar, coreutils and systemd for machines that do not have them on `PATH`.
-[Layout](CONTRIBUTING.md#layout) lists the programs nxf calls.
+`services.nxf.autoUpdate.enable` does the same and adds the timer. The module
+refuses, when the configuration is evaluated, a machine without sudo, an empty
+`services.nxf.flake` with the timer, and a `git.credentialsFile` in the Nix
+store. The package alone is `nxf.packages.<system>.nxf`; it brings nh, dix,
+Git, Nix, OpenSSH, tar, coreutils and systemd for machines that do not have
+them on `PATH`. [Layout](CONTRIBUTING.md#layout) lists the programs nxf calls.
 
 The options of the module are not kept compatible between 0.x versions of nxf.
 
@@ -841,7 +844,8 @@ access-tokens = github.com=TOKEN
 Where the two files are is yours to choose: a directory beside the flake
 that Git ignores, or secrets committed encrypted that sops-nix or agenix
 decrypt. They must be outside the Nix store, the user `nxf` must be able to
-read them, and nobody else should.
+read them, and nobody else should. The module refuses a `git.credentialsFile`
+in the store.
 
 Inputs over SSH also work. The service runs `ssh` in batch mode, and the user
 `nxf` has no `~/.ssh`: its key and the host keys it must trust come from the

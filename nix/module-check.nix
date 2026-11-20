@@ -58,6 +58,17 @@ let
   # The command alone, with no timer.
   command = system { services.nxf.enable = true; };
 
+  unit = config: name: config.systemd.units.${name}.text;
+
+  # The messages of the assertions a configuration fails, as JSON.
+  refusals =
+    config:
+    builtins.toJSON (
+      map (assertion: assertion.message) (
+        builtins.filter (assertion: !assertion.assertion) config.assertions
+      )
+    );
+
   # Whether the types of the options take a configuration.
   accepts =
     module: (builtins.tryEval (builtins.deepSeq (system module).services.nxf.autoUpdate true)).success;
@@ -71,7 +82,29 @@ let
     };
   };
 
-  unit = config: name: config.systemd.units.${name}.text;
+  # The sudo of the system is the one of sudo-rs.
+  rs = {
+    security.sudo.enable = false;
+    security.sudo-rs.enable = true;
+  };
+  withRs = system {
+    imports = [
+      rs
+      (update { })
+    ];
+  };
+
+  noSudo = system {
+    imports = [ (update { }) ];
+    security.sudo.enable = false;
+  };
+  noFlake = system {
+    imports = [ (update { }) ];
+    services.nxf.flake = "";
+  };
+  storeToken = system (update {
+    git.credentialsFile = builtins.toFile "git-credentials" "https://machine:token@git.example.org";
+  });
 
 in
 pkgs.runCommand "nxf-module-check"
@@ -106,6 +139,19 @@ pkgs.runCommand "nxf-module-check"
     );
     commandSudo = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) command.security.sudo.extraRules
+    );
+    rootRefusals = refusals root;
+    plainRefusals = refusals plain;
+    commandRefusals = refusals command;
+    rsRefusals = refusals withRs;
+    noSudoRefusals = refusals noSudo;
+    noFlakeRefusals = refusals noFlake;
+    storeTokenRefusals = refusals storeToken;
+    rsRule = builtins.toJSON (
+      builtins.any (rule: rule.groups == [ "nxf" ]) withRs.security.sudo-rs.extraRules
+    );
+    rsPlainRule = builtins.toJSON (
+      builtins.any (rule: rule.groups == [ "nxf" ]) withRs.security.sudo.extraRules
     );
     durationsAccepted = builtins.toJSON (
       accepts (update {
@@ -229,6 +275,17 @@ pkgs.runCommand "nxf-module-check"
     has "$plainTimerPath" 'FixedRandomDelay=false'
     has "$plainServicePath" 'TimeoutStartSec=2700s'
 
+    # A configuration that cannot work is refused with the option and the fix.
+    test "$rootRefusals" = '[]'
+    test "$plainRefusals" = '[]'
+    test "$commandRefusals" = '[]'
+    test "$rsRefusals" = '[]'
+    test "$noSudoRefusals" = '["services.nxf needs sudo: the group nxf switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true."]'
+    test "$noFlakeRefusals" = '["services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\"."]'
+    test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the token: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
+    # The rule for the group goes to the sudo that is enabled.
+    test "$rsRule" = true
+    test "$rsPlainRule" = false
     # Every duration is a number of seconds.
     test "$durationsAccepted" = true
     test "$systemdStringRefused" = false
