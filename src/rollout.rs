@@ -577,7 +577,7 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
     let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
     if scratch.to_string_lossy().contains(splits) {
         return Err(format!(
-            "The temporary directory {} has a space or a quote in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
+            "The temporary directory {} has a space, a quote or a backslash in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
             std::env::temp_dir().display()
         ));
     }

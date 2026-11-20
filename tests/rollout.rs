@@ -687,7 +687,7 @@ fn unusable_scratch_is_refused() {
     assert_contains(
         &result.stderr,
         &format!(
-            "✗ The temporary directory {} has a space or a quote in its path\n",
+            "✗ The temporary directory {} has a space, a quote or a backslash in its path\n",
             scratch.display()
         ),
     );
