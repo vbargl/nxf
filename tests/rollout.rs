@@ -460,6 +460,21 @@ fn unwritten_known_hosts() {
     }
 }
 
+/// The revision of an installed machine stands apart from its name, however
+/// long the name is: the names widen the label column of the outcome together.
+#[test]
+fn long_names_widen_the_outcome() {
+    let (fx, hosts) = installers(&["node-1", "node-number-two"]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    result.ok();
+    for name in ["node-1", "node-number-two"] {
+        assert_contains(
+            &result.stdout,
+            &format!("\n  {name:<15}  0123456789ab\n  {name} ssh-ed25519 AAAA{name}\n"),
+        );
+    }
+}
+
 /// The key of the system that was there before is replaced by the new one.
 /// When it cannot be removed, that is said and the command fails, instead of
 /// the old key staying trusted beside the new one.

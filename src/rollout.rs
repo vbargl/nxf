@@ -829,7 +829,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
             .as_deref()
             .map(|revision| revision.chars().take(12).collect::<String>())
             .unwrap_or_default();
-        output::fact(&format!("{:<w$}", host.name, w = width - 2), &revision);
+        output::fact(&format!("{:<width$}", host.name), &revision);
         output::note(&known_hosts_line(host, &done.key));
     }
     if !unwritten.is_empty() {
