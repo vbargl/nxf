@@ -96,6 +96,8 @@ let
     ];
   };
 
+  # The module is imported and off: nothing it asserts may apply.
+  disabled = system { security.sudo.enable = false; };
   noSudo = system {
     imports = [ (autoUpdateWith { }) ];
     security.sudo.enable = false;
@@ -154,6 +156,7 @@ pkgs.runCommand "nxf-module-check"
     plainRefusals = refusals plain;
     commandRefusals = refusals command;
     sudoRsRefusals = refusals withSudoRs;
+    disabledRefusals = refusals disabled;
     noSudoRefusals = refusals noSudo;
     noFlakeRefusals = refusals noFlake;
     storeTokenRefusals = refusals storeToken;
@@ -293,6 +296,7 @@ pkgs.runCommand "nxf-module-check"
     test "$plainRefusals" = '[]'
     test "$commandRefusals" = '[]'
     test "$sudoRsRefusals" = '[]'
+    test "$disabledRefusals" = '[]'
     test "$noSudoRefusals" = '["services.nxf needs sudo: the group nxf switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true."]'
     test "$noFlakeRefusals" = '["services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\"."]'
     test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
