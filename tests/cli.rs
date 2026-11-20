@@ -29,8 +29,8 @@ fn help() {
     assert_contains(&result.stdout, "auto-update");
 }
 
-/// Commands reject extra arguments instead of treating them as tasks, and
-/// say which word they do not take.
+/// Commands refuse an extra word instead of running it as a task: each fails
+/// with the cause of its refusal, and nh is not called.
 #[test]
 fn commands_reject_tasks() {
     let fx = fixture();
