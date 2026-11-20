@@ -66,7 +66,11 @@ Boundaries:
   `NIX_SSHOPTS`. After the installation only the key it made is accepted.
 - The options of ssh name files in the temporary directory. Rollout refuses
   one whose path holds a space, a quote or a backslash, before any machine
-  is asked.
+  is asked. It makes a directory of its own there for the run, for its user
+  alone, and refuses one that is there already. The files in it are named
+  by the place of a machine in the list, not by its name.
+- A `~/.ssh/known_hosts` that does not exist is left out. One that is there
+  and cannot be read fails the machine before anything is copied to it.
 - `--files <dir>` takes a directory. Anything else is refused before any
   machine is asked. A machine without `<dir>/<name>/` gets the template
   alone.
@@ -103,8 +107,10 @@ Boundaries:
 | I17: A template that cannot be used | A machine to install, a terminal, no `--yes`, and a `--template` without `#<name>` | `rollout` runs | The outcome is `The template must be given as <flake>#<name>`; the question `Type yes:` is not asked; only the probe ran on each machine; the exit status is 1 |
 | I18: The old key cannot be removed | `--known-hosts <file>` holds the key of the system that was there before, and `ssh-keygen -R` fails | `rollout --yes` installs the machine | The machine has the row `✗ Its host key was not written: cannot remove the old key of <address> from <file>:` with the last line `ssh-keygen` printed; the file is unchanged; the machine's `known_hosts` line is printed; the exit status is 1 |
 | I19: The files are not a directory | `--files <dir>`, where `<dir>` is a file or does not exist | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is not a directory`; the exit status is 1 |
-| I20: A temporary directory with a space | A temporary directory whose path holds a space | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space or a quote in its path`; the exit status is 1 |
+| I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
+| I22: The directory of the run is there already | `<temporary directory>/nxf-rollout.<pid>` exists before the run with that process id starts | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is there already`; the directory is left as it is; the exit status is 1 |
+| I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | The machine has a `✗` row `cannot read <file>:` with the cause; `nxf init` does not run on it; the exit status is 1 |
 
 ## Existing verification
 
@@ -121,7 +127,7 @@ not run.
   for each machine, not what it ran.
 - I3: `tests/rollout.rs::unreachable`, with one managed and one unreachable
   machine. No run by hand covers it.
-- I4: `tests/rollout.rs::unpacked_files_fail_the_machine` covers the outcome
+- I4: `tests/rollout.rs::half_packed_files_fail_the_machine` covers the outcome
   `1 machine installed` and the exit status of a played installation.
   `tests/rollout.rs::not_rolled_out` covers the row
   `Already in a NixOS installer`, `tests/rollout.rs::unwritten_known_hosts`
@@ -133,7 +139,7 @@ not run.
   script that starts the installer names the image with `{arch}` replaced,
   and the exit status of a played installation over another system. No
   test covers the row `Started from memory` or runs kexec.
-- I6: `tests/rollout.rs::unpacked_files_fail_the_machine` covers that the
+- I6: `tests/rollout.rs::half_packed_files_fail_the_machine` covers that the
   files of a machine are sent to it and that `nxf init` gets `--files`.
   `tests/rollout.rs::files_must_be_a_directory` covers that `nxf init` gets
   no `--files` for a machine without files. No test covers what
@@ -141,7 +147,7 @@ not run.
 - I7: `tests/rollout.rs::known_hosts` covers the form of the line, also with
   a port. `tests/rollout.rs::old_key_is_replaced_or_said` covers the
   replacement in the file and the kept line of another machine.
-- I8: `tests/rollout.rs::unpacked_files_fail_the_machine`,
+- I8: `tests/rollout.rs::half_packed_files_fail_the_machine`,
   `tests/rollout.rs::unreceived_files_fail_the_machine` and
   `tests/rollout.rs::copy_trusts_as_the_link` cover the `✗` row of a step
   that fails, the lines beneath it and the exit status, with one machine.
@@ -164,7 +170,7 @@ not run.
   `tests/rollout.rs::probe_tells_the_user` for the user id in the probe's
   answer. No run by hand covers it.
 - I15: `tests/rollout.rs::unwritten_known_hosts`. No run by hand covers it.
-- I16: `tests/rollout.rs::unpacked_files_fail_the_machine` for a `tar` that
+- I16: `tests/rollout.rs::half_packed_files_fail_the_machine` for a `tar` that
   fails while it packs, with what `tar` printed;
   `tests/rollout.rs::unreceived_files_fail_the_machine` for a machine that
   cannot unpack, with what ssh printed. No run by hand covers it.
@@ -174,12 +180,19 @@ not run.
   covers it.
 - I19: `tests/rollout.rs::files_must_be_a_directory`. No run by hand covers
   it.
-- I20: `tests/rollout.rs::unusable_scratch_is_refused`. No test has a path
-  with a quote or a backslash. No run by hand covers it.
+- I20: `tests/rollout.rs::unusable_scratch_is_refused`. No run by hand
+  covers it.
 - I21: no automated test and no run by hand covers it.
+- I22: `tests/rollout.rs::scratch_is_its_own`, which also covers that the
+  directory of a run has the mode 700. No run by hand covers the refusal.
+- I23: `tests/rollout.rs::copy_reads_keys_as_ssh`, with a directory in the
+  place of the file. It also covers that a file that is not UTF-8 reaches
+  `nix copy` whole. No run by hand covers it.
 - `tests/rollout.rs::probe` covers how the probe's answer is read, and
   `tests/rollout.rs::copy_trusts_as_the_link` that `nix copy` gets one file
-  with the keys of the link, in options that hold no quote.
+  with the keys of the link and the mode 600, in options that hold no quote.
+  `tests/rollout.rs::host_name_with_a_space` covers that no option names a
+  file by the name of a machine.
 
 What a machine holds after an installation needs real machines with kexec,
 disko, `nixos-install` and a restart.
@@ -231,5 +244,25 @@ I1, I2 and I5 to I7 were run by hand with nxf 0.13.1, built from commit
   `1 machine installed by nxf` (I1).
 
 None of the output of that run is kept. The run is not repeatable in CI.
+
+I1 and I5 to I7 were run by hand again with nxf 0.13.1, built from commit
+ea9fe11, against one Incus Ubuntu 24.04 VM with SSH as root, with `--files`,
+`--known-hosts` and `--yes`:
+
+- The plan row was `Ubuntu 24.04.5 LTS; it will be erased`. The rows of the
+  phases were `Started from memory`, `Founded on the machine`, `Installed`
+  and `Started, and its host key is the one it was given`. The outcome was
+  `1 machine installed`, and the exit status was 0 (I5).
+- The installed machine had its own files over the template, the
+  installation record and nxf 0.13.1 (I6).
+- The Ubuntu key in the `--known-hosts` file was replaced by the reported
+  one, and the line of another machine was kept (I7).
+- During the run the directory of the run had the mode 700, and the file
+  that `nix copy` got had the mode 600 and held the accepted key and the
+  line of the user's `known_hosts`.
+- A second run only probed the machine: its row was `installed by nxf`, the
+  outcome was `1 machine installed by nxf`, and the exit status was 0 (I1).
+
+The run is not repeatable in CI.
 
 See the [operating documentation](../../README.md#from-another-computer).
