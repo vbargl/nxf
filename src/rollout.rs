@@ -333,18 +333,24 @@ fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
     // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
     // as a shell does, so no option may need a quote.
     let trusted = scratch.join("copy.known_hosts");
-    let keys: String = link
-        .trusted()
-        .iter()
-        .filter_map(|file| std::fs::read_to_string(file).ok())
-        .map(|keys| format!("{keys}\n"))
-        .collect();
+    // Read as ssh reads them, as bytes; only a file that is not there is left out.
+    let mut keys = Vec::new();
+    for file in link.trusted() {
+        match std::fs::read(&file) {
+            Ok(known) => {
+                keys.extend(known);
+                keys.push(b'\n');
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(format!("cannot read {}: {err}", file.display())),
+        }
+    }
     // For the user alone: it holds a copy of the keys the user knows.
     let mut merged = std::fs::OpenOptions::new();
     merged.write(true).create(true).truncate(true).mode(0o600);
     merged
         .open(&trusted)
-        .and_then(|mut file| file.write_all(keys.as_bytes()))
+        .and_then(|mut file| file.write_all(&keys))
         .map_err(|err| format!("cannot write {}: {err}", trusted.display()))?;
     let mut nix = Command::new("nix");
     nix.args(["copy", "--no-check-sigs", "--to"])

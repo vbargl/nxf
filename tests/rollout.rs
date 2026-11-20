@@ -678,6 +678,39 @@ esac
     assert_eq!(mode.trim(), "600");
 }
 
+/// The keys the user knows reach `nix copy` as ssh reads them, as bytes: a
+/// file that is not UTF-8 is not left out. One that is there and cannot be
+/// read fails the machine, instead of a copy with fewer keys than the link has.
+#[test]
+fn copy_reads_keys_as_ssh() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let known = fx.dir.join("home/.ssh/known_hosts");
+    std::fs::create_dir_all(&known).unwrap();
+    let rollout = || fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    let result = rollout();
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        &format!("\n  ✗ cannot read {}: ", known.display()),
+    );
+    assert_lacks(&ssh_log(&fx), "bin/nxf init");
+
+    std::fs::remove_dir(&known).unwrap();
+    let keys = b"node-9 ssh-ed25519 AAAAuser caf\xe9\n";
+    std::fs::write(&known, keys).unwrap();
+    // A nix that keeps the file its last ssh option names.
+    write_script(
+        &fx.dir.join("bin/nix"),
+        r#"#!/bin/sh
+[ "$1" = copy ] || { echo '{"storePath": "/nix/store/template-source"}'; exit; }
+cp "${NIX_SSHOPTS##*UserKnownHostsFile=}" "$HOME/copied"
+"#,
+    );
+    rollout().ok();
+    let copied = std::fs::read(fx.dir.join("home/copied")).unwrap();
+    assert_eq!(copied, [keys.as_slice(), b"\n"].concat());
+}
+
 /// A temporary directory whose path ssh options cannot carry is refused
 /// before any machine is asked: its files are named in those options.
 #[test]
