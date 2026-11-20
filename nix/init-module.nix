@@ -15,27 +15,36 @@ let
       modules = [ self.nixosModules.default ];
     }).options.services.nxf;
 
-  # The order of the file. Every option must be listed, so a new one cannot
-  # be forgotten here.
+  # The order of the file, by option path. Every option must be listed, so a
+  # new one cannot be forgotten here.
   order = [
     "schedule"
     "randomizedDelay"
     "fixedDelay"
-    "checkHook"
-    "healthChecks"
-    "healthTimeout"
-    "healthInterval"
-    "failureHook"
-    "hookTimeout"
-    "gitIdentity"
-    "gitCredentialsFile"
-    "nixConfigFile"
+    "updateTimeout"
     "strategy"
     "inputs"
-    "timeout"
+    "health.checks"
+    "health.timeout"
+    "health.interval"
+    "hooks.check"
+    "hooks.failure"
+    "hooks.timeout"
+    "git.identity"
+    "git.credentialsFile"
+    "nixConfigFile"
   ];
+
+  # The paths of all options below a set of options, groups included.
+  paths =
+    prefix: set:
+    lib.concatLists (
+      lib.mapAttrsToList (
+        name: value: if lib.isOption value then [ (prefix + name) ] else paths "${prefix}${name}." value
+      ) set
+    );
   listed = lib.sort lib.lessThan ([ "enable" ] ++ order);
-  declared = lib.attrNames options.autoUpdate;
+  declared = lib.sort lib.lessThan (paths "" options.autoUpdate);
 
   value =
     option:
@@ -70,6 +79,10 @@ pkgs.writeText "nxf.nix" ''
     services.nxf.autoUpdate = {
       enable = true;
 
-  ${lib.concatMapStringsSep "\n" (name: entry "    " name options.autoUpdate.${name}) order}  };
+  ${
+    lib.concatMapStringsSep "\n" (
+      name: entry "    " name (lib.getAttrFromPath (lib.splitString "." name) options.autoUpdate)
+    ) order
+  }  };
   }
 ''

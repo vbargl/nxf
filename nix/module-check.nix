@@ -1,5 +1,7 @@
 # Evaluates the module with its defaults and with the options set, and checks
-# the generated units, the group and the permissions of the flake.
+# the generated units, the group and the permissions of the flake, the
+# refusals of a configuration that cannot work, the rule of sudo-rs, and the
+# types of the durations.
 {
   self,
   nixpkgs,
@@ -29,13 +31,13 @@ let
   root = system {
     services.nxf.autoUpdate = {
       enable = true;
-      gitCredentialsFile = "/run/secrets/git-credentials";
+      git.credentialsFile = "/run/secrets/git-credentials";
       nixConfigFile = "/run/secrets/nix.conf";
-      healthChecks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
-      healthTimeout = 600;
-      checkHook = "test -e /run/rollout-open";
-      failureHook = "cp \"$NXF_RESULTS\" /run/rollout-paused";
-      hookTimeout = 30;
+      health.checks."10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
+      health.timeout = 600;
+      hooks.check = "test -e /run/rollout-open";
+      hooks.failure = "cp \"$NXF_RESULTS\" /run/rollout-paused";
+      hooks.timeout = 30;
       strategy = "flag";
       inputs.work = "off";
     };
@@ -47,10 +49,10 @@ let
       autoUpdate = {
         enable = true;
         schedule = "hourly";
-        randomizedDelay = "20min";
+        randomizedDelay = 1200;
         fixedDelay = false;
-        timeout = "45min";
-        gitIdentity = null;
+        updateTimeout = 2700;
+        git.identity = null;
       };
     };
   };
@@ -59,6 +61,63 @@ let
   command = system { services.nxf.enable = true; };
 
   unit = config: name: config.systemd.units.${name}.text;
+
+  # The messages of the assertions a configuration fails, as JSON.
+  refusals =
+    config:
+    builtins.toJSON (
+      map (assertion: assertion.message) (
+        builtins.filter (assertion: !assertion.assertion) config.assertions
+      )
+    );
+
+  # Whether the types of the options take a configuration.
+  accepts =
+    module: (builtins.tryEval (builtins.deepSeq (system module).services.nxf.autoUpdate true)).success;
+
+  autoUpdateWith = autoUpdate: {
+    services.nxf = {
+      autoUpdate = {
+        enable = true;
+      }
+      // autoUpdate;
+    };
+  };
+
+  # The sudo of the system is the one of sudo-rs.
+  sudoRs = {
+    security.sudo.enable = false;
+    security.sudo-rs.enable = true;
+  };
+  withSudoRs = system {
+    imports = [
+      sudoRs
+      (autoUpdateWith { })
+    ];
+  };
+
+  # The module is imported and off: nothing it asserts may apply.
+  disabled = system { security.sudo.enable = false; };
+  noSudo = system {
+    imports = [ (autoUpdateWith { }) ];
+    security.sudo.enable = false;
+  };
+  noFlake = system {
+    imports = [ (autoUpdateWith { }) ];
+    services.nxf.flake = "";
+  };
+  storeToken = system (autoUpdateWith {
+    git.credentialsFile = builtins.toFile "git-credentials" "https://machine:token@git.example.org";
+  });
+  storeNixConfig = system (autoUpdateWith {
+    nixConfigFile = builtins.toFile "nix.conf" "access-tokens = github.com=token";
+  });
+  pathNixConfig = system (autoUpdateWith {
+    nixConfigFile = /. + "/run/secrets/nix.conf";
+  });
+  pathToken = system (autoUpdateWith {
+    git.credentialsFile = /. + "/run/secrets/git-credentials";
+  });
 in
 pkgs.runCommand "nxf-module-check"
   {
@@ -92,6 +151,39 @@ pkgs.runCommand "nxf-module-check"
     );
     commandSudo = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) command.security.sudo.extraRules
+    );
+    rootRefusals = refusals root;
+    plainRefusals = refusals plain;
+    commandRefusals = refusals command;
+    sudoRsRefusals = refusals withSudoRs;
+    disabledRefusals = refusals disabled;
+    noSudoRefusals = refusals noSudo;
+    noFlakeRefusals = refusals noFlake;
+    storeTokenRefusals = refusals storeToken;
+    pathTokenRefusals = refusals pathToken;
+    storeNixConfigRefusals = refusals storeNixConfig;
+    pathNixConfigRefusals = refusals pathNixConfig;
+    sudoRsRule = builtins.toJSON (
+      builtins.any (rule: rule.groups == [ "nxf" ]) withSudoRs.security.sudo-rs.extraRules
+    );
+    sudoDisabledRule = builtins.toJSON (
+      builtins.any (rule: rule.groups == [ "nxf" ]) withSudoRs.security.sudo.extraRules
+    );
+    durationsAccepted = builtins.toJSON (
+      accepts (autoUpdateWith {
+        randomizedDelay = 0;
+        updateTimeout = 60;
+      })
+    );
+    systemdStringRefused = builtins.toJSON (
+      accepts (autoUpdateWith {
+        randomizedDelay = "20min";
+      })
+    );
+    zeroTimeoutRefused = builtins.toJSON (
+      accepts (autoUpdateWith {
+        health.timeout = 0;
+      })
     );
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
@@ -180,12 +272,12 @@ pkgs.runCommand "nxf-module-check"
     has "$gitconfig" 'directory = "/etc/nixos"'
     has "$commandGitconfig" 'directory = "/etc/nixos"'
     has "$rootTimerPath" 'OnCalendar=*-*-* 00/6:00:00'
-    has "$rootTimerPath" 'RandomizedDelaySec=1h'
+    has "$rootTimerPath" 'RandomizedDelaySec=3600s'
     has "$rootTimerPath" 'FixedRandomDelay=true'
     has "$rootTimerPath" 'Persistent=true'
     # A oneshot is starting for as long as it runs, so this ends the update.
     has "$rootServicePath" 'Type=oneshot'
-    has "$rootServicePath" 'TimeoutStartSec=3h'
+    has "$rootServicePath" 'TimeoutStartSec=10800s'
 
     has "$plainServicePath" 'User=nxf'
     has "$plainServicePath" '"NXF_FLAKE=/srv/machine"'
@@ -195,9 +287,29 @@ pkgs.runCommand "nxf-module-check"
     has "$plainPermissionsPath" "flake=/srv/machine"
     has "$plainGitconfig" 'directory = "/srv/machine"'
     has "$plainTimerPath" 'OnCalendar=hourly'
-    has "$plainTimerPath" 'RandomizedDelaySec=20min'
+    has "$plainTimerPath" 'RandomizedDelaySec=1200s'
     has "$plainTimerPath" 'FixedRandomDelay=false'
-    has "$plainServicePath" 'TimeoutStartSec=45min'
+    has "$plainServicePath" 'TimeoutStartSec=2700s'
+
+    # A configuration that cannot work is refused with the option and the fix.
+    test "$rootRefusals" = '[]'
+    test "$plainRefusals" = '[]'
+    test "$commandRefusals" = '[]'
+    test "$sudoRsRefusals" = '[]'
+    test "$disabledRefusals" = '[]'
+    test "$noSudoRefusals" = '["services.nxf needs sudo: the group nxf switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true."]'
+    test "$noFlakeRefusals" = '["services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\"."]'
+    test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
+    test "$pathTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"/run/secrets/nxf-git-credentials\"."]'
+    test "$storeNixConfigRefusals" = '["services.nxf.autoUpdate.nixConfigFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-nix.conf\"."]'
+    test "$pathNixConfigRefusals" = '["services.nxf.autoUpdate.nixConfigFile is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"/run/secrets/nxf-nix.conf\"."]'
+    # The rule for the group goes to the sudo that is enabled.
+    test "$sudoRsRule" = true
+    test "$sudoDisabledRule" = false
+    # Every duration is a number of seconds.
+    test "$durationsAccepted" = true
+    test "$systemdStringRefused" = false
+    test "$zeroTimeoutRefused" = false
 
     touch $out
   ''
