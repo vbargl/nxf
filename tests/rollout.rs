@@ -594,9 +594,9 @@ fn bad_template_before_the_question() {
     assert_eq!(ssh_log(&fx).lines().count(), 1);
 }
 
-/// `nix copy` connects with the trust of the link: one file holds the keys
-/// this run accepted and the keys the user knows, so that a key that differs
-/// from a known one is refused there too. No option needs a shell to split it.
+/// `nix copy` connects with the trust of the link: one file, for the user alone,
+/// holds the keys this run accepted and those the user knows, so a key that
+/// differs from a known one is refused there too. No option needs a shell to split it.
 #[test]
 fn copy_trusts_as_the_link() {
     let (mut fx, hosts) = installers(&["node-1"]);
@@ -631,7 +631,9 @@ case "$1 $2" in
     'copy '*)
         echo "$* | $NIX_SSHOPTS" >> '{dir}/nix.log'
         for option in $NIX_SSHOPTS; do
-            [[ $option != UserKnownHostsFile=* ]] || cp "${{option#*=}}" '{dir}/copy.known_hosts'
+            [[ $option == UserKnownHostsFile=* ]] || continue
+            cp "${{option#*=}}" '{dir}/copy.known_hosts'
+            stat -c %a "${{option#*=}}" > '{dir}/copy.mode'
         done
         echo 'error: cannot connect' >&2; exit 1 ;;
 esac
@@ -672,6 +674,8 @@ esac
     let trusted = std::fs::read_to_string(dir.join("copy.known_hosts")).unwrap();
     assert_contains(&trusted, "node-1 ssh-ed25519 AAAAseen\n");
     assert_contains(&trusted, "node-9 ssh-ed25519 AAAAuser\n");
+    let mode = std::fs::read_to_string(dir.join("copy.mode")).unwrap();
+    assert_eq!(mode.trim(), "600");
 }
 
 /// A temporary directory whose path ssh options cannot carry is refused

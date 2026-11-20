@@ -4,7 +4,7 @@
 //! installed there with `nxf init` and `nxf install`.
 
 use std::io::{BufRead, BufReader, IsTerminal, Write};
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -339,7 +339,12 @@ fn copy(link: &Link, paths: &[&Path], scratch: &Path) -> Result<(), String> {
         .filter_map(|file| std::fs::read_to_string(file).ok())
         .map(|keys| format!("{keys}\n"))
         .collect();
-    std::fs::write(&trusted, keys)
+    // For the user alone: it holds a copy of the keys the user knows.
+    let mut merged = std::fs::OpenOptions::new();
+    merged.write(true).create(true).truncate(true).mode(0o600);
+    merged
+        .open(&trusted)
+        .and_then(|mut file| file.write_all(keys.as_bytes()))
         .map_err(|err| format!("cannot write {}: {err}", trusted.display()))?;
     let mut nix = Command::new("nix");
     nix.args(["copy", "--no-check-sigs", "--to"])
