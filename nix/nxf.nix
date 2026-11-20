@@ -80,13 +80,15 @@
     # A file in the format of git-credential-store, one
     # `https://user:token@host` line per host, for inputs fetched with Git
     # over HTTPS. It may be anywhere outside the Nix store; the user
-    # `nxf` must be able to read it, and nobody else should.
+    # `nxf` must be able to read it, and nobody else should. Give it as a
+    # string: Nix copies a path literal into the store.
     # git.credentialsFile = null;
 
     # A nix.conf fragment for the update only, such as
     # `access-tokens = github.com=<token>` for `github:` inputs or
-    # `netrc-file = <path>` for tarball inputs. Like `git.credentialsFile`,
-    # it may be anywhere the user `nxf` can read.
+    # `netrc-file = <path>` for tarball inputs. It may be anywhere outside the
+    # Nix store; the user `nxf` must be able to read it, and nobody else
+    # should. Give it as a string: Nix copies a path literal into the store.
     # nixConfigFile = null;
   };
 }

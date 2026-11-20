@@ -105,6 +105,12 @@ let
   storeToken = system (update {
     git.credentialsFile = builtins.toFile "git-credentials" "https://machine:token@git.example.org";
   });
+  storeNixConfig = system (update {
+    nixConfigFile = builtins.toFile "nix.conf" "access-tokens = github.com=token";
+  });
+  pathNixConfig = system (update {
+    nixConfigFile = /. + "/run/secrets/nix.conf";
+  });
   pathToken = system (update {
     git.credentialsFile = /. + "/run/secrets/git-credentials";
   });
@@ -150,6 +156,8 @@ pkgs.runCommand "nxf-module-check"
     noFlakeRefusals = refusals noFlake;
     storeTokenRefusals = refusals storeToken;
     pathTokenRefusals = refusals pathToken;
+    storeNixConfigRefusals = refusals storeNixConfig;
+    pathNixConfigRefusals = refusals pathNixConfig;
     rsRule = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) withRs.security.sudo-rs.extraRules
     );
@@ -287,6 +295,8 @@ pkgs.runCommand "nxf-module-check"
     test "$noFlakeRefusals" = '["services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\"."]'
     test "$storeTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-git-credentials\"."]'
     test "$pathTokenRefusals" = '["services.nxf.autoUpdate.git.credentialsFile is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"/run/secrets/nxf-git-credentials\"."]'
+    test "$storeNixConfigRefusals" = '["services.nxf.autoUpdate.nixConfigFile is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"/run/secrets/nxf-nix.conf\"."]'
+    test "$pathNixConfigRefusals" = '["services.nxf.autoUpdate.nixConfigFile is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"/run/secrets/nxf-nix.conf\"."]'
     # The rule for the group goes to the sudo that is enabled.
     test "$rsRule" = true
     test "$rsPlainRule" = false

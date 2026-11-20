@@ -285,7 +285,8 @@ in
             A file in the format of git-credential-store, one
             `https://user:token@host` line per host, for inputs fetched with Git
             over HTTPS. It may be anywhere outside the Nix store; the user
-            `nxf` must be able to read it, and nobody else should.
+            `nxf` must be able to read it, and nobody else should. Give it as a
+            string: Nix copies a path literal into the store.
           '';
         };
       };
@@ -297,8 +298,9 @@ in
         description = ''
           A nix.conf fragment for the update only, such as
           `access-tokens = github.com=<token>` for `github:` inputs or
-          `netrc-file = <path>` for tarball inputs. Like `git.credentialsFile`,
-          it may be anywhere the user `nxf` can read.
+          `netrc-file = <path>` for tarball inputs. It may be anywhere outside the
+          Nix store; the user `nxf` must be able to read it, and nobody else
+          should. Give it as a string: Nix copies a path literal into the store.
         '';
       };
     };
@@ -396,7 +398,8 @@ in
           message = "services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\".";
         }
       ]
-      ++ secretFile "git.credentialsFile" "/run/secrets/nxf-git-credentials" auto.git.credentialsFile;
+      ++ secretFile "git.credentialsFile" "/run/secrets/nxf-git-credentials" auto.git.credentialsFile
+      ++ secretFile "nixConfigFile" "/run/secrets/nxf-nix.conf" auto.nixConfigFile;
 
       environment.etc =
         lib.mapAttrs' (
