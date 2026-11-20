@@ -101,6 +101,8 @@ fn commit_file() {
         &fx.checkout.join(".git/config"),
         "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n[core]\n\thooksPath = /dev/null\n",
     );
+    // With the GIT_DIR of the caller, this process would commit there.
+    assert_eq!(git::commit_of(&fx.checkout, &[fx.tree()]), Some(fx.head()));
     let identity = git::identity(&fx.checkout);
     git::commit_file(&fx.checkout, "flake.lock", "lock only").unwrap();
     assert_eq!(
