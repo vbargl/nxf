@@ -607,7 +607,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     let mut silent = 0;
     for (host, probe) in hosts.iter().zip(&probes) {
         let name = &host.name;
-        let what = match &probe.found {
+        let (what, erased) = match &probe.found {
             Found::Managed => {
                 output::row(Mark::Done, &format!("{name:<width$}installed by nxf"));
                 continue;
@@ -617,8 +617,8 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 output::row(Mark::Failed, &format!("{name:<width$}unreachable: {why}"));
                 continue;
             }
-            Found::Installer => "NixOS installer",
-            Found::Other(os) => os,
+            Found::Installer => ("NixOS installer", "its disks will be erased"),
+            Found::Other(os) => (os.as_str(), "it will be erased"),
         };
         // Refused here, before anything is erased: only root can install.
         if let Some(user) = probe.user.as_deref().filter(|user| *user != "0") {
@@ -630,10 +630,6 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
             continue;
         }
         to_install.push((host, probe));
-        let erased = match probe.found {
-            Found::Installer => "its disks will be erased",
-            _ => "it will be erased",
-        };
         output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
     }
     if to_install.is_empty() {
