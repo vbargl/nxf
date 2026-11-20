@@ -111,7 +111,7 @@ Boundaries:
 | I15: Known hosts cannot be written | Two machines to install, and a `--known-hosts <file>` that cannot be written | `rollout --yes` runs | Both machines are installed; each has the row `✗ Its host key was not written: cannot write <file>:` with the cause; the outcome is `2 machines installed, but not every host key was written` with `Not written to <file>: <names>.`; the revision and the `known_hosts` line of both are printed; the exit status is 1 |
 | I16: tar fails on a machine's files | `--files <dir>` with `<dir>/<name>/`, and `tar` fails while it packs them, or the machine cannot unpack them | `rollout --yes` runs | The machine's `✗` row is `Sending the machine's files failed`, with what `tar` and ssh printed beneath; `nxf init` does not run on the machine; it is named under `Not installed`; the exit status is 1 |
 | I17: A template that cannot be used | A machine to install, a terminal, no `--yes`, and a `--template` without `#<name>` | `rollout` runs | The outcome is `The template must be given as <flake>#<name>`; the question `Type yes:` is not asked; only the probe ran on each machine; the exit status is 1 |
-| I18: The old key cannot be removed | `--known-hosts <file>` holds the key of the system that was there before, and `ssh-keygen -R` fails | `rollout --yes` installs the machine | The machine has the row `✗ Its host key was not written: cannot remove the old key of <address> from <file>:` with the last line `ssh-keygen` printed; the file is unchanged; the machine's `known_hosts` line is printed; the exit status is 1 |
+| I18: The old key cannot be removed | `--known-hosts <file>` holds the key of the system that was there before, and `ssh-keygen -R` fails | `rollout --yes` installs the machine | The machine has the row `✗ Its host key was not written: cannot remove the old key of <address> from <file>:` (`[<address>]:<port>` takes the place of `<address>` with a port other than 22) with the last line `ssh-keygen` printed; the file is unchanged; the machine's `known_hosts` line is printed; the exit status is 1 |
 | I19: The files are not a directory | `--files <dir>`, where `<dir>` is a file or does not exist | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is not a directory`; the exit status is 1 |
 | I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
@@ -184,8 +184,8 @@ not run.
   cannot unpack, with what ssh printed. No run by hand covers it.
 - I17: `tests/rollout.rs::bad_template_before_the_question`. No run by hand
   covers it.
-- I18: `tests/rollout.rs::old_key_is_replaced_or_said`. No run by hand
-  covers it.
+- I18: `tests/rollout.rs::old_key_is_replaced_or_said`. It does not cover a
+  port other than 22. No run by hand covers it.
 - I19: `tests/rollout.rs::files_must_be_a_directory`. No run by hand covers
   it.
 - I20: `tests/rollout.rs::unusable_scratch_is_refused`. No run by hand
