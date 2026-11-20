@@ -23,8 +23,8 @@ const GIT_ENV: [(&str, &str); 6] = [
 ];
 
 /// The variables that src/ reads, apart from HOME and PATH, which the fixture
-/// sets, and USER, which nxf gets from the caller. The caller's values of
-/// these are removed before the fixture's own are set.
+/// sets, and USER and TMPDIR, which nxf gets from the caller. The caller's
+/// values of these are removed before the fixture's own are set.
 const INHERITED: [&str; 24] = [
     "NXF_BOOTED",
     "NXF_HOOKS_DIR",
