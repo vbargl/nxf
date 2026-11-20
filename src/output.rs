@@ -143,6 +143,14 @@ pub fn line_err(text: &str) {
 /// The width of the label column that facts share.
 pub const LABEL: usize = 10;
 
+/// How many characters of a revision are shown.
+pub const REVISION: usize = 12;
+
+/// The part of a revision that is shown.
+pub fn revision(revision: &str) -> String {
+    revision.chars().take(REVISION).collect()
+}
+
 /// The width of a label column that holds these names: `LABEL`, or the
 /// longest name and two more.
 pub fn widened<'a>(names: impl IntoIterator<Item = &'a str>) -> usize {
@@ -362,6 +370,7 @@ pub fn verdict(text: &str, system: &str, matches: bool) {
 }
 
 fn columns() -> usize {
+    // SAFETY: winsize is plain numbers, and TIOCGWINSZ fills the one it is given.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
     if ok && size.ws_col > 0 {
@@ -370,7 +379,6 @@ fn columns() -> usize {
         80
     }
 }
-    // SAFETY: winsize is plain numbers, and TIOCGWINSZ fills the one it is given.
 
 /// Redraws the two reserved rows, erasing each in full.
 fn redraw(snapshot: &[String], repaint: bool) {

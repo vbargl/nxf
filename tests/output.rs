@@ -263,3 +263,13 @@ fn widened() {
     // Characters, not bytes.
     assert_eq!(output::widened(["ééééééééééé"]), 13);
 }
+
+/// A revision is shown by its first twelve characters, and a shorter one whole.
+#[test]
+fn revision() {
+    assert_eq!(output::REVISION, 12);
+    assert_eq!(output::revision("0123456789abcdef0123"), "0123456789ab");
+    assert_eq!(output::revision("0123456789ab"), "0123456789ab");
+    assert_eq!(output::revision("unknown"), "unknown");
+    assert_eq!(output::revision("ééééééééééééé"), "éééééééééééé");
+}

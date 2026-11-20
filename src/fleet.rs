@@ -186,11 +186,9 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
         match answer {
             Err(error) => output::row(Mark::Failed, &format!("{name:<width$}{error}")),
             Ok(status) => {
-                let revision: String = status["revision"]
+                let revision = status["revision"]
                     .as_str()
-                    .map_or("unknown".to_string(), |revision| {
-                        revision.chars().take(12).collect()
-                    });
+                    .map_or("unknown".to_string(), output::revision);
                 let updated = match status["lastUpdate"]["time"].as_u64() {
                     Some(time) => format!("updated {}", time::age(time)),
                     None => "no automatic update yet".to_string(),
@@ -202,7 +200,11 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
                     attentive += 1;
                     Mark::Attention
                 };
-                let mut text = format!("{name:<width$}{revision:<12}  {}", output::dim(&updated));
+                let mut text = format!(
+                    "{name:<width$}{revision:<shown$}  {}",
+                    output::dim(&updated),
+                    shown = output::REVISION
+                );
                 if !notes.is_empty() {
                     text.push_str(&format!(
                         "  {}",

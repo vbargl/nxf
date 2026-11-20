@@ -111,13 +111,16 @@ fn host_key(root: &Path) -> Result<String, String> {
     }
 }
 
+/// How many links lead from the profile of the system to its store path.
+const PROFILE_LINKS: usize = 4;
+
 /// The store path of the installed system, as the new machine will see it.
 /// The profile links are followed by hand: they point into the new system's
 /// own /nix/store, which is not this one.
 fn installed_system(root: &Path) -> Option<PathBuf> {
     let profiles = root.join("nix/var/nix/profiles");
     let mut link = profiles.join("system");
-    for _ in 0..4 {
+    for _ in 0..PROFILE_LINKS {
         let to = std::fs::read_link(&link).ok()?;
         if to.is_absolute() {
             // Under a stand-in root, the link may name the path with the root.

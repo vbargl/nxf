@@ -201,7 +201,7 @@ fn input_rev(lock: &Value, name: &str) -> String {
         .iter()
         .find_map(|field| locked?.get(field)?.as_str())
         .unwrap_or("");
-    pin.chars().take(12).collect()
+    output::revision(pin)
 }
 
 /// The complete pin, so that comparisons do not rely on abbreviated revisions.

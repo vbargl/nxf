@@ -19,6 +19,10 @@ use crate::ssh::{self, quoted, Link, Trust};
 use crate::state;
 use crate::text::{last_line, plain};
 
+/// Where the machine flake is founded on a machine, and where its files are sent.
+const MACHINE_DIR: &str = "/tmp/nxf-machine";
+const FILES_DIR: &str = "/tmp/nxf-files";
+
 /// The installer image nxf starts on a machine that runs another system.
 const KEXEC_URL: &str = "https://github.com/nix-community/nixos-images/releases/download/nixos-25.11/nixos-kexec-installer-noninteractive-{arch}-linux.tar.gz";
 
@@ -154,11 +158,11 @@ fn probe(link: &Link) -> Probe {
 fn wait_for(link: &Link, expected: impl Fn(&Found) -> bool, what: &str) -> Result<(), String> {
     let deadline = Instant::now() + env::seconds(env::ROLLOUT_WAIT, 600);
     loop {
+        // Sleeps first: just after the restart the system that was there still answers.
         std::thread::sleep(Duration::from_secs(5));
         let probe = probe(link);
         if expected(&probe.found) {
             return Ok(());
-        // Sleeps first: just after the restart the system that was there still answers.
         }
         if Instant::now() >= deadline {
             return Err(format!(
@@ -343,11 +347,11 @@ fn install(
     let nxf = quoted(&format!("{}/bin/nxf", package.display()));
     let template = quoted(&format!("path:{}#{name}", source.display()));
     let mut init = format!(
-        "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template {template} --hardware"
+        "rm -rf {MACHINE_DIR} && {nxf} init {MACHINE_DIR} --template {template} --hardware"
     );
     if let Some(files) = &files {
-        upload(&link, files, "/tmp/nxf-files")?;
-        init.push_str(" --files /tmp/nxf-files");
+        upload(&link, files, FILES_DIR)?;
+        init.push_str(&format!(" --files {FILES_DIR}"));
     }
     stream(&link, &init, "Founding the machine flake")?;
     output::row(Mark::Done, "Founded on the machine");
@@ -355,7 +359,7 @@ fn install(
     output::start("Installing");
     let said = stream(
         &link,
-        &format!("{nxf} install /tmp/nxf-machine"),
+        &format!("{nxf} install {MACHINE_DIR}"),
         "The installation",
     )?;
     let key = said
@@ -679,7 +683,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         let revision = done
             .revision
             .as_deref()
-            .map(|revision| revision.chars().take(12).collect::<String>())
+            .map(output::revision)
             .unwrap_or_default();
         output::fact_in(width, &host.name, &revision);
         output::note(&known_hosts_line(host, &done.key));
