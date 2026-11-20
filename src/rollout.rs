@@ -643,6 +643,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 installed.push((*host, done));
             }
             Err(error) => {
+                let error = process::cause_first(&error);
                 let mut lines = error.lines();
                 output::row(Mark::Failed, lines.next().unwrap_or("Failed"));
                 for line in lines {

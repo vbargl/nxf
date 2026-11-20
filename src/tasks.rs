@@ -214,16 +214,6 @@ struct Stopped {
     build: bool,
 }
 
-/// The cause in a tool's error, and the line of its exit status that leads it.
-fn cause(error: &str) -> (Vec<&str>, Option<&str>) {
-    let mut lines: Vec<&str> = error.lines().collect();
-    let exit = lines
-        .first()
-        .is_some_and(|line| process::is_failure_line(line))
-        .then(|| lines.remove(0));
-    (lines, exit)
-}
-
 /// Reports a failure: the cause first, what it means for the run in muted
 /// text, then the command to retry. It does not promise an activation rollback.
 fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped) -> Stop {
@@ -235,7 +225,7 @@ fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped
     output::failure(&title);
     let mut exits: Vec<&str> = Vec::new();
     for error in causes {
-        let (lines, exit) = cause(error);
+        let (lines, exit) = process::split(error);
         if lines.is_empty() {
             output::effect_err(error);
         }
@@ -429,7 +419,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
             .iter()
             .map(|result| {
                 let error = result.error.as_deref().unwrap_or_default();
-                let (lines, exit) = cause(error);
+                let (lines, exit) = process::split(error);
                 // The first line of the cause names its input.
                 match lines.split_first() {
                     Some((first, rest)) => exit

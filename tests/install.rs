@@ -237,7 +237,7 @@ fn failure_records_nothing() {
     assert_ne!(result.code, 0);
     assert_contains(
         &result.stderr,
-        "✗ nixos-install exited with status 1.\n  error: builder failed",
+        "✗ error: builder failed\n  nixos-install exited with status 1.",
     );
     assert!(!root.join("var/lib/nxf/installed.json").exists());
     assert_lacks(&result.stdout, "NixOS installed");

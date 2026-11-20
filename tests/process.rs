@@ -270,3 +270,30 @@ fn merged() {
         "cannot run /nonexistent/tool: ",
     );
 }
+
+/// A failure is split from its exit line, and an outcome has the cause first.
+#[test]
+fn cause_first() {
+    let error = "nh exited with status 3.\nerror: one\nerror: two";
+    assert_eq!(
+        process::split(error),
+        (
+            vec!["error: one", "error: two"],
+            Some("nh exited with status 3.")
+        )
+    );
+    assert_eq!(
+        process::cause_first(error),
+        "error: one\nerror: two\nnh exited with status 3."
+    );
+    // Without what the program said, the exit line is the cause; text that is no failure is left as it is.
+    assert_eq!(
+        process::cause_first("nh exited with status 3."),
+        "nh exited with status 3."
+    );
+    assert_eq!(
+        process::cause_first("cannot read x\nbecause"),
+        "cannot read x\nbecause"
+    );
+    assert_eq!(process::split("one\ntwo"), (vec!["one", "two"], None));
+}

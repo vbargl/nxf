@@ -43,7 +43,7 @@ fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
         Err(err) => format!(
             "Could not return to {}: {}",
             previous.display(),
-            err.replace('\n', " | ")
+            process::cause_first(&err).replace('\n', " | ")
         ),
     };
     Some(outcome("health", "failed", format!("{failed} | {effect}")))
@@ -132,7 +132,11 @@ pub fn run(state: &Path) -> Result<bool, String> {
     let mut results = Vec::new();
     let mut error = decide(&mut results).err();
     if let Some(error) = &error {
-        results.push(outcome("update", "failed", error.replace('\n', " | ")));
+        results.push(outcome(
+            "update",
+            "failed",
+            process::cause_first(error).replace('\n', " | "),
+        ));
     }
     let saved = save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
     // The hook reads the saved results; when it fails, that is a result too.

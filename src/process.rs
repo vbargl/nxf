@@ -57,6 +57,25 @@ pub fn failure(program: &str, status: ExitStatus, said: &str) -> String {
     }
 }
 
+/// The lines of a failure after its first line, and that line when it is the
+/// exit line of a `failure`.
+pub fn split(error: &str) -> (Vec<&str>, Option<&str>) {
+    let mut lines: Vec<&str> = error.lines().collect();
+    let exit = lines
+        .first()
+        .is_some_and(|line| is_failure_line(line))
+        .then(|| lines.remove(0));
+    (lines, exit)
+}
+
+/// A failure with what the program said first and its exit line after it,
+/// as an outcome reads: the cause first.
+pub fn cause_first(error: &str) -> String {
+    let (mut lines, exit) = split(error);
+    lines.extend(exit);
+    lines.join("\n")
+}
+
 /// Whether a line is the first line of a `failure`.
 pub fn is_failure_line(line: &str) -> bool {
     line.contains(" exited with status ") || line.ends_with(" was stopped by a signal.")

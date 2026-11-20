@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, rollout, state,
-    status, tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, rollout,
+    state, status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -202,6 +202,7 @@ fn task_list() -> String {
 /// An error in the shape of every failure: the cause as the one outcome,
 /// with what helps to resolve it beneath.
 fn fail(error: &str) -> ExitCode {
+    let error = process::cause_first(error);
     let mut lines = error.lines();
     output::failure(lines.next().unwrap_or("Failed"));
     for line in lines {
