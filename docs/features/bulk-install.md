@@ -76,9 +76,9 @@ Boundaries:
   is treated as what the probe finds.
 - A machine whose installation completed and whose system did not answer
   within `NXF_ROLLOUT_WAIT` seconds is a failed machine. When its system
-  answers later, the next run finds it managed and leaves it alone. Its host
-  key is never printed or written, and `--known-hosts` keeps the key of the
-  system that was there before.
+  answers later and ssh accepts its key, the next run finds it managed and
+  leaves it alone. Its host key is never printed or written, and
+  `--known-hosts` keeps the key of the system that was there before.
 
 ## Acceptance scenarios
 
@@ -174,8 +174,8 @@ not run.
   covers it.
 - I19: `tests/rollout.rs::files_must_be_a_directory`. No run by hand covers
   it.
-- I20: `tests/rollout.rs::unusable_scratch_is_refused`. No run by hand
-  covers it.
+- I20: `tests/rollout.rs::unusable_scratch_is_refused`. No test has a path
+  with a quote or a backslash. No run by hand covers it.
 - I21: no automated test and no run by hand covers it.
 - `tests/rollout.rs::probe` covers how the probe's answer is read, and
   `tests/rollout.rs::copy_trusts_as_the_link` that `nix copy` gets one file
