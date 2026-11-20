@@ -67,8 +67,12 @@ Boundaries:
 - The options of ssh name files in the temporary directory. Rollout refuses
   one whose path holds a space, a quote or a backslash, before any machine
   is asked. It makes a directory of its own there for the run, for its user
-  alone, and refuses one that is there already. The files in it are named
-  by the place of a machine in the list, not by its name.
+  alone, under the first of the names `nxf-rollout.<pid>.0` to
+  `nxf-rollout.<pid>.99` that is free. A directory that is there before is
+  never used and never changed. When the directory cannot be made, or every
+  name is taken, rollout fails before any machine is asked; `TMPDIR` names
+  the directory it is made in. The files in it are named by the place of a
+  machine in the list, not by its name.
 - A `~/.ssh/known_hosts` that does not exist is left out. One that is there
   and cannot be read fails the machine before anything is copied to it.
 - `--files <dir>` takes a directory. Anything else is refused before any
@@ -109,7 +113,7 @@ Boundaries:
 | I19: The files are not a directory | `--files <dir>`, where `<dir>` is a file or does not exist | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is not a directory`; the exit status is 1 |
 | I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
-| I22: The directory of the run is there already | `<temporary directory>/nxf-rollout.<pid>` exists before the run with that process id starts | `rollout --yes` runs | No machine is asked; the outcome is `<dir> is there already`; the directory is left as it is; the exit status is 1 |
+| I22: A directory of the first name is there before | A machine to install, and `<temporary directory>/nxf-rollout.<pid>.0` exists before the run with that process id starts | `rollout --yes` runs | `nix copy` is given a file in `<temporary directory>/nxf-rollout.<pid>.1`, a directory with the mode 700; `<temporary directory>/nxf-rollout.<pid>.0` is left as it was, and is the only directory left in the temporary directory; the exit status is 0 |
 | I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | The machine has a `✗` row `cannot read <file>:` with the cause; `nxf init` does not run on it; the exit status is 1 |
 
 ## Existing verification
@@ -185,8 +189,22 @@ not run.
 - I20: `tests/rollout.rs::unusable_scratch_is_refused`. No run by hand
   covers it.
 - I21: no automated test and no run by hand covers it.
-- I22: `tests/rollout.rs::scratch_is_its_own`, which also covers that the
-  directory of a run has the mode 700. No run by hand covers the refusal.
+- I22: `tests/rollout.rs::scratch_is_its_own`, with a stand-in `nix` that tells
+  the directory of the file it is given and its mode. The test makes the
+  directory as the same user with the mode 755, not as another user, and
+  asserts that it is empty and keeps its mode. No run by hand covers it.
+  `tests/rollout.rs::scratch_names_run_out` covers that when the 100 names are
+  all taken, no machine is asked, none of the directories is removed, the
+  exit status is 1, and the outcome is
+  `<temporary directory>/nxf-rollout.<pid>.0 to <temporary directory>/nxf-rollout.<pid>.99 are all there already`
+  with `rollout keeps the keys of a run in a directory it makes itself. Remove
+  them, or set TMPDIR to another directory.` beneath it.
+  `tests/rollout.rs::missing_temporary_directory` covers that a `TMPDIR` that
+  does not exist fails the run before any machine is asked, with the exit
+  status 1, the outcome `cannot create <TMPDIR>/nxf-rollout.` followed by the
+  rest of the path and `: No such file or directory (os error 2)`, and
+  `rollout keeps the keys of a run there. TMPDIR names the directory it is
+  made in.` beneath it.
 - I23: `tests/rollout.rs::copy_reads_keys_as_ssh`, with a directory in the
   place of the file. It also covers that a file that is not UTF-8 reaches
   `nix copy` whole. No run by hand covers it.
