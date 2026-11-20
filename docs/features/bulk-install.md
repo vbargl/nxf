@@ -169,7 +169,9 @@ not run.
   one managed and one that is installed;
   `tests/rollout.rs::probe_tells_the_user` for the user id in the probe's
   answer. No run by hand covers it.
-- I15: `tests/rollout.rs::unwritten_known_hosts`. No run by hand covers it.
+- I15: `tests/rollout.rs::unwritten_known_hosts`. It asserts the row once, not
+  for each machine, and not the cause after `cannot write <file>:`. No run by
+  hand covers it.
 - I16: `tests/rollout.rs::half_packed_files_fail_the_machine` for a `tar` that
   fails while it packs, with what `tar` printed;
   `tests/rollout.rs::unreceived_files_fail_the_machine` for a machine that

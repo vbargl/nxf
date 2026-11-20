@@ -136,7 +136,7 @@ the units and checks that a health check script holds `set -e`.
 | A12 | `tests/health.rs::failed_switch`; `tests/hooks.rs::failed_task_runs_failure` for the failure hook | |
 | A13 | `tests/health.rs::healthy`; `tests/health.rs::passes_later` for a later round | For a later round: the bad mark |
 | A14 | `tests/health.rs::no_checks` | |
-| A15 | `tests/health.rs::unhealthy_returns_and_marks`; `tests/health.rs::hanging_check` for `timed out`; `tests/health.rs::own_words_are_not_the_deadline` for a check that prints `timed out` itself; `tests/health.rs::times_of_the_new_configuration` for the times | For `timed out`: the content of the mark and `Returned to <system>.` in the result. The two tests assert `<check>: timed out` in the result and the exit status |
+| A15 | `tests/health.rs::unhealthy_returns_and_marks`; `tests/health.rs::hanging_check` for `timed out`; `tests/health.rs::own_words_are_not_the_deadline` for a check that prints `timed out` itself; `tests/health.rs::times_of_the_new_configuration` for the times | `The checkout` before `failed its health check`: the test asserts `failed its health check`. For `timed out`: the content of the mark and `Returned to <system>.` in the result. The two tests assert `<check>: timed out` in the result and the exit status |
 | A16 | `tests/health.rs::unhealthy_returns_and_marks` | `this revision failed its health check (<reason>)` in `detail`: the test asserts only `waiting for a newer one` |
 | A17 | `tests/health.rs::unhealthy_returns_and_marks` | |
 | A18 | | No automated test covers it |
@@ -148,7 +148,7 @@ the units and checks that a health check script holds `set -e`.
 | A24 | `tests/health.rs::unmarked_still_returns` | The path of the mark after `cannot write` |
 | A25 | `tests/auto_update.rs::undecided_run_is_saved`; `tests/auto_update.rs::unknown_strategy` asserts that nh is not called | |
 | A26 | | No automated test covers it: the configuration of the fixtures does not import the module |
-| A27 | `tests/auto_update.rs::undecided_run_keeps_what_ran` | |
+| A27 | `tests/auto_update.rs::undecided_run_keeps_what_ran` | `<checkout>` before `has no flake.nix`, in the outcome and in `detail`, and that the outcome starts with it: the test asserts `has no flake.nix` in stderr and in `detail` |
 | A28 | `tests/auto_update.rs::unsaved_run_keeps_its_cause`, also for a save that fails after the failure hook failed | |
 | A29 | `tests/auto_update.rs::failing_hook_is_said` | |
 | A30 | `tests/auto_update.rs::unchanged_and_running` for a run that finds the checkout running | A health check that fails: the fixture of the test has no health checks. The missing bad mark |
