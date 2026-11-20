@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{fake_systems, hostname};
+use common::{fake_systems, hostname, kept_sources};
 use nxf::nixos;
 
 /// Changes summarise the dix diff between two systems as labelled facts.
@@ -31,4 +31,45 @@ fn size() {
 fn host_name() {
     assert_eq!(nixos::hostname(), hostname());
     assert!(!nixos::hostname().is_empty());
+}
+
+/// The sources of the build before stay kept until those of the new build
+/// are: when the new ones cannot be kept, the old ones are still there, and
+/// when they can, they replace the old ones.
+#[test]
+fn sources_stay_until_replaced() {
+    let mut fx = common::fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    // Two inputs with the same content are one source, so they are made to differ.
+    fx.bump(&["a"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+
+    // A nix that cannot make the roots of the sources, and is nix otherwise.
+    let nix = common::sh("sh", &["-c", "command -v nix"]);
+    common::write_script(
+        &fx.dir.join("bin/nix"),
+        &format!(
+            "#!/bin/sh\ncase \"$*\" in *\"/sources/input\"*) [ -z \"$NXF_TEST_ROOTS_FAIL\" ] || {{ echo 'error: no space left on device' >&2; exit 1; }} ;; esac\nexec '{nix}' \"$@\"\n"
+        ),
+    );
+    fx.set("NXF_TEST_ROOTS_FAIL", "1");
+    fx.bump(&["a", "b"]);
+    let failed = fx.run(&["update"]);
+    failed.ok();
+    common::assert_contains(
+        &failed.stderr,
+        "the sources of the inputs could not be kept in the Nix store: error: no space left on device",
+    );
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+
+    fx.unset("NXF_TEST_ROOTS_FAIL");
+    fx.bump(&["a"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["2", "4"]);
+
+    // Both inputs with the same content are one source: the root of the other goes.
+    fx.bump(&["b"]);
+    fx.bump(&["b"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["4"]);
 }

@@ -370,3 +370,34 @@ fn machine_files() {
     assert_ne!(missing.code, 0);
     assert_contains(&missing.stderr, "is not a directory");
 }
+
+/// The options are checked before anything is written: a `--files` that is
+/// no directory leaves no half-founded flake behind, so the corrected
+/// command can run on the same directory.
+#[test]
+fn bad_files_write_nothing() {
+    let fx = fixture();
+    let target = fx.dir.join("retried");
+    let machine = template(&fx, "default", "machine");
+    let found = |files: &Path| {
+        fx.run(&[
+            "init",
+            target.to_str().unwrap(),
+            "--template",
+            &machine,
+            "--files",
+            files.to_str().unwrap(),
+        ])
+    };
+    let missing = found(&fx.dir.join("no-files"));
+    assert_ne!(missing.code, 0);
+    assert_contains(&missing.stderr, "no-files is not a directory");
+    assert_lacks(&missing.stdout, "Founding the machine flake");
+    assert!(!target.exists());
+
+    let own = fx.dir.join("files");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("identity.toml"), "name = \"node-7\"\n").unwrap();
+    found(&own).ok();
+    assert!(target.join("identity.toml").exists());
+}

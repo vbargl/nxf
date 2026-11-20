@@ -387,6 +387,24 @@ pub fn fake_systems() -> &'static Systems {
     })
 }
 
+/// The versions of the input sources kept as roots in the state, sorted.
+/// Each root leads into the Nix store.
+pub fn kept_sources(fx: &Fixture) -> Vec<String> {
+    let mut versions: Vec<String> = std::fs::read_dir(fx.state.join("nxf/sources"))
+        .map(|entries| {
+            entries
+                .map(|entry| {
+                    let source = std::fs::canonicalize(entry.unwrap().path()).unwrap();
+                    assert!(source.starts_with("/nix/store"), "{}", source.display());
+                    std::fs::read_to_string(source.join("v")).unwrap()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    versions.sort();
+    versions
+}
+
 /// Internal-json lines as Nix prints them.
 pub fn events(records: &[serde_json::Value]) -> String {
     records

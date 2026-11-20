@@ -231,3 +231,54 @@ fn manual_switch() {
     fx.run(&["switch"]).ok();
     assert_eq!(fx.nh_actions(), ["build", "switch"]);
 }
+
+/// An unhealthy system is replaced by the previous one also when its
+/// revision cannot be marked as bad, and the result names all three: the
+/// check that failed, the mark that was not written and the return.
+#[test]
+fn unmarked_still_returns() {
+    let systems = fake_systems();
+    let fx = switching();
+    check(&fx, "20-k3s", "echo 'k3s is not running' >&2; exit 1");
+    // A file where the directory of the marks belongs: no mark can be written.
+    std::fs::create_dir_all(&fx.updater).unwrap();
+    std::fs::write(fx.updater.join("bad"), "").unwrap();
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    let calls = fx.nh_calls();
+    assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
+    assert_contains(&calls[2], &format!("os switch {} ", systems.one.display()));
+    let health = &results(&fx)[2];
+    assert_eq!((health.0.as_str(), health.1.as_str()), ("health", "failed"));
+    assert_contains(&health.2, "20-k3s: k3s is not running | cannot write ");
+    assert_contains(
+        &health.2,
+        &format!(" | Returned to {}.", systems.one.display()),
+    );
+}
+
+/// A check that fails with the words "timed out" of its own has failed. It
+/// is not taken for a check that the deadline cut short, for which its
+/// earlier result would count: the system is unhealthy.
+#[test]
+fn own_words_are_not_the_deadline() {
+    let fx = switching();
+    let rounds = fx.dir.join("rounds");
+    // Passes in the first round and fails from the second one on.
+    check(
+        &fx,
+        "10-probe",
+        &format!(
+            "echo round >> '{0}'; [ \"$(wc -l < '{0}')\" -lt 2 ] || {{ echo 'timed out'; exit 1; }}",
+            rounds.display()
+        ),
+    );
+    // Fails in the first round, so that there is a second one.
+    check(
+        &fx,
+        "20-node",
+        &format!("[ \"$(wc -l < '{}')\" -ge 2 ]", rounds.display()),
+    );
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
+    assert_contains(&results(&fx)[2].2, "10-probe: timed out");
+}

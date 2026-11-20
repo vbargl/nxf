@@ -76,6 +76,16 @@ fn checks() -> Vec<PathBuf> {
 /// Runs one script until the deadline, with the given variables added to its
 /// environment; an error says why it did not pass.
 pub fn passes(check: &Path, deadline: Instant, variables: &[(&str, &Path)]) -> Result<(), String> {
+    attempt(check, deadline, variables).map_err(|why| why.unwrap_or_else(|| TIMED_OUT.to_string()))
+}
+
+/// The same, with no reason when the deadline cut the script short: what a
+/// script says itself is never taken for that.
+fn attempt(
+    check: &Path,
+    deadline: Instant,
+    variables: &[(&str, &Path)],
+) -> Result<(), Option<String>> {
     let (mut reader, writer) = os_pipe::pipe().map_err(|err| err.to_string())?;
     let stderr = writer.try_clone().map_err(|err| err.to_string())?;
     let mut command = Command::new(check);
@@ -104,18 +114,18 @@ pub fn passes(check: &Path, deadline: Instant, variables: &[(&str, &Path)]) -> R
         }
     };
     let Some(status) = status else {
-        return Err(TIMED_OUT.to_string());
+        return Err(None);
     };
     if status.success() {
         return Ok(());
     }
     let said = plain(&said.join().unwrap_or_default());
     let last = said.lines().map(str::trim).rfind(|line| !line.is_empty());
-    Err(match (last, status.code()) {
+    Err(Some(match (last, status.code()) {
         (Some(line), _) => line.to_string(),
         (None, Some(code)) => format!("exit status {code}"),
         (None, None) => "killed by a signal".to_string(),
-    })
+    }))
 }
 
 /// Runs all checks, again and again, until all pass or the time runs out.
@@ -136,9 +146,13 @@ pub fn check() -> Health {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = passes(&check, deadline, &[]).err();
+            let (cut, result) = match attempt(&check, deadline, &[]) {
+                Ok(()) => (false, None),
+                Err(Some(why)) => (false, Some(why)),
+                Err(None) => (true, Some(TIMED_OUT.to_string())),
+            };
             let known = ended.iter().position(|(check, _)| *check == name);
-            let result = match (known, result.as_deref() == Some(TIMED_OUT)) {
+            let result = match (known, cut) {
                 (Some(index), true) => ended[index].1.clone(),
                 (Some(index), false) => {
                     ended[index].1 = result.clone();
