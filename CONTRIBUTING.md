@@ -98,11 +98,19 @@ change them here first.
 ## Feature descriptions
 
 - Keep a short brief for each new or changed feature in
-  `docs/features/<feature>.md`: the problem, who uses it, resulting behavior
-  and boundaries.
-- Include concrete Given/When/Then use cases as templates for acceptance
-  tests. Link existing coverage and distinguish scenarios from checks that
-  have actually run. Keep the brief current when the behavior changes.
+  `docs/features/<feature>.md`, and keep it current when the behaviour
+  changes.
+- A brief holds, in this order: a one-line summary; `Brief`, with the problem
+  and who has it, the resulting behaviour and a `Boundaries:` list;
+  `Acceptance scenarios`; `Existing verification`.
+- `Acceptance scenarios` is a table of ID, Given, When and Then, a template
+  for acceptance tests. A When is one action. A Then can be observed: the
+  text of a row or of the outcome, the exit status, or a state that a command
+  shows.
+- `Existing verification` maps every scenario ID to the test that covers it,
+  by name, or says that no automated test covers it. A run by hand is
+  recorded with the nxf version and the commit it ran on, and with what was
+  seen.
 
 ## Commands and tasks
 
@@ -192,3 +200,17 @@ change them here first.
 - When trying nxf by hand, use `--dry-run` or the mock nh. Never run a real
   `build`, `test`, `boot`, `switch`, `upgrade` or `auto-update` to check a
   change.
+
+## Done
+
+A change of behaviour is done when all of this holds:
+
+- The version is bumped; see [Layout](#layout).
+- Tests are added or updated, and `just check` passes; see [Tests](#tests).
+- A change to `install.rs` or `rollout.rs` ran against a virtual machine;
+  see [Tests](#tests).
+- The brief of the feature is current; see
+  [Feature descriptions](#feature-descriptions).
+- The [README](README.md) describes the behaviour as it is now.
+- `nix/nxf.nix` is renewed when the options of the module changed; see
+  [Layout](#layout).
