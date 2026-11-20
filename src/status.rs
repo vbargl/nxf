@@ -149,7 +149,7 @@ fn update_summary() {
         }
     };
     let id = snapshot["id"].as_str().unwrap_or_default();
-    let marker = state::dir().join("update-read");
+    let marker = state::read_marker();
     let seen = std::fs::read_to_string(&marker).unwrap_or_default();
     if seen.trim() == id {
         return;

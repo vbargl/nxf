@@ -57,7 +57,7 @@ fn nh(action: &str, installable: &[&str]) -> Result<PathBuf, String> {
     let state = state::dir();
     std::fs::create_dir_all(&state)
         .map_err(|err| format!("cannot create {}: {err}", state.display()))?;
-    let result = state.join("result");
+    let result = state::result_link();
     let mut nh = Command::new("nh");
     // nxf shows the progress and the package changes itself, from the JSON log
     // of Nix; the out-link is what the build leaves for the activation.

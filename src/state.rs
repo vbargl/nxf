@@ -15,6 +15,14 @@ pub const SYSTEMS: &str = "systems";
 const UPDATE: &str = "update.json";
 /// The mark of a machine that nxf installed, in the updater's state.
 pub const INSTALLED: &str = "installed.json";
+/// The link to the system that the last build made, in the per-user state.
+const RESULT: &str = "result";
+/// The directory of the source roots, in the per-user state.
+const SOURCES: &str = "sources";
+/// The file of the hold on automatic updates, in the updater's state.
+const HOLD: &str = "hold.json";
+/// The marker of the last update summary that this user has read.
+const READ: &str = "update-read";
 /// The directory of the marks of the sources that failed their health check.
 const BAD: &str = "bad";
 
@@ -74,6 +82,21 @@ pub fn record_dir() -> PathBuf {
     } else {
         local_records()
     }
+}
+
+/// The link to the system that the last build made.
+pub fn result_link() -> PathBuf {
+    dir().join(RESULT)
+}
+
+/// The file of the hold on automatic updates.
+pub fn hold_file() -> PathBuf {
+    updater_dir().join(HOLD)
+}
+
+/// The marker of the last update summary that this user has read.
+pub fn read_marker() -> PathBuf {
+    dir().join(READ)
 }
 
 /// The file of the results the updater saved last, in its state directory.
@@ -164,7 +187,7 @@ pub fn remember(key: &str, system: &Path) {
 /// the state, so that the next build needs no access to their origin. They
 /// replace those of the build before, which stay when these cannot be kept.
 pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
-    let sources = dir().join("sources");
+    let sources = dir().join(SOURCES);
     std::fs::create_dir_all(&sources)
         .map_err(|err| format!("cannot create {}: {err}", sources.display()))?;
     if !paths.is_empty() {

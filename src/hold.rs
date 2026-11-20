@@ -15,7 +15,7 @@ pub struct Hold {
 }
 
 fn file() -> PathBuf {
-    state::updater_dir().join("hold.json")
+    state::hold_file()
 }
 
 /// The hold as saved, even when it has ended.

@@ -240,3 +240,16 @@ fn record_dir() {
     assert_eq!(state::shared_records(), updater.join("systems"));
     std::fs::remove_dir_all(state_dir).unwrap();
 }
+
+/// The files of the state have their place in the state of the user or in the
+/// updater's.
+#[test]
+fn state_paths() {
+    let _guard = environment(&[
+        ("NXF_STATE", "/user/state"),
+        ("NXF_UPDATER_STATE", "/updater"),
+    ]);
+    assert_eq!(state::result_link(), Path::new("/user/state/result"));
+    assert_eq!(state::read_marker(), Path::new("/user/state/update-read"));
+    assert_eq!(state::hold_file(), Path::new("/updater/hold.json"));
+}
