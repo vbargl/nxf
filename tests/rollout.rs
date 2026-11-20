@@ -515,3 +515,22 @@ fn installs_only_as_root() {
 fn probe_tells_the_user() {
     assert_eq!(probed("ext4", &[], false).user.as_deref(), Some("1000"));
 }
+
+/// A template that cannot be used is found before the question, not after
+/// the answer: nobody confirms an installation that then cannot start.
+#[test]
+fn bad_template_before_the_question() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let result = fx.terminal(
+        100,
+        &["rollout", "--config", &hosts, "--template", "no-name"],
+    );
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "✗ The template must be given as <flake>#<name>",
+    );
+    assert_lacks(&result.stdout, "Type yes");
+    // Nothing went beyond the probe.
+    assert_eq!(ssh_log(&fx).lines().count(), 1);
+}

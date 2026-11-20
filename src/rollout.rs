@@ -635,18 +635,21 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         .iter()
         .map(|(host, _)| host.name.as_str())
         .collect();
+    if !options.yes && !std::io::stdin().is_terminal() {
+        output::failure(&format!(
+            "{} would be erased; nothing was changed",
+            machines(to_install.len())
+        ));
+        output::effect_err(&format!(
+            "Add --yes to erase and install {}.",
+            names.join(", ")
+        ));
+        return Ok(false);
+    }
+    // Before the question: nobody confirms an installation that cannot start.
+    let package = package()?;
+    let (source, name) = template(&options.template)?;
     if !options.yes {
-        if !std::io::stdin().is_terminal() {
-            output::failure(&format!(
-                "{} would be erased; nothing was changed",
-                machines(to_install.len())
-            ));
-            output::effect_err(&format!(
-                "Add --yes to erase and install {}.",
-                names.join(", ")
-            ));
-            return Ok(false);
-        }
         output::line("");
         output::effect(&format!(
             "Erase the disks of {} and install NixOS? Type yes:",
@@ -662,8 +665,6 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         }
     }
 
-    let package = package()?;
-    let (source, name) = template(&options.template)?;
     let mut installed = Vec::new();
     let mut unwritten = Vec::new();
     for (host, probe) in &to_install {
