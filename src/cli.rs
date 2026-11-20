@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, env, fleet, hold, hosts, init, install, output, rollout, state, status,
-    tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, rollout, state,
+    status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -409,6 +409,11 @@ impl Cmd {
     }
 }
 
+/// Shares what a run makes in the checkout of the machine flake, when the group may write it.
+fn share_checkout() {
+    state::share_with_group(&flake::location().dir);
+}
+
 pub fn main() -> ExitCode {
     env::enable_flakes();
     // A command is recognised only in first place, so that `nxf test status`
@@ -418,7 +423,7 @@ pub fn main() -> ExitCode {
     if !wants_command {
         return match TaskCli::try_parse() {
             Ok(cli) => {
-                state::share_checkout();
+                share_checkout();
                 run_tasks(cli.run)
             }
             Err(error) => refuse(error),
@@ -436,7 +441,7 @@ pub fn main() -> ExitCode {
     match cli.command {
         Some(command) => {
             if command.on_checkout() {
-                state::share_checkout();
+                share_checkout();
             }
             match run_command(command) {
                 Ok(true) => ExitCode::SUCCESS,
@@ -445,7 +450,7 @@ pub fn main() -> ExitCode {
             }
         }
         None => {
-            state::share_checkout();
+            share_checkout();
             run_tasks(cli.run)
         }
     }

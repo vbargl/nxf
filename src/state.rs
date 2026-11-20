@@ -1,14 +1,11 @@
 //! The state nxf keeps: the per-user state, the updater's state that the
 //! users of a machine share, the records of what built which system, the
-//! marks of unhealthy sources and the updater's results.
+//! marks of unhealthy sources and the file of the updater's results.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-
-use crate::{env, flake, nixos, output, process};
+use crate::{env, output, process};
 
 /// The default place of the updater's state, and where an installation puts it.
 pub const UPDATER: &str = "/var/lib/nxf";
@@ -33,11 +30,6 @@ pub fn share_with_group(dir: &Path) -> bool {
         unsafe { libc::umask(0o002) };
     }
     shared
-}
-
-/// Shares what a run makes in the checkout of the machine flake, when the group may write it.
-pub fn share_checkout() {
-    share_with_group(&flake::location().dir);
 }
 
 /// Per-user state: result links, source roots, fallback records and read markers.
@@ -87,43 +79,6 @@ pub fn record_dir() -> PathBuf {
 /// The file of the results the updater saved last, in its state directory.
 pub fn update_file(dir: &Path) -> PathBuf {
     dir.join(UPDATE)
-}
-
-/// The task results the updater saved last, with their time.
-fn saved_update() -> Result<Option<Value>, String> {
-    let file = update_file(&updater_dir());
-    if !file.exists() {
-        return Ok(None);
-    }
-    let text = std::fs::read_to_string(&file)
-        .map_err(|err| format!("cannot read {}: {err}", file.display()))?;
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|err| format!("cannot parse {}: {err}", file.display()))
-}
-
-/// The latest automatic update: the saved task results, and the service's
-/// failure if it ended after them, as when it was killed before saving. The id
-/// changes whenever either does. None when there is nothing to report.
-pub fn update_result() -> Result<Option<Value>, String> {
-    let update = saved_update()?;
-    let saved_at = update
-        .as_ref()
-        .and_then(|update| update.get("time"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let failure = nixos::service_failure()
-        .filter(|failure| failure.get("time").and_then(Value::as_u64).unwrap_or(0) > saved_at);
-    if update.is_none() && failure.is_none() {
-        return Ok(None);
-    }
-    let mut result = json!({"update": update, "failure": failure});
-    let id = Sha256::digest(result.to_string().as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    result["id"] = Value::String(id);
-    Ok(Some(result))
 }
 
 fn bad_dir() -> PathBuf {

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::output::{self, Mark, Style};
 use crate::state::Remembered;
@@ -96,10 +97,47 @@ pub fn print_rows(rows: &[ResultRow]) {
     }
 }
 
+/// The task results the updater saved last, with their time.
+fn saved_update() -> Result<Option<Value>, String> {
+    let file = state::update_file(&state::updater_dir());
+    if !file.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|err| format!("cannot read {}: {err}", file.display()))?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| format!("cannot parse {}: {err}", file.display()))
+}
+
+/// The latest automatic update: the saved task results, and the service's
+/// failure if it ended after them, as when it was killed before saving. The id
+/// changes whenever either does. None when there is nothing to report.
+pub fn update_result() -> Result<Option<Value>, String> {
+    let update = saved_update()?;
+    let saved_at = update
+        .as_ref()
+        .and_then(|update| update.get("time"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let failure = nixos::service_failure()
+        .filter(|failure| failure.get("time").and_then(Value::as_u64).unwrap_or(0) > saved_at);
+    if update.is_none() && failure.is_none() {
+        return Ok(None);
+    }
+    let mut result = json!({"update": update, "failure": failure});
+    let id = Sha256::digest(result.to_string().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    result["id"] = Value::String(id);
+    Ok(Some(result))
+}
+
 /// Prints the latest unread summary, then acknowledges this exact snapshot for
 /// the invoking user. The updater's result is shared and is never modified.
 fn update_summary() {
-    let snapshot = match state::update_result() {
+    let snapshot = match update_result() {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return,
         Err(err) => {
@@ -300,7 +338,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
             "bad": status.tree.as_deref().and_then(state::bad),
-            "lastUpdate": state::update_result()
+            "lastUpdate": update_result()
                 .ok()
                 .flatten()
                 .map(|result| result["update"].clone()),
