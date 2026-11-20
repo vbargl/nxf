@@ -680,7 +680,7 @@ esac
 
 /// The keys the user knows reach `nix copy` as ssh reads them, as bytes: a
 /// file that is not UTF-8 is not left out. One that is there and cannot be
-/// read is refused before any machine is asked, not when its system is down.
+/// read ends the run before any machine is asked, with the file and the cause.
 #[test]
 fn copy_reads_keys_as_ssh() {
     let (fx, hosts) = installers(&["node-1"]);
