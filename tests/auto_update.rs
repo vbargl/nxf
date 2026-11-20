@@ -323,17 +323,7 @@ fn keeps_the_sources() {
     let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
     fx.bump(&["a"]);
     fx.run(&["auto-update"]).ok();
-    let sources = fx.state.join("nxf/sources");
-    let mut versions: Vec<String> = std::fs::read_dir(&sources)
-        .unwrap()
-        .map(|entry| {
-            let source = std::fs::canonicalize(entry.unwrap().path()).unwrap();
-            assert!(source.starts_with("/nix/store"), "{}", source.display());
-            std::fs::read_to_string(source.join("v")).unwrap()
-        })
-        .collect();
-    versions.sort();
-    assert_eq!(versions, ["1", "2"]);
+    assert_eq!(common::kept_sources(&fx), ["1", "2"]);
 }
 
 /// A run that fails before any task ran, such as a checkout whose strategies

@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{fake_systems, hostname};
+use common::{fake_systems, hostname, kept_sources};
 use nxf::nixos;
 
 /// Changes summarise the dix diff between two systems as labelled facts.
@@ -31,22 +31,6 @@ fn size() {
 fn host_name() {
     assert_eq!(nixos::hostname(), hostname());
     assert!(!nixos::hostname().is_empty());
-}
-
-/// The versions of the input sources kept as roots in the state, sorted.
-fn kept_sources(fx: &common::Fixture) -> Vec<String> {
-    let mut versions: Vec<String> = std::fs::read_dir(fx.state.join("nxf/sources"))
-        .map(|entries| {
-            entries
-                .map(|entry| {
-                    let source = std::fs::canonicalize(entry.unwrap().path()).unwrap();
-                    std::fs::read_to_string(source.join("v")).unwrap()
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    versions.sort();
-    versions
 }
 
 /// The sources of the build before stay kept until those of the new build
