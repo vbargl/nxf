@@ -620,7 +620,7 @@ records stay in `/var/lib/nxf`, and `nxf status` reads the results from
 | `healthTimeout` | `300` | Seconds the checks have to pass |
 | `healthInterval` | `10` | Seconds between two rounds of checks |
 | `failureHook` | none | Script that runs after a failed update, or an input to report |
-| `hookTimeout` | `60` | Seconds each of the two hooks has to end |
+| `hookTimeout` | `60` | Seconds each of the two hooks has to end; the module sets `NXF_HOOK_TIMEOUT` from it, which is 60 when nothing sets it |
 | `timeout` | `3h` | Longest run |
 
 ### Health checks
