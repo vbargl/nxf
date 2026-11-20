@@ -254,7 +254,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     output::fact("Host key", &key);
     if options.reboot {
         output::effect("Restarting into the new system.");
-        let _ = Command::new("systemctl").arg("reboot").status();
+        let _ = Command::new(nixos::systemctl()).arg("reboot").status();
     } else {
         output::effect("Restart the machine to start it.");
     }

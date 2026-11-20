@@ -270,10 +270,14 @@ fn saved_update() -> Result<Option<Value>, String> {
         .map_err(|err| format!("cannot parse {}: {err}", file.display()))
 }
 
+/// The command of systemd. NXF_SYSTEMCTL stands in for it in tests.
+pub fn systemctl() -> PathBuf {
+    var("NXF_SYSTEMCTL").unwrap_or_else(|| PathBuf::from("systemctl"))
+}
+
 /// How and when the update service last ended, if it did not succeed.
 fn service_failure() -> Option<Value> {
-    let systemctl = var("NXF_SYSTEMCTL").unwrap_or_else(|| PathBuf::from("systemctl"));
-    let mut child = Command::new(systemctl)
+    let mut child = Command::new(systemctl())
         .args(["show", UPDATE_SERVICE])
         .args([
             "--property=Result,ExecMainExitTimestamp",
