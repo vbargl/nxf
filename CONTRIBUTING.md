@@ -95,9 +95,9 @@ change them here first.
   change of behaviour.
 - `git.rs`, `flake.rs` and `nixos.rs` each wrap one tool and do not use each
   other. They may use `output.rs` for progress and failure diagnostics, and
-  `env.rs`, `process.rs` and `state.rs`, which uses none of the three tools. The
+  `env.rs`, `process.rs` and `state.rs`, which uses none of the three modules. The
   tasks and the status report wire them together.
-- Every variable of the environment is named in `env.rs` and read through it.
+- Every variable of the environment that nxf reads is named in `env.rs` and read through it.
   Every child process is started through `process.rs`, and every call of ssh
   is made through `ssh.rs`. Only `rollout::upload`, which pipes the output of
   `tar` into `ssh`, starts its processes itself. A new variable, command or

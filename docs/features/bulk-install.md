@@ -306,8 +306,8 @@ e3d896f on `main`), against one Incus Ubuntu 24.04 VM with SSH as root, with `--
 The run is not repeatable in CI.
 
 I1 and I5 to I7 were run by hand again with nxf 0.14.1, built from commit
-336a4bb of the branch of this pull request (its `src/` is that of the merge
-commit on `main`), against one Incus Ubuntu 24.04 VM with SSH as root, with
+336a4bb of the branch of pull request #12 (its `src/` is that of the head of
+that branch), against one Incus Ubuntu 24.04 VM with SSH as root, with
 `--files`, `--known-hosts` and `--yes`, a scratch `HOME` and `TMPDIR`, and a
 template with a disko layout and the nxf module, pinned to that commit:
 
