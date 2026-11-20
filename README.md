@@ -588,7 +588,8 @@ For the feature brief and acceptance scenarios, see
    When the hook fails too, the result `hook` `failed` is saved, and the
    command shows `The failure hook failed too:` with what the hook said.
    When the results cannot be saved, the command fails with the cause and
-   the failed save beneath it.
+   the failed save beneath it. The failure hook does not run when the first
+   save fails.
 
 `nxf auto-update --state <dir>` saves `update.json` in `<dir>` instead, and
 `$NXF_RESULTS` names the file there. The hold, the bad marks and the build

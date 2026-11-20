@@ -43,7 +43,7 @@ the configuration is evaluated, and the cause is then
 hook fails too, the result `hook` `failed` is saved, and the command shows
 `The failure hook failed too:` with what the hook said. When the results
 cannot be saved, the command fails with the cause and the failed save
-beneath it.
+beneath it. The failure hook does not run when the first save fails.
 
 `nxf status` prints the saved results once to each user, as
 `Last automatic update`.
