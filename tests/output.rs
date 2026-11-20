@@ -281,3 +281,13 @@ fn machines() {
     assert_eq!(output::machines(1), "1 machine");
     assert_eq!(output::machines(3), "3 machines");
 }
+
+/// A fact with no value ends with its label, not with the padding after it.
+#[test]
+fn fact_without_value() {
+    output::capture();
+    output::fact_in(12, "name", "");
+    output::fact("Flake", "value");
+    let printed = output::release();
+    assert_eq!(printed.stdout, "  name\n  Flake     value\n");
+}

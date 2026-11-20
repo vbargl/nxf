@@ -237,7 +237,7 @@ pub fn fact(label: &str, value: &str) {
 
 /// A fact whose label column is as wide as given, such as `widened` says.
 pub fn fact_in(width: usize, label: &str, value: &str) {
-    indented(false, 2, &format!("{label:<width$}{value}"));
+    indented(false, 2, format!("{label:<width$}{value}").trim_end());
 }
 
 /// A row with its state: what happened to one thing.
