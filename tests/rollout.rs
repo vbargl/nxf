@@ -5,7 +5,7 @@
 mod common;
 
 use common::{
-    assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture,
+    assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture, Ran,
 };
 use nxf::hosts::Host;
 use nxf::rollout::{known_hosts_line, parse_probe, template, Found, Probe, PROBE};
@@ -307,6 +307,19 @@ fn ssh_log(fx: &Fixture) -> String {
     std::fs::read_to_string(fx.dir.join("machines/ssh.log")).unwrap_or_default()
 }
 
+fn rollout_with_files(fx: &Fixture, hosts: &str, files: &std::path::Path) -> Ran {
+    fx.run(&[
+        "rollout",
+        "--config",
+        hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--files",
+        files.to_str().unwrap(),
+    ])
+}
+
 /// The files of a machine are packed straight into the connection, and an
 /// archive that tar could not finish is not sent on as complete: the machine
 /// fails with what tar said, and nothing is founded from half of its files.
@@ -316,24 +329,12 @@ fn half_packed_files_fail_the_machine() {
     let files = fx.dir.join("files");
     std::fs::create_dir_all(files.join("node-1")).unwrap();
     std::fs::write(files.join("node-1/identity.toml"), "name = \"node-1\"\n").unwrap();
-    let rollout = |fx: &Fixture| {
-        fx.run(&[
-            "rollout",
-            "--config",
-            &hosts,
-            "--template",
-            "x#y",
-            "--yes",
-            "--files",
-            files.to_str().unwrap(),
-        ])
-    };
     let tar = fx.dir.join("bin/tar");
     write_script(
         &tar,
         "#!/bin/sh\nprintf 'half an archive'\necho 'tar: ./secret: Cannot open: Permission denied' >&2\nexit 2\n",
     );
-    let result = rollout(&fx);
+    let result = rollout_with_files(&fx, &hosts, &files);
     assert_eq!(result.code, 1);
     assert_contains(&result.stdout, "\n  ✗ Sending the machine's files failed\n");
     assert_contains(
@@ -346,7 +347,7 @@ fn half_packed_files_fail_the_machine() {
     // With a tar that works, the machine gets its files and is installed.
     std::fs::remove_file(&tar).unwrap();
     std::fs::write(fx.dir.join("machines/node-1.probe"), ROOT_INSTALLER).unwrap();
-    let result = rollout(&fx);
+    let result = rollout_with_files(&fx, &hosts, &files);
     result.ok();
     let archive = fx.dir.join("machines/node-1.tar");
     let sent = common::sh("tar", &["--list", "--file", archive.to_str().unwrap()]);
@@ -380,16 +381,7 @@ exec '{}/machines/ssh' "$@"
         ),
     );
     fx.set("NXF_SSH", &ssh);
-    let result = fx.run(&[
-        "rollout",
-        "--config",
-        &hosts,
-        "--template",
-        "x#y",
-        "--yes",
-        "--files",
-        files.to_str().unwrap(),
-    ]);
+    let result = rollout_with_files(&fx, &hosts, &files);
     assert_eq!(result.code, 1);
     assert_contains(
         &result.stdout,
@@ -405,22 +397,10 @@ exec '{}/machines/ssh' "$@"
 #[test]
 fn files_must_be_a_directory() {
     let (fx, hosts) = installers(&["node-1"]);
-    let rollout = |files: &std::path::Path| {
-        fx.run(&[
-            "rollout",
-            "--config",
-            &hosts,
-            "--template",
-            "x#y",
-            "--yes",
-            "--files",
-            files.to_str().unwrap(),
-        ])
-    };
     let file = fx.dir.join("a-file");
     std::fs::write(&file, "").unwrap();
     for wrong in [fx.dir.join("missing"), file] {
-        let result = rollout(&wrong);
+        let result = rollout_with_files(&fx, &hosts, &wrong);
         assert_eq!(result.code, 1);
         assert_contains(
             &result.stderr,
@@ -431,7 +411,7 @@ fn files_must_be_a_directory() {
 
     let files = fx.dir.join("files");
     std::fs::create_dir_all(files.join("node-2")).unwrap();
-    rollout(&files).ok();
+    rollout_with_files(&fx, &hosts, &files).ok();
     let log = ssh_log(&fx);
     assert_contains(&log, "node-1 /nix/store/nxf-package/bin/nxf install ");
     assert_lacks(&log, "--files");
