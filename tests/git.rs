@@ -85,23 +85,26 @@ fn changed_restore() {
     assert_eq!(fx.porcelain(), "");
 }
 
-/// One file is committed while other changes stay as they are.
+/// One file is committed, as the identity that `identity` gives, while other
+/// changes stay as they are.
 #[test]
 fn commit_file() {
     let fx = fixture();
     append(&fx.checkout.join("flake.nix"), "# kept\n");
     append(&fx.checkout.join("flake.lock"), "\n");
-    // The repository's own settings come before those of the user, whose
-    // configuration this process reads.
+    // This process reads the configuration of the user: the repository's own
+    // settings come before it, so that no hook and no signing key of the user
+    // is asked. Only the Git variables of the caller come before these.
     append(
         &fx.checkout.join(".git/config"),
-        "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n",
+        "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n[core]\n\thooksPath = /dev/null\n",
     );
-    assert_eq!(
-        git::identity(&fx.checkout).as_deref(),
-        Some("test <test@example.invalid>")
-    );
+    let identity = git::identity(&fx.checkout);
     git::commit_file(&fx.checkout, "flake.lock", "lock only").unwrap();
+    assert_eq!(
+        identity,
+        Some(run_git(&fx.checkout, &["log", "-1", "--format=%cn <%ce>"]))
+    );
     assert_eq!(
         run_git(&fx.checkout, &["log", "-1", "--format=%s"]),
         "lock only"
