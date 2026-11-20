@@ -283,8 +283,8 @@ group `nxf`, lets the group use sudo without a password, creates
 the group, and makes Git trust the flake directory for every user; see
 [Who runs it, and who may work with it](#who-runs-it-and-who-may-work-with-it).
 `services.nxf.autoUpdate.enable` does the same and adds the timer. The package
-alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git and Nix for
-machines that do not have them on `PATH`.
+alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git, Nix, OpenSSH and
+tar for machines that do not have them on `PATH`.
 
 ## Several machines
 
@@ -782,7 +782,7 @@ nxf status                                     # the latest outcome
 ## Development
 
 ```sh
-nix develop          # Rust, nh, dix, Git and util-linux
+nix develop          # Rust, nh, dix, Git, Nix, OpenSSH, util-linux, just and nixfmt
 just test            # all tests
 just check           # formatting, lints, tests and the flake checks
 ```

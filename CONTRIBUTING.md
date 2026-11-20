@@ -82,7 +82,7 @@ change them here first.
 | `nix/package.nix` | The package |
 | `nix/module.nix` | The NixOS module |
 | `nix/module-check.nix` | The check that evaluates the module |
-| `nix/records-test.nix` | The NixOS VM test of the shared build records: users of the group, a user outside it, root |
+| `nix/shared-records-check.nix` | The NixOS VM test of the shared build records: users of the group, a user outside it, root |
 | `nix/init-module.nix` | The generator of `nix/nxf.nix` from the options of the module |
 | `nix/nxf.nix` | The module file `nxf init` writes; generated, renew it with `just generate` |
 
@@ -93,7 +93,9 @@ change them here first.
   tasks and the status report wire them together.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
-  line.
+  line. Rollout and install also call `ssh`, `ssh-keygen` and `tar`, which
+  the package brings; `nixos-install`, `nixos-generate-config`,
+  `nixos-version` and `sudo` are the machine's own.
 
 ## Feature descriptions
 
@@ -151,8 +153,9 @@ change them here first.
 
 ## Tests
 
-- `just test` runs all tests; `just check` also runs the formatter, the lints
-  and the flake checks. CI runs `just check`.
+- `just test` runs all tests; `just check` also checks the format of the Rust
+  and the Nix sources and runs the lints and the flake checks. CI runs
+  `just check`.
 - Each file in `tests/` mirrors a source file. Tests that change the process
   environment are in `tests/environment.rs`; they hold one lock and start no
   process. Shared fixtures are in `tests/common/mod.rs`.

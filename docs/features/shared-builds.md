@@ -59,15 +59,15 @@ state directories; test user permissions and garbage collection only in a VM.
 
 Every test below runs in `just check`. The tests in `tests/` use a throwaway
 flake, the mock nh and isolated state directories. The
-[NixOS VM test](../../nix/records-test.nix) is the flake check
+[NixOS VM test](../../nix/shared-records-check.nix) is the flake check
 `shared-records`.
 
 | ID | Covered by | Not covered |
 | --- | --- | --- |
 | S1 | `tests/auto_update.rs::manual_build_skips_service_build`, with a conflicting local record that must not override the shared one | Two Unix users: the test runs as one user, and a second `NXF_STATE` stands in for the user `nxf` |
-| S2 | `nix/records-test.nix`: alice, bob, `nxf` and root with umask `022` publish the same tree in turn, and alice replaces root's record | A reader during a replacement. That it sees a complete symlink follows from replacement by rename |
+| S2 | `nix/shared-records-check.nix`: alice, bob, `nxf` and root with umask `022` publish the same tree in turn, and alice replaces root's record | A reader during a replacement. That it sees a complete symlink follows from replacement by rename |
 | S3 | `tests/tasks.rs::standalone_records` | |
-| S4 | `tests/tasks.rs::shared_fallback` for `switch`; `tests/doctor.rs::record_destination` for the doctor, also when no separate fallback exists; `nix/records-test.nix` for a user outside the group | A session without its new group |
+| S4 | `tests/tasks.rs::shared_fallback` for `switch`; `tests/doctor.rs::record_destination` for the doctor, also when no separate fallback exists; `nix/shared-records-check.nix` for a user outside the group | A session without its new group |
 | S5 | `tests/tasks.rs::record_failures_are_nonfatal`, for `build`, `switch` and `update` | |
 | S6 | `tests/tasks.rs::imports_legacy_records` | That no other home is scanned: the test has one state directory |
 | S7 | `tests/tasks.rs::changed_during_build`, for a tracked edit and for a new commit: no record is written | The warning is not asserted |
