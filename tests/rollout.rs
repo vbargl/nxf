@@ -8,7 +8,7 @@ use common::{
     assert_contains, assert_lacks, commit, fixture, git, temp_dir, write_script, Fixture,
 };
 use nxf::hosts::Host;
-use nxf::rollout::{known_hosts_line, parse_probe, template, Found, PROBE};
+use nxf::rollout::{known_hosts_line, parse_probe, template, Found, Probe, PROBE};
 
 /// The probe's answer says what a machine is.
 #[test]
@@ -187,7 +187,7 @@ fn unreachable() {
 /// What the probe finds on a stand-in machine: its root file system is of the
 /// given kind, the named files exist, and `on_path` says whether the shell
 /// finds nxf. The probe runs as it is sent, with its paths under a directory.
-fn probed(kind: &str, files: &[&str], on_path: bool) -> Found {
+fn probed(kind: &str, files: &[&str], on_path: bool) -> Probe {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let root = temp_dir("probe");
@@ -198,7 +198,7 @@ fn probed(kind: &str, files: &[&str], on_path: bool) -> Found {
         let found = common::sh("sh", &["-c", &format!("command -v {tool}")]);
         std::os::unix::fs::symlink(found, tools.join(tool)).unwrap();
     }
-    write_script(&tools.join("id"), "#!/bin/sh\necho 0\n");
+    write_script(&tools.join("id"), "#!/bin/sh\necho 1000\n");
     if on_path {
         write_script(&tools.join("nxf"), "#!/bin/sh\n");
     }
@@ -233,9 +233,7 @@ fn probed(kind: &str, files: &[&str], on_path: bool) -> Found {
         .unwrap();
     let answer = shell.wait_with_output().unwrap();
     let _ = std::fs::remove_dir_all(&root);
-    parse_probe(&String::from_utf8_lossy(&answer.stdout))
-        .unwrap()
-        .found
+    parse_probe(&String::from_utf8_lossy(&answer.stdout)).unwrap()
 }
 
 /// A machine that nxf installed, or whose system has nxf, is managed whatever
@@ -245,18 +243,16 @@ fn probed(kind: &str, files: &[&str], on_path: bool) -> Found {
 fn managed_from_memory() {
     const MARKER: &str = "/var/lib/nxf/installed.json";
     const SYSTEM: &str = "/run/current-system/sw/bin/nxf";
-    assert_eq!(probed("tmpfs", &["/etc/NIXOS"], false), Found::Installer);
-    assert_eq!(probed("tmpfs", &["/etc/NIXOS"], true), Found::Installer);
+    let found = |kind: &str, files: &[&str], on_path: bool| probed(kind, files, on_path).found;
+    assert_eq!(found("tmpfs", &["/etc/NIXOS"], false), Found::Installer);
+    assert_eq!(found("tmpfs", &["/etc/NIXOS"], true), Found::Installer);
     for sign in [MARKER, SYSTEM] {
-        assert_eq!(
-            probed("tmpfs", &["/etc/NIXOS", sign], false),
-            Found::Managed
-        );
-        assert_eq!(probed("ext4", &[sign], false), Found::Managed);
+        assert_eq!(found("tmpfs", &["/etc/NIXOS", sign], false), Found::Managed);
+        assert_eq!(found("ext4", &[sign], false), Found::Managed);
     }
-    assert_eq!(probed("ext4", &["/etc/NIXOS"], true), Found::Managed);
+    assert_eq!(found("ext4", &["/etc/NIXOS"], true), Found::Managed);
     assert_eq!(
-        probed("ext4", &[], false),
+        found("ext4", &[], false),
         Found::Other("Other 1".to_string())
     );
 }
@@ -450,4 +446,72 @@ fn old_key_is_replaced_or_said() {
         std::fs::read_to_string(&file).unwrap(),
         "node-9 ssh-ed25519 AAAAother\nnode-1 ssh-ed25519 AAAAnode-1\n"
     );
+}
+
+/// The probe tells the user id, and a machine that would be installed by a
+/// user other than root is refused in the plan, before anything is erased:
+/// its row names the cause, it is not installed, and the command fails. The
+/// other machines are still installed, and a managed machine is not affected.
+#[test]
+fn installs_only_as_root() {
+    let user = |answer: &str| parse_probe(answer).and_then(|probe| probe.user);
+    assert_eq!(user(ROOT_INSTALLER).as_deref(), Some("0"));
+    assert_eq!(user(INSTALLER), None);
+
+    let (fx, hosts) = installers(&["node-1", "node-2", "node-3", "node-4"]);
+    let answer = |name: &str, answer: &str| {
+        std::fs::write(fx.dir.join(format!("machines/{name}.probe")), answer).unwrap();
+    };
+    answer(
+        "node-1",
+        "nxf-probe managed=no installer=no uid=1000 arch=x86_64\nnxf-os Ubuntu 24.04.5 LTS\n",
+    );
+    answer(
+        "node-2",
+        "nxf-probe managed=no installer=yes uid=1000 arch=x86_64\nnxf-os NixOS 25.11\n",
+    );
+    answer(
+        "node-3",
+        "nxf-probe managed=yes installer=no uid=1000 arch=x86_64\nnxf-os NixOS 26.05\n",
+    );
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-1    Ubuntu 24.04.5 LTS; not installed: the SSH user must be root, and its user id is 1000\n",
+    );
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ node-2    NixOS installer; not installed: the SSH user must be root, and its user id is 1000\n",
+    );
+    assert_contains(&result.stdout, "\n  ✓ node-3    installed by nxf\n");
+    assert_contains(
+        &result.stdout,
+        "\n  ! node-4    NixOS installer; its disks will be erased\n",
+    );
+    assert_contains(
+        &result.stderr,
+        "✗ 2 of 4 machines not rolled out\n  Not installed: node-1, node-2.",
+    );
+    // Only the machine of root went beyond the probe.
+    let log = ssh_log(&fx);
+    for line in log.lines().filter(|line| !line.ends_with(" sh")) {
+        assert!(line.starts_with("node-4 "), "{log}");
+    }
+    assert_contains(&log, "node-4 /nix/store/nxf-package/bin/nxf install ");
+
+    // With nothing left to install, the refused machines still fail the command.
+    answer("node-4", MANAGED);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        "✗ 2 of 4 machines not rolled out\n  Not installed: node-1, node-2.",
+    );
+}
+
+/// The probe as it is sent tells the user id of whoever it runs as.
+#[test]
+fn probe_tells_the_user() {
+    assert_eq!(probed("ext4", &[], false).user.as_deref(), Some("1000"));
 }

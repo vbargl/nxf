@@ -55,13 +55,15 @@ elif [ $installer = no ] && command -v nxf >/dev/null 2>&1; then
     managed=yes
 fi
 os=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-unknown system}")
-echo "nxf-probe managed=$managed installer=$installer arch=$(uname -m)"
+echo "nxf-probe managed=$managed installer=$installer uid=$(id -u 2>/dev/null || echo unknown) arch=$(uname -m)"
 echo "nxf-os $os"
 "#;
 
 pub struct Probe {
     pub found: Found,
     pub arch: String,
+    /// The user id the probe ran as, when it told one. Installing needs 0.
+    pub user: Option<String>,
 }
 
 /// Reads the answer of the probe.
@@ -86,6 +88,7 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
     Some(Probe {
         found,
         arch: fact("arch")?.to_string(),
+        user: fact("uid").map(str::to_string),
     })
 }
 
@@ -235,6 +238,7 @@ impl Link {
                 Probe {
                     found: Found::Unreachable(why.to_string()),
                     arch: String::new(),
+                    user: None,
                 }
             }
         }
@@ -554,6 +558,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 asked.join().unwrap_or(Probe {
                     found: Found::Unreachable("no answer".to_string()),
                     arch: String::new(),
+                    user: None,
                 })
             })
             .collect()
@@ -572,32 +577,49 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         .unwrap_or(0)
         .max(output::LABEL);
     let mut to_install = Vec::new();
+    let mut failed = Vec::new();
     let mut silent = 0;
     for (host, probe) in hosts.iter().zip(&probes) {
         let name = &host.name;
-        match &probe.found {
-            Found::Managed => output::row(Mark::Done, &format!("{name:<width$}installed by nxf")),
-            Found::Installer => {
-                to_install.push((host, probe));
-                output::row(
-                    Mark::Attention,
-                    &format!("{name:<width$}NixOS installer; its disks will be erased"),
-                );
-            }
-            Found::Other(os) => {
-                to_install.push((host, probe));
-                output::row(
-                    Mark::Attention,
-                    &format!("{name:<width$}{os}; it will be erased"),
-                );
+        let what = match &probe.found {
+            Found::Managed => {
+                output::row(Mark::Done, &format!("{name:<width$}installed by nxf"));
+                continue;
             }
             Found::Unreachable(why) => {
                 silent += 1;
                 output::row(Mark::Failed, &format!("{name:<width$}unreachable: {why}"));
+                continue;
             }
+            Found::Installer => "NixOS installer",
+            Found::Other(os) => os,
+        };
+        // Refused here, before anything is erased: only root can install.
+        if let Some(user) = probe.user.as_deref().filter(|user| *user != "0") {
+            failed.push(host.name.as_str());
+            output::row(
+                Mark::Failed,
+                &format!("{name:<width$}{what}; not installed: the SSH user must be root, and its user id is {user}"),
+            );
+            continue;
         }
+        to_install.push((host, probe));
+        let erased = match probe.found {
+            Found::Installer => "its disks will be erased",
+            _ => "it will be erased",
+        };
+        output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
     }
     if to_install.is_empty() {
+        if !failed.is_empty() {
+            output::failure(&format!(
+                "{} of {} not rolled out",
+                failed.len() + silent,
+                machines(hosts.len())
+            ));
+            output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
+            return Ok(false);
+        }
         if silent > 0 {
             output::failure(&format!(
                 "{silent} of {} gave no answer",
@@ -643,7 +665,6 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     let package = package()?;
     let (source, name) = template(&options.template)?;
     let mut installed = Vec::new();
-    let mut failed = Vec::new();
     let mut unwritten = Vec::new();
     for (host, probe) in &to_install {
         match install(host, probe, options, &package, &source, &name, scratch) {
