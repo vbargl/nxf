@@ -468,9 +468,10 @@ The command can be repeated: machines that are managed are not touched, so
 a second run only installs what the first one could not. Installing erases
 disks, so rollout shows the plan and asks before it erases anything; `--yes`
 confirms without a question, and without a terminal nothing is erased unless
-`--yes` is given. Before the question rollout finds its own package and reads
-the template. A template that cannot be read, or an nxf that does not run
-from the Nix store, ends the command: nothing is asked and nothing is erased.
+`--yes` is given. Before the question rollout finds its own package and the
+source of the template. A template that cannot be used, or an nxf that does
+not run from the Nix store, fails the command: nothing is asked and nothing
+is erased.
 
 For each machine it installs, rollout copies this nxf and the template to
 the machine, runs `nxf init --hardware` and `nxf install` there, restarts it,
