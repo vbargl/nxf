@@ -255,3 +255,30 @@ fn unmarked_still_returns() {
         &format!(" | Returned to {}.", systems.one.display()),
     );
 }
+
+/// A check that fails with the words "timed out" of its own has failed. It
+/// is not taken for a check that the deadline cut short, for which its
+/// earlier result would count: the system is unhealthy.
+#[test]
+fn own_words_are_not_the_deadline() {
+    let fx = switching();
+    let rounds = fx.dir.join("rounds");
+    // Passes in the first round and fails from the second one on.
+    check(
+        &fx,
+        "10-probe",
+        &format!(
+            "echo round >> '{0}'; [ \"$(wc -l < '{0}')\" -lt 2 ] || {{ echo 'timed out'; exit 1; }}",
+            rounds.display()
+        ),
+    );
+    // Fails in the first round, so that there is a second one.
+    check(
+        &fx,
+        "20-node",
+        &format!("[ \"$(wc -l < '{}')\" -ge 2 ]", rounds.display()),
+    );
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
+    assert_contains(&results(&fx)[2].2, "10-probe: timed out");
+}
