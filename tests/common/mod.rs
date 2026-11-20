@@ -22,9 +22,9 @@ const GIT_ENV: [(&str, &str); 6] = [
     ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
 ];
 
-/// Variables of the caller's environment that would change what nxf does:
-/// every one that src/ reads. They are removed before the fixture's own are
-/// set, so that no value of the developer's shell reaches a test.
+/// The variables that src/ reads, apart from HOME and PATH, which the fixture
+/// sets, and USER, which nxf gets from the caller. The caller's values of
+/// these are removed before the fixture's own are set.
 const INHERITED: [&str; 24] = [
     "NXF_BOOTED",
     "NXF_HOOKS_DIR",
