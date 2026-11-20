@@ -66,4 +66,10 @@ fn sources_stay_until_replaced() {
     fx.bump(&["a"]);
     fx.run(&["update"]).ok();
     assert_eq!(kept_sources(&fx), ["2", "4"]);
+
+    // Both inputs with the same content are one source: the root of the other goes.
+    fx.bump(&["b"]);
+    fx.bump(&["b"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["4"]);
 }
