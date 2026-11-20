@@ -205,8 +205,8 @@ not run.
   that ssh was not called, not the cause and not the lines beneath the
   outcome. It also covers that a file that is not UTF-8 reaches `nix copy`
   whole. `tests/rollout.rs::copy_needs_the_keys_of_the_run` covers the check
-  that stays in the copy: a file of keys that the run wrote itself and
-  cannot read fails the machine with a row that starts with `cannot read `
+  in the copy: a file of keys that the run wrote itself and cannot read
+  fails the machine with a row that starts with `cannot read `
   and names the file `0.seen`, `nxf init` does not run on it, and the exit
   status is 1. No run by hand covers either.
 - I24: `tests/rollout.rs::scratch_names_run_out`, with the 100 directories
