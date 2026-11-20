@@ -44,6 +44,10 @@
             dix
             git
             nh
+            # The tests run these; the host's may be missing or behave differently.
+            # `.out` keeps their headers out of the shell.
+            nix.out
+            openssh.out
             util-linux
             just
             nixfmt
