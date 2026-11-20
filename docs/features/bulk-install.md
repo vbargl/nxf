@@ -221,6 +221,15 @@ not run.
   with the keys of the link and the mode 600, in options that hold no quote.
   `tests/rollout.rs::host_name_with_a_space` covers that no option names a
   file by the name of a machine.
+- `tests/rollout.rs::long_names_widen_the_outcome` covers that the outcome
+  lists the revision of every installed machine apart from its name, however
+  long the name is, with `node-1` beside `node-number-two`: the names share
+  one column, and the `known_hosts` line follows the revision.
+  `tests/rollout.rs::unwritten_key_names_its_file` covers that a machine whose
+  file with the key the installation made cannot be written has a `✗` row
+  that starts with `cannot write <TMPDIR>/nxf-rollout.` and holds `/0.known: `,
+  that it is named under `Not installed`, and that the exit status is 1. It
+  does not assert the cause.
 
 What a machine holds after an installation needs real machines with kexec,
 disko, `nixos-install` and a restart.
