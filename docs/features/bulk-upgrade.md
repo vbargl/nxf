@@ -55,6 +55,7 @@ Boundaries:
 | U7: An unknown input | An input that the first machine's flake does not have | `rollout --upgrade <input>` runs | The first machine's row is `Unknown task or input: <input>`, without the help beneath it; the other rows are `not started`; the exit status is 1 |
 | U8: A second run after a failed wave | An earlier run upgraded the first machine and failed on the second | `rollout --upgrade` runs again | Every machine is asked again, in the same order and from the first; a machine that finds no new revision and switches has the row `no input changed, switched` |
 | U9: A machine runs past its limit | The first machine's upgrade does not end within `NXF_UPGRADE_TIMEOUT` seconds | `rollout --upgrade` runs | Only the first machine was asked; its row is `timed out after <N> seconds; the upgrade may still run on the machine` (`1 second` when the limit is 1), and no row says `unreachable`; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines`; the exit status is 1 |
+| U10: A machine answers something else than JSON | The first machine prints something other than JSON on `nxf --json upgrade`, and its exit status is not 255 | `rollout --upgrade` runs | Only the first machine was asked; its row is the text after the `✗` of the outcome line it printed; without one, it is `unreadable answer` when its exit status is 0, or the last line it printed when it is not; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines` with `Not started: <names>. Run the rollout again once the failure is fixed.`; the exit status is 1 |
 
 ## Existing verification
 
@@ -80,6 +81,12 @@ checkout, so only the first one finds the new revision.
 - U9: `tests/fleet.rs::upgrade_timeout`, with a limit of 1 second and the
   row `timed out after 1 second`. It asserts the row `not started` of the
   second machine, not of the third, and not the outcome.
+- U10: `tests/fleet.rs::unreadable_answers`, with the exit status 0 and the
+  text `Welcome to node-1`. It asserts the exit status 1, the row
+  `unreadable answer` and the row `not started` of the second machine. It does
+  not assert that only the first machine was asked, the row `not started` of
+  the third machine, the outcome, or the row for an exit status other than 0
+  or for an outcome line.
 - `tests/fleet.rs::waves` covers the order of the waves, and
   `tests/hosts.rs::toml` that machines come in the order of their names. No
   test has two names whose byte order differs from their numeric order.
