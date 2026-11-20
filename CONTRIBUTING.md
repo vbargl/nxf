@@ -18,7 +18,7 @@ change them here first.
 - Never leave the checkout with uncommitted changes of nxf's own: `update`
   commits the lockfile only after it built, and restores it otherwise.
 - A failed update never changes the running system.
-- The machine is never rebooted by nxf, except by an installation:
+- The machine is never restarted by nxf, except by an installation:
   `nxf install --reboot` restarts into the new system, and `rollout`
   restarts each machine it installs, into the installer when the machine
   runs another system, and into the new system.
@@ -31,7 +31,7 @@ change them here first.
   `hold`, `release`, `version` and `doctor` take `--config`; tasks never do.
   `rollout` is the one command that changes the system of machines; `hold`
   and `release` with `--config` write only the hold of each machine. Without
-  `--upgrade` rollout changes only the machines that nxf has not installed:
+  `--upgrade` rollout changes only the machines that nxf does not manage:
   it must stay repeatable,
   and it must ask before it erases a disk. With `--upgrade` it runs the task
   `upgrade` on each machine, the first alone and then in waves of `--batch`,
@@ -70,7 +70,7 @@ change them here first.
 | `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh, and the upgrade in waves |
 | `src/init.rs` | Founding a machine flake from a template |
 | `src/install.rs` | Installing from an installer: disks, nixos-install, host key, records |
-| `src/rollout.rs` | Installing the machines of a hosts file that nxf has not installed |
+| `src/rollout.rs` | Installing the machines of a hosts file that nxf does not manage |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -111,8 +111,8 @@ change them here first.
   `Acceptance scenarios`; `Existing verification`.
 - `Acceptance scenarios` is a table of ID, Given, When and Then, a template
   for acceptance tests. A When is one action. A Then can be observed: the
-  text of a row or of the outcome, the exit status, or a state that a command
-  shows.
+  text of a row or of the outcome, the exit status, a state that a command
+  shows, or what a stand-in program was asked to run.
 - `Existing verification` maps every scenario ID to the test that covers it,
   by name, or says that no automated test covers it. A run by hand is
   recorded with the nxf version and the commit it ran on, and with what was
@@ -177,13 +177,11 @@ change them here first.
 - `tests/rollout.rs` plays an installation without a machine. Its mock ssh
   keeps the files it is sent, reports a host key for `nxf install` and
   answers as a managed machine from then on. A mock `nix` names the source
-  of the template and records what `nix copy` is given, and `NXF_PACKAGE`
-  names the package. This does not replace the run against a virtual
-  machine.
+  of the template and records what `nix copy` is given. This does not
+  replace the run against a virtual machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh, and variables of the environment stand in for what belongs to
-  the machine. The shipped program reads them too: `NXF_INSTALLER=yes`, for
-  example, answers the question whether the system runs from memory.
+  the machine. The shipped program reads them too.
 
   | Stand-in | Stands in for |
   | --- | --- |
@@ -229,6 +227,6 @@ A change of behaviour is done when all of this holds:
   see [Tests](#tests).
 - The brief of the feature is current; see
   [Feature descriptions](#feature-descriptions).
-- The [README](README.md) describes the behaviour as it is now.
+- The [README](README.md) describes the behaviour.
 - `nix/nxf.nix` is renewed when the options of the module changed; see
   [Layout](#layout).
