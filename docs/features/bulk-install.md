@@ -74,7 +74,9 @@ Boundaries:
   the directory it is made in. The files in it are named by the place of a
   machine in the list, not by its name.
 - A `~/.ssh/known_hosts` that does not exist is left out. One that is there
-  and cannot be read fails the machine before anything is copied to it.
+  and cannot be read fails the command before any machine is asked. A file of
+  keys that the run wrote itself and cannot read fails that machine at the
+  copy.
 - `--files <dir>` takes a directory. Anything else is refused before any
   machine is asked. A machine without `<dir>/<name>/` gets the template
   alone.
@@ -114,7 +116,7 @@ Boundaries:
 | I20: A temporary directory that an option cannot name | A temporary directory whose path holds a space, a quote or a backslash | `rollout --yes` runs | No machine is asked; the outcome is `The temporary directory <dir> has a space, a quote or a backslash in its path`; the exit status is 1 |
 | I21: A system that comes up late | An earlier run installed a machine whose system did not answer within `NXF_ROLLOUT_WAIT` seconds; the system answers, and `~/.ssh/known_hosts` holds no other key for its address | `rollout --known-hosts <file>` runs again | Its row is `installed by nxf`; only the probe runs on it; no `known_hosts` line is printed for it; `<file>` keeps the key of the system that was there before |
 | I22: A directory of the first name is there before | A machine to install, and `<temporary directory>/nxf-rollout.<pid>.0` exists before the run with that process id starts | `rollout --yes` runs | `nix copy` is given a file in `<temporary directory>/nxf-rollout.<pid>.1`, a directory with the mode 700; `<temporary directory>/nxf-rollout.<pid>.0` is left as it was, and is the only directory left in the temporary directory; the exit status is 0 |
-| I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | The machine has a `✗` row `cannot read <file>:` with the cause; `nxf init` does not run on it; the exit status is 1 |
+| I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | No machine is asked; the outcome is `cannot read <file>: <cause>`, with `rollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.` beneath it; the exit status is 1 |
 
 ## Existing verification
 
@@ -206,8 +208,14 @@ not run.
   `rollout keeps the keys of a run there. TMPDIR names the directory it is
   made in.` beneath it.
 - I23: `tests/rollout.rs::copy_reads_keys_as_ssh`, with a directory in the
-  place of the file. It also covers that a file that is not UTF-8 reaches
-  `nix copy` whole. No run by hand covers it.
+  place of the file. It asserts the exit status, `cannot read <file>: ` and
+  that ssh was not called, not the cause and not the lines beneath the
+  outcome. It also covers that a file that is not UTF-8 reaches `nix copy`
+  whole. `tests/rollout.rs::copy_needs_the_keys_of_the_run` covers the check
+  that stays in the copy: a file of keys that the run wrote itself and
+  cannot read fails the machine with a row that starts with `cannot read `
+  and names the file `0.seen`, `nxf init` does not run on it, and the exit
+  status is 1. No run by hand covers either.
 - `tests/rollout.rs::probe` covers how the probe's answer is read, and
   `tests/rollout.rs::copy_trusts_as_the_link` that `nix copy` gets one file
   with the keys of the link and the mode 600, in options that hold no quote.

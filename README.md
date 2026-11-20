@@ -502,7 +502,7 @@ to accepts its host key; a key that differs from one you already know is
 refused. `nix copy`, which brings nxf and the template to the machine,
 trusts the same keys: rollout writes them into one file and names it in
 `NIX_SSHOPTS`. A `known_hosts` of yours that is there and cannot be read
-fails the machine. The options of ssh name files in the temporary directory,
+fails the command before any machine is asked. The options of ssh name files in the temporary directory,
 so rollout refuses one whose path holds a space, a quote or a backslash,
 before any machine is asked. It makes a directory of its own there for the
 run, for its user alone, under the first of the names `nxf-rollout.<pid>.0`
