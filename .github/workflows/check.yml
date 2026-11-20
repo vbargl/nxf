@@ -8,17 +8,19 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its run; runs of main all finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
-      - name: Lint
-        run: |
-          nix develop --command cargo fmt --check
-          nix develop --command cargo clippy --all-targets -- --deny warnings
-      - name: Test
-        run: nix develop --command cargo test
-      - name: Flake checks
-        run: nix flake check
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - name: Check
+        run: nix develop --command just check
