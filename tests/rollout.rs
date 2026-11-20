@@ -361,3 +361,93 @@ fn unpacked_files_fail_the_machine() {
     assert_contains(&ssh_log(&fx), "--files /tmp/nxf-files");
     assert_contains(&result.stdout, "\n✓ 1 machine installed\n");
 }
+
+/// A known_hosts file that cannot be written does not end the run: the
+/// machine stays installed, the cause is shown, the next machine is still
+/// installed, both host keys are printed, and the command fails.
+#[test]
+fn unwritten_known_hosts() {
+    let (fx, hosts) = installers(&["node-1", "node-2"]);
+    let file = fx.dir.join("missing/known_hosts");
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--known-hosts",
+        file.to_str().unwrap(),
+    ]);
+    assert_eq!(result.code, 1);
+    let log = ssh_log(&fx);
+    assert_contains(&log, "node-1 /nix/store/nxf-package/bin/nxf install ");
+    assert_contains(&log, "node-2 /nix/store/nxf-package/bin/nxf install ");
+    assert_contains(
+        &result.stdout,
+        &format!(
+            "\n  ✗ Its host key was not written: cannot write {}: ",
+            file.display()
+        ),
+    );
+    assert_contains(
+        &result.stderr,
+        &format!(
+            "✗ 2 machines installed, but not every host key was written\n  Not written to {}: node-1, node-2.",
+            file.display()
+        ),
+    );
+    for name in ["node-1", "node-2"] {
+        assert_contains(
+            &result.stdout,
+            &format!("\n  {name:<8}  0123456789ab\n  {name} ssh-ed25519 AAAA{name}\n"),
+        );
+    }
+}
+
+/// The key of the system that was there before is replaced by the new one.
+/// When it cannot be removed, that is said and the command fails, instead of
+/// the old key staying trusted beside the new one.
+#[test]
+fn old_key_is_replaced_or_said() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let file = fx.dir.join("known_hosts");
+    let before = "node-1 ssh-ed25519 AAAAbefore\nnode-9 ssh-ed25519 AAAAother\n";
+    std::fs::write(&file, before).unwrap();
+    let rollout = |fx: &Fixture| {
+        fx.run(&[
+            "rollout",
+            "--config",
+            &hosts,
+            "--template",
+            "x#y",
+            "--yes",
+            "--known-hosts",
+            file.to_str().unwrap(),
+        ])
+    };
+    let keygen = fx.dir.join("bin/ssh-keygen");
+    write_script(
+        &keygen,
+        "#!/bin/sh\necho 'link known_hosts to known_hosts.old: Operation not permitted' >&2\nexit 255\n",
+    );
+    let result = rollout(&fx);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        &format!(
+            "\n  ✗ Its host key was not written: cannot remove the old key of node-1 from {}: link known_hosts to known_hosts.old: Operation not permitted\n",
+            file.display()
+        ),
+    );
+    assert_contains(&result.stdout, "\n  node-1 ssh-ed25519 AAAAnode-1\n");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+
+    std::fs::remove_file(&keygen).unwrap();
+    std::fs::write(fx.dir.join("machines/node-1.probe"), ROOT_INSTALLER).unwrap();
+    rollout(&fx).ok();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "node-9 ssh-ed25519 AAAAother\nnode-1 ssh-ed25519 AAAAnode-1\n"
+    );
+}

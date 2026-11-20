@@ -490,19 +490,31 @@ fn remember(file: &Path, host: &Host, key: &str) -> Result<(), String> {
         Some(port) if port != 22 => format!("[{}]:{port}", host.address),
         _ => host.address.clone(),
     };
-    // Drop the key of the system that was there before.
-    let _ = Command::new("ssh-keygen")
-        .args(["-R", &name, "-f"])
-        .arg(file)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    // Drop the key of the system that was there before: it must not stay trusted.
+    if file.exists() {
+        let removed = Command::new("ssh-keygen")
+            .args(["-R", &name, "-f"])
+            .arg(file)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|err| format!("cannot run ssh-keygen: {err}"))?;
+        if !removed.status.success() {
+            let said = plain(&String::from_utf8_lossy(&removed.stderr));
+            let why = said.lines().map(str::trim).rfind(|line| !line.is_empty());
+            return Err(format!(
+                "cannot remove the old key of {name} from {}: {}",
+                file.display(),
+                why.unwrap_or("ssh-keygen failed")
+            ));
+        }
+    }
     let mut known = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(file)
         .map_err(|err| format!("cannot write {}: {err}", file.display()))?;
-    writeln!(known, "{}", known_hosts_line(host, key)).map_err(|err| err.to_string())
+    writeln!(known, "{}", known_hosts_line(host, key))
+        .map_err(|err| format!("cannot write {}: {err}", file.display()))
 }
 
 fn machines(count: usize) -> String {
@@ -632,11 +644,21 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
     let (source, name) = template(&options.template)?;
     let mut installed = Vec::new();
     let mut failed = Vec::new();
+    let mut unwritten = Vec::new();
     for (host, probe) in &to_install {
         match install(host, probe, options, &package, &source, &name, scratch) {
             Ok(done) => {
-                if let Some(file) = &options.known_hosts {
-                    remember(file, host, &done.key)?;
+                // The machine is installed whatever becomes of the file.
+                let written = options
+                    .known_hosts
+                    .as_ref()
+                    .map_or(Ok(()), |file| remember(file, host, &done.key));
+                if let Err(error) = written {
+                    output::row(
+                        Mark::Failed,
+                        &format!("Its host key was not written: {error}"),
+                    );
+                    unwritten.push(host.name.as_str());
                 }
                 installed.push((*host, done));
             }
@@ -660,8 +682,20 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         if !failed.is_empty() {
             output::effect_err(&format!("Not installed: {}.", failed.join(", ")));
         }
+    } else if !unwritten.is_empty() {
+        output::failure(&format!(
+            "{} installed, but not every host key was written",
+            machines(installed.len())
+        ));
     } else {
         output::success(&format!("{} installed", machines(installed.len())));
+    }
+    if let (Some(file), false) = (&options.known_hosts, unwritten.is_empty()) {
+        output::effect_err(&format!(
+            "Not written to {}: {}.",
+            file.display(),
+            unwritten.join(", ")
+        ));
     }
     for (host, done) in &installed {
         let revision = done
@@ -672,8 +706,10 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         output::fact(&format!("{:<w$}", host.name, w = width - 2), &revision);
         output::note(&known_hosts_line(host, &done.key));
     }
-    if !installed.is_empty() && options.known_hosts.is_none() {
+    if !unwritten.is_empty() {
+        output::note("Add the muted lines of those machines to known_hosts yourself.");
+    } else if !installed.is_empty() && options.known_hosts.is_none() {
         output::note("Add the muted lines to known_hosts, or give --known-hosts <file>.");
     }
-    Ok(failed.is_empty() && silent == 0)
+    Ok(failed.is_empty() && silent == 0 && unwritten.is_empty())
 }
