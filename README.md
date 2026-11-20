@@ -324,9 +324,10 @@ needs nxf installed on the machines. A machine that does not answer is a
 failed row and makes the command fail. ssh has `NXF_SSH_CONNECT_TIMEOUT`
 seconds to connect, 10 by default, also when `rollout` runs it. A machine has
 `NXF_SSH_TIMEOUT` seconds to answer one of these commands, 120 by default;
-after that its row is `timed out after <N> seconds`, with the limit, and not
-`unreachable:`. `nxf status --config <file> --json` prints one entry for each
-machine: its `status --json`, or an `error` with the text of its failed row.
+after that its row is `timed out after <N> seconds` (`1 second` when the
+limit is 1), and not `unreachable:`. `nxf status --config <file> --json`
+prints one entry for each machine: its `status --json`, or an `error` with
+the text of its failed row.
 With `--config`, status takes only `--json`.
 `hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
 a member of the group `nxf`.
@@ -555,8 +556,8 @@ hosts.toml · 3 machines
   member of the group `nxf`.
 - Each machine has `NXF_UPGRADE_TIMEOUT` seconds, 3 hours by default. A
   machine that takes longer has the row
-  `timed out after <N> seconds; the upgrade may still run on the machine`,
-  and no further wave starts.
+  `timed out after <N> seconds; the upgrade may still run on the machine`
+  (`1 second` when the limit is 1), and no further wave starts.
 - Named inputs go to every machine; one that a machine's flake does not
   have fails on the first machine, before any other changes.
 
