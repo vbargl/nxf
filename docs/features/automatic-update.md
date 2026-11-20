@@ -59,10 +59,8 @@ Boundaries:
 - A health check fails when any of its commands does. The module runs each
   script with `set -e`, also the lines that other modules add to the same
   check.
-- The module refuses a configuration that cannot work when it is evaluated: an
-  empty `services.nxf.flake`, a `git.credentialsFile` in the Nix store, and a
-  system with neither `security.sudo` nor `security.sudo-rs`. Every duration
-  is a number of seconds.
+- The options of the module, the configurations it refuses and the unit of its
+  durations are in the [README](../../README.md#install).
 - The check hook can only skip the run, and the failure hook can only add
   its own failure.
 - A skipped run, a flagged input and a reported input do not fail the run.
