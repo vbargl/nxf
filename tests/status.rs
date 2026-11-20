@@ -402,7 +402,8 @@ fn dirty() {
     assert_contains(result.stdout.lines().next().unwrap(), &fx.env["NXF_SYSTEM"]);
 }
 
-/// Status of an unrecorded system.
+/// A running system that no build record names cannot be compared: status
+/// says so, shows the revision NixOS knows, and `version --system` fails.
 #[test]
 fn unknown_system() {
     let system = &fake_systems().one;

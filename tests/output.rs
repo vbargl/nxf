@@ -169,10 +169,7 @@ fn updating_lines() {
         rows[heading + 2].starts_with("    System    /nix/store/"),
         "{rows:#?}"
     );
-    assert!(rows
-        .last()
-        .unwrap()
-        .contains("The running system was not switched."));
+    assert_contains(rows.last().unwrap(), "The running system was not switched.");
 }
 
 /// Every child releases its temporary rows before another child or a summary prints.

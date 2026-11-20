@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::fixture;
+use common::{assert_contains, fixture};
 
 /// Version prints the tool version.
 #[test]
@@ -20,24 +20,31 @@ fn version() {
 fn help() {
     let result = fixture().run(&[]);
     result.ok();
-    assert!(result.stdout.contains("Usage:"));
-    assert!(result.stdout.contains("Tasks:"));
+    assert_contains(&result.stdout, "Usage:");
+    assert_contains(&result.stdout, "Tasks:");
     assert!(result
         .stdout
         .lines()
         .any(|line| line.starts_with("  switch") && line.contains(" Activate")));
-    assert!(result.stdout.contains("auto-update"));
+    assert_contains(&result.stdout, "auto-update");
 }
 
-/// Commands reject extra arguments instead of treating them as tasks.
+/// Commands reject extra arguments instead of treating them as tasks, and
+/// say which word they do not take.
 #[test]
 fn commands_reject_tasks() {
     let fx = fixture();
-    for args in [
-        &["version", "update"][..],
-        &["status", "--detailed", "update"],
-        &["doctor", "update"],
+    for (args, cause) in [
+        (&["version", "update"][..], "unexpected argument 'update'"),
+        (
+            &["status", "--detailed", "update"],
+            "✗ Unknown input: update. Inputs are a, b.",
+        ),
+        (&["doctor", "update"], "unexpected argument 'update'"),
     ] {
-        assert_ne!(fx.run(args).code, 0, "nxf {} succeeded", args.join(" "));
+        let result = fx.run(args);
+        assert_ne!(result.code, 0, "nxf {} succeeded", args.join(" "));
+        assert_contains(&result.stderr, cause);
     }
+    assert!(fx.nh_calls().is_empty());
 }

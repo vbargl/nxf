@@ -370,7 +370,7 @@ fn input_results_terminal() {
     parser.process(result.stdout.as_bytes());
     let screen = parser.screen().contents();
     let rows: Vec<&str> = screen.lines().map(str::trim_end).collect();
-    assert!(!screen.contains("Checking input a"), "{screen}");
+    assert_lacks(&screen, "Checking input a");
     for input in ["a", "b"] {
         let expected = format!("  · {input}         {}   unchanged", fx.short(input));
         assert_eq!(

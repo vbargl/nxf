@@ -432,43 +432,43 @@ fn waves() {
     assert_eq!(waves(3, 10), [0..1, 1..3]);
 }
 
-/// Install options do not go with the upgrade, nor upgrade options with the
-/// install, and a refused request reaches no machine.
+/// None of the five install options goes with the upgrade, nor an upgrade
+/// option with the install; each refusal names its cause and reaches no machine.
 #[test]
 fn upgrade_refused() {
     let set = machines();
-    for args in [
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--upgrade",
-            "--template",
-            "x#y",
-        ][..],
-        &["rollout", "--config", &set.file, "--upgrade", "--yes"],
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--upgrade",
-            "--batch",
-            "0",
-        ],
-        &[
-            "rollout",
-            "--config",
-            &set.file,
-            "--template",
-            "x#y",
-            "--batch",
-            "2",
-        ],
-        &["rollout", "--config", &set.file, "--template", "x#y", "a"],
-        &["rollout", "--config", &set.file],
-    ] {
-        let result = set.fx.run(args);
+    let refused = |args: &[&str], cause: &str| {
+        let result = set
+            .fx
+            .run(&[&["rollout", "--config", &set.file][..], args].concat());
         assert_ne!(result.code, 0, "{args:?}");
+        assert_contains(&result.stderr, cause);
+    };
+    for option in [
+        &["--template", "x#y"][..],
+        &["--files", "own"],
+        &["--yes"],
+        &["--kexec-url", "https://example.invalid/{arch}"],
+        &["--known-hosts", "known_hosts"],
+    ] {
+        refused(
+            &[&["--upgrade"][..], option].concat(),
+            &format!("'--upgrade' cannot be used with '{}", option[0]),
+        );
     }
+    refused(
+        &["--upgrade", "--batch", "0"],
+        "invalid value '0' for '--batch <N>'",
+    );
+    for args in [
+        &["--template", "x#y", "--batch", "2"][..],
+        &["--template", "x#y", "a"],
+    ] {
+        refused(
+            args,
+            "✗ Inputs and --batch belong to the upgrade\n  Add --upgrade, or leave them out to install.",
+        );
+    }
+    refused(&[], "  --template <TEMPLATE>");
     assert!(set.calls().is_empty());
 }

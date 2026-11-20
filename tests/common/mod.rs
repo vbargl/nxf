@@ -11,6 +11,8 @@ use std::sync::OnceLock;
 
 pub const NXF: &str = env!("CARGO_BIN_EXE_nxf");
 
+/// Git without the configuration of the user and of the system, and with a
+/// fixed identity: for the Git calls of the fixtures and for nxf.
 const GIT_ENV: [(&str, &str); 6] = [
     ("GIT_CONFIG_GLOBAL", "/dev/null"),
     ("GIT_CONFIG_NOSYSTEM", "1"),
@@ -155,6 +157,17 @@ impl Drop for Fixture {
     }
 }
 
+/// Makes a fixture: the inputs and the flake as Git repositories with one
+/// commit each and a lockfile, the mocks in `bin/` at the front of PATH, and
+/// an environment that keeps nxf away from the machine and from the user.
+///
+/// The mock nh logs each call with the commit of the checkout and links its
+/// out-link to a system. A test steers it through the environment:
+/// - `NXF_TEST_BUILD`: the system it links; a path that does not exist otherwise.
+/// - `NXF_TEST_NH_STDOUT`, `NXF_TEST_NH_STDERR`: what it prints first.
+/// - `NXF_TEST_NH_WAIT`: a file it then waits for, for 30 s at most.
+/// - `NXF_TEST_NH_STATUS`: the status every call ends with.
+/// - `NXF_TEST_NH_FAIL_ACTION`: the action, such as `switch`, that ends with 3.
 pub fn fixture() -> Fixture {
     let dir = temp_dir("test");
     for input in ["a", "b"] {
@@ -409,6 +422,8 @@ pub fn fake_systems() -> &'static Systems {
             std::fs::write(path.join("file"), content).unwrap();
             PathBuf::from(sh("nix-store", &["--add", path.to_str().unwrap()]))
         };
+        // Kilobytes: a NAR pads small files, so a few bytes more would not
+        // make the closure of `two` larger than that of `one`.
         let numbers: Vec<String> = (1..=2000).map(|number| number.to_string()).collect();
         let systems = Systems {
             one: add("one", "one".to_string()),
@@ -449,6 +464,7 @@ pub fn lose(fx: &Fixture, input: &str) {
     std::fs::rename(fx.dir.join(input), fx.dir.join(format!("{input}.gone"))).unwrap();
 }
 
+#[track_caller]
 pub fn assert_contains(text: &str, part: &str) {
     assert!(text.contains(part), "expected <{part}> in:\n{text}");
 }

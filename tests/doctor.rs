@@ -100,7 +100,7 @@ fn configuration() {
     let file = fx.checkout.join("flake.nix");
     let single = std::fs::read_to_string(&file).unwrap();
     let host = format!("nixosConfigurations.\"{}\" = {{ }};", common::hostname());
-    assert!(single.contains(&host));
+    assert_contains(&single, &host);
     let only = fx.run(&["doctor"]);
     assert_eq!(status_of(&only.stdout, "config"), Some("ok"));
     assert_contains(&only.stdout, "the only configuration");

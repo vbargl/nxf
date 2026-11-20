@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{fixture, hostname};
+use common::{assert_contains, fixture, hostname};
 use nxf::flake::{self, InputRow, InputUpdate};
 use serde_json::json;
 
@@ -125,7 +125,8 @@ fn update() {
     assert_eq!(fx.porcelain(), "M flake.lock");
 }
 
-/// Configurations are the attribute names of nixosConfigurations.
+/// The configurations of a flake are the attribute names under its
+/// nixosConfigurations.
 #[test]
 fn configurations() {
     let fx = fixture();
@@ -141,10 +142,9 @@ fn choose() {
         flake::choose(&names(&["a", "default", "b"])).unwrap(),
         "default"
     );
-    assert!(flake::choose(&names(&["a", "b"]))
-        .unwrap_err()
-        .contains("none is named default"));
-    assert!(flake::choose(&[])
-        .unwrap_err()
-        .contains("no nixosConfigurations"));
+    assert_contains(
+        &flake::choose(&names(&["a", "b"])).unwrap_err(),
+        "none is named default",
+    );
+    assert_contains(&flake::choose(&[]).unwrap_err(), "no nixosConfigurations");
 }

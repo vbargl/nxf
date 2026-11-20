@@ -1,7 +1,10 @@
 //! Tests for src/hosts.rs: the hosts file.
 
+mod common;
+
 use std::path::Path;
 
+use common::assert_contains;
 use nxf::hosts::{self, Format, Host};
 
 fn host(name: &str, address: &str, user: &str, port: Option<u16>) -> Host {
@@ -86,9 +89,10 @@ fn formats() {
     ] {
         assert_eq!(Format::of(Path::new(name)), Ok(format));
     }
-    assert!(Format::of(Path::new("hosts.hcl"))
-        .unwrap_err()
-        .contains("no known format"));
+    assert_contains(
+        &Format::of(Path::new("hosts.hcl")).unwrap_err(),
+        "no known format",
+    );
     assert!(Format::of(Path::new("hosts")).is_err());
 }
 
@@ -96,12 +100,21 @@ fn formats() {
 #[test]
 fn invalid() {
     let error = |text: &str| hosts::parse(text, Format::Toml).unwrap_err();
-    assert!(error("title = 'x'").contains("no hosts table"));
-    assert!(error("[hosts]").contains("empty"));
-    assert!(error("[hosts.a]\nrole = 'x'").contains("host a has no ssh.address"));
-    assert!(error("[hosts.a.ssh]\naddress = ''").contains("host a has no ssh.address"));
-    assert!(error("[hosts.a.ssh]\naddress = 'x'\nport = 70000").contains("invalid ssh.port"));
-    assert!(error("[hosts.a.ssh]\naddress = 'x'\nuser = 5").contains("invalid ssh.user"));
+    assert_contains(&error("title = 'x'"), "no hosts table");
+    assert_contains(&error("[hosts]"), "empty");
+    assert_contains(&error("[hosts.a]\nrole = 'x'"), "host a has no ssh.address");
+    assert_contains(
+        &error("[hosts.a.ssh]\naddress = ''"),
+        "host a has no ssh.address",
+    );
+    assert_contains(
+        &error("[hosts.a.ssh]\naddress = 'x'\nport = 70000"),
+        "invalid ssh.port",
+    );
+    assert_contains(
+        &error("[hosts.a.ssh]\naddress = 'x'\nuser = 5"),
+        "invalid ssh.user",
+    );
     assert!(!error("[hosts.a").is_empty());
     assert!(hosts::load(Path::new("/nonexistent/hosts.toml"))
         .unwrap_err()

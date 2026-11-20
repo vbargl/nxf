@@ -82,27 +82,42 @@ fn expiry() {
     assert!(!fx.updater.join("hold.json").exists());
 }
 
-/// A reason is required, and an end must be valid and in the future.
+/// A reason is required, and an end must be valid and in the future; each
+/// refusal names its cause.
 #[test]
 fn invalid_requests() {
     let fx = fixture();
-    for args in [
-        &["hold"][..],
-        &["hold", "--reason", "r", "--for", "soon"],
-        &["hold", "--reason", "r", "--until", "not a date"],
-        &["hold", "--reason", "r", "--until", "2001-01-01"],
-        &[
-            "hold",
-            "--reason",
-            "r",
-            "--until",
-            "2999-01-01",
-            "--for",
-            "1d",
-        ],
-        &["release", "now"],
+    for (args, cause) in [
+        (&["hold"][..], "  --reason <REASON>"),
+        (
+            &["hold", "--reason", "r", "--for", "soon"],
+            "✗ Invalid duration 'soon'",
+        ),
+        (
+            &["hold", "--reason", "r", "--until", "not a date"],
+            "✗ Invalid time 'not a date'",
+        ),
+        (
+            &["hold", "--reason", "r", "--until", "2001-01-01"],
+            "✗ The hold would end in the past.",
+        ),
+        (
+            &[
+                "hold",
+                "--reason",
+                "r",
+                "--until",
+                "2999-01-01",
+                "--for",
+                "1d",
+            ],
+            "'--until <UNTIL>' cannot be used with '--for <DURATION>'",
+        ),
+        (&["release", "now"], "unexpected argument 'now'"),
     ] {
-        assert_ne!(fx.run(args).code, 0, "nxf {} succeeded", args.join(" "));
+        let result = fx.run(args);
+        assert_ne!(result.code, 0, "nxf {} succeeded", args.join(" "));
+        assert_contains(&result.stderr, cause);
     }
     assert!(!fx.updater.join("hold.json").exists());
     fx.run(&["hold", "--reason", "r", "--until", "2999-01-01 12:00"])

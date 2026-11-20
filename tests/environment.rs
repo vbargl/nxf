@@ -6,7 +6,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use common::{fake_systems, temp_dir};
+use common::{assert_contains, fake_systems, temp_dir};
 use nxf::flake::{self, Location};
 use nxf::nixos::{self, Remembered};
 use nxf::output::{styled, Style, RESET};
@@ -111,7 +111,7 @@ fn location() {
 fn checkout() {
     let dir = temp_dir("checkout");
     let _guard = environment(&[("NXF_FLAKE", dir.to_str().unwrap())]);
-    assert!(flake::checkout().unwrap_err().contains("has no flake.nix"));
+    assert_contains(&flake::checkout().unwrap_err(), "has no flake.nix");
     std::fs::write(dir.join("flake.nix"), "{ }").unwrap();
     assert_eq!(flake::checkout().unwrap(), dir);
     std::fs::remove_dir_all(dir).unwrap();

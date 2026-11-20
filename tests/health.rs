@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{assert_contains, fake_systems, fixture, write_script, Fixture};
+use common::{assert_contains, assert_lacks, fake_systems, fixture, write_script, Fixture};
 use serde_json::Value;
 
 /// A fixture that runs one system and builds another, with quick health rounds.
@@ -137,7 +137,7 @@ fn unhealthy_returns_and_marks() {
         &health.2,
         &format!("Returned to {}.", systems.one.display()),
     );
-    assert!(!health.2.contains("10-units"));
+    assert_lacks(&health.2, "10-units");
     assert_eq!(
         std::fs::read_to_string(fx.updater.join("bad").join(fx.tree()))
             .unwrap()
