@@ -21,7 +21,7 @@ changes to the flake itself.
 | `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
 | `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
 | `nxf install <dir>` | Install the machine a flake describes, from a NixOS installer on it; see [Installing a machine](#installing-a-machine) |
-| `nxf rollout --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
+| `nxf rollout --config <file> --template <flake>#<name>` | Install every machine of a hosts file that nxf does not manage yet; see [From another computer](#from-another-computer) |
 | `nxf rollout --config <file> --upgrade` | Upgrade every machine of a hosts file, the first alone, then in waves; see [Upgrading machines](#upgrading-machines) |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
@@ -33,7 +33,7 @@ changes to the flake itself.
 | --- | --- |
 | `update` | Update all inputs, or only the named ones, one at a time: build with each update and commit it, or restore the lockfile |
 | `build` | Build with nh and summarize package changes |
-| `test` | Build, then activate until the next reboot |
+| `test` | Build, then activate until the next restart |
 | `boot` | Build, then make the configuration the boot default |
 | `switch` | Build, activate, and make the configuration the boot default |
 | `upgrade` | Shortcut for `update` and `switch`: update each input, then switch |
@@ -113,7 +113,7 @@ Every line is on one of four levels, each with one indentation and one style:
 
 Labels and the names of inputs share one column. A mark carries the state of a
 row: `✓` done, `✗` failed, `!` needs attention, `·` nothing happened. Colour
-only repeats the state: green, red and yellow for the marks, blue for the
+only repeats the state: green, red and yellow for the marks, cyan for the
 phase headings. Without colour the levels still read from the marks, the
 indentation and the blank lines.
 
@@ -155,7 +155,9 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   outcome is `done`, `unchanged` for an update that found nothing new, or
   `failed`, also when only some inputs failed; `detail` holds the diagnostics
   of a failure. A failure stops later tasks, which are then not listed, and
-  the exit code is non-zero.
+  the exit status is 1. What the parser of the command line refuses, such as
+  an unknown option, exits with status 2. An error before the first task,
+  such as an unknown task, exits with status 1. Neither prints JSON.
 - `nxf status --json` prints `checkout`, `changes` (tracked files with
   uncommitted changes), `inputs`, `running`, `built` (the system built from
   the committed checkout, or null) and `matches`. For monitoring it also
@@ -164,6 +166,21 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   the checkout failed its health check, or null) and `lastUpdate` (the time
   and task results of the last automatic update, or null). It does not mark
   the update summary as read.
+
+The results of an automatic update have the same four fields. They are in
+`lastUpdate`, in `/var/lib/nxf/update.json` and in the file `$NXF_RESULTS` of
+the [failure hook](#hooks). Besides the tasks, a result there is named
+`health`, for the [health checks](#health-checks), or `hook`, for the failure
+hook. These are all outcomes:
+
+| Outcome | Of | Meaning |
+| --- | --- | --- |
+| `done` | a task, `health` | The task ran to its end, or the health checks passed |
+| `unchanged` | `update` | The update left the lockfile as it was |
+| `failed` | a task, `health`, `hook` | The task failed, the checks still failed when their time ran out, or the failure hook failed. `update` `failed` is also the result of a run that cannot go on; see [Automatic updates](#automatic-updates). The run fails |
+| `skipped` | `update`, `switch` | Automatic update only. The run did not start, because of a hold, uncommitted changes or the check hook; or the switch was left out, because the revision failed its health check before. `detail` says which |
+| `flagged` | `update`, with the input in `inputs` | Automatic update only. The input could not be updated and its [strategy](#strategies) is `flag`. The run goes on and does not fail |
+| `reported` | `update`, with the input in `inputs` | The same for the strategy `report`, and the failure hook runs after the run |
 
 ## Status
 
@@ -178,7 +195,8 @@ records. A build is recorded only if the tracked checkout still corresponds
 to what was built, including the lockfile built before an update commits it.
 
 Without a provisioned shared directory, records stay in `<state>/systems`.
-The CLI never creates the shared directory implicitly. If shared publication
+Who creates the shared directory is in the boundaries of
+[Shared Builds](docs/features/shared-builds.md). If shared publication
 fails, nxf warns and tries the per-user location; record failures do not fail
 a successful build, update or activation. `nxf doctor` reports the destination
 and warns about an inaccessible shared directory, including group membership
@@ -211,8 +229,8 @@ is garbage-collected. A system built some other way, such as a plain
 Below the first line, status says when something needs attention:
 
 - `Restart needed`: the kernel, the initrd or the kernel modules of the
-  running system differ from those of the booted system. nxf never reboots
-  the machine.
+  running system differ from those of the booted system. No task and no
+  automatic update restarts the machine.
 - `Automatic updates are held`, with the reason and the end of the hold.
 - `The checkout failed its health check`, with what the failing checks said.
 
@@ -233,11 +251,14 @@ and reading status never starts a build, an activation or a retry.
 - `writable`, `identity`: `update` can write and commit the lockfile;
 - `changes`: no uncommitted changes, whose builds would not be remembered;
 - `config`: the flake has the one configuration nxf works with;
-- `state`: builds can be remembered;
+- `state`: the per-user state can be written;
+- `records`: where build records go, with a warning when the shared
+  directory exists and cannot be used;
 - `running`: the running system was built by nxf or the updater.
 
-Each line is `ok`, `warn` or `fail`, with how to fix it. Any `fail` makes it
-exit non-zero; checks that need the checkout are skipped until it is found.
+Each line starts with a mark: `✓` passed, `!` a warning, `✗` failed, with how
+to fix it. Any `✗` makes it exit non-zero; checks that need the checkout are
+skipped until it is found.
 
 ## Install
 
@@ -259,10 +280,15 @@ The flake provides the package and a NixOS module:
 ```
 
 `services.nxf.enable` installs the command and sets `NXF_FLAKE` to
-`services.nxf.flake` (default `/etc/nixos`).
+`services.nxf.flake` (default `/etc/nixos`). It also creates the user and the
+group `nxf`, lets the group use sudo without a password, creates
+`/var/lib/nxf`, hands the flake directory and that state over to the user and
+the group, and makes Git trust the flake directory for every user; see
+[Who runs it, and who may work with it](#who-runs-it-and-who-may-work-with-it).
 `services.nxf.autoUpdate.enable` does the same and adds the timer. The package
-alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git and Nix for
-machines that do not have them on `PATH`.
+alone is `nxf.packages.<system>.nxf`; it brings nh, dix, Git, Nix, OpenSSH,
+tar, coreutils and systemd for machines that do not have them on `PATH`.
+[Layout](CONTRIBUTING.md#layout) lists the programs nxf calls.
 
 ## Several machines
 
@@ -289,13 +315,20 @@ One command shows which revision every machine runs, when it last updated and
 what needs attention, and one command holds automatic updates on all of them,
 so that a bad update does not spread. A hold with an end ends at the same
 moment on every machine. Tasks such as `switch` do not take `--config`; the
-one way to change several machines is [`rollout`](#from-another-computer).
+one way to change the system of several machines is
+[`rollout`](#from-another-computer).
 
 nxf runs itself on each machine with the system's `ssh`, in batch mode, all
 machines at once. It uses your SSH configuration, keys and `known_hosts`, and
 needs nxf installed on the machines. A machine that does not answer is a
-failed row and makes the command fail. `nxf status --config <file> --json`
-prints one entry for each machine: its `status --json`, or an `error`.
+failed row and makes the command fail. ssh has `NXF_SSH_CONNECT_TIMEOUT`
+seconds to connect, 10 by default, also when `rollout` runs it. A machine has
+`NXF_SSH_TIMEOUT` seconds to answer one of these commands, 120 by default;
+after that its row is `timed out after <N> seconds` (`1 second` when the
+limit is 1), and not `unreachable:`. `nxf status --config <file> --json`
+prints one entry for each machine: its `status --json`, or an `error` with
+the text of its failed row.
+With `--config`, status takes only `--json`.
 `hold` and `release` need an SSH user that may write `/var/lib/nxf`: root or
 a member of the group `nxf`.
 
@@ -340,16 +373,19 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
 4. With `--files <dir>`, the content of that directory is laid over the
    template: the machine's own values, such as its name or its secrets. nxf
    does not read them. What the template's `.gitignore` names stays out of
-   the repository.
-5. `nxf.nix` is added: a module file that enables automatic updates and shows
-   every option of the nxf module commented out with its default. It comes
-   from the nxf version that runs init. A template that brings its own
-   `nxf.nix` keeps it.
+   the repository. A `<dir>` that is not a directory fails the command
+   before anything is written.
+5. `nxf.nix` is added: a module file that sets
+   `services.nxf.autoUpdate.enable = true` and shows `services.nxf.flake` and
+   the other options of `services.nxf.autoUpdate`, each commented out with its
+   default. It comes from the nxf version that runs init. A template that
+   brings its own `nxf.nix` keeps it.
 6. The directory becomes a Git repository without a remote, the inputs are
    locked, and everything is committed. A repository for which Git has no
    identity gets `nxf`, without an e-mail, as its own.
-7. The checks of `nxf doctor` that concern the checkout run, and
-   `module` says whether the configuration imports the nxf module.
+7. The `tools` check and the checks of `nxf doctor` that concern the checkout
+   run. When none of them failed, `module` says whether the configuration
+   imports the nxf module.
 
 A flake can be founded on another computer, in any directory, and copied to
 the machine later: nothing in it has to match the computer that runs init.
@@ -381,6 +417,9 @@ then warns and names the lines to add.
 
 ### On the machine
 
+For the feature brief and acceptance scenarios, see
+[Install](docs/features/install.md).
+
 ```sh
 nxf init /tmp/machine --template <flake>#<name> --hardware
 nxf install /tmp/machine
@@ -397,49 +436,92 @@ nxf install /tmp/machine
 3. It makes the SSH host key and prints it, and records the installation in
    `/var/lib/nxf/installed.json` and which system the flake built.
 
-`--reboot` restarts into the new system. Install refuses outside an installer
-(a system that runs from a disk), with uncommitted changes in the flake, and
-into a target that already holds a flake. Inputs are fetched on the machine,
-so a private input needs its credentials in the installer.
+`--reboot` restarts into the new system. Install needs root: another user
+gets `Installing needs root`. It refuses outside an installer (a system that
+runs from a disk), on a system that nxf manages (one it installed, or one
+whose system has nxf, also when it runs from memory), with uncommitted
+changes in the flake, and, with `--mounted`, into a target whose `/etc/nixos`
+is not empty. A system runs from memory when the last `/` line of
+`/proc/mounts` names a `tmpfs`, a `rootfs` or a `ramfs`. Inputs are fetched
+on the machine, so a private input needs its credentials in the installer.
 
 ### From another computer
+
+For the feature brief and acceptance scenarios, see
+[Bulk Install](docs/features/bulk-install.md).
 
 ```sh
 nxf rollout --config hosts.toml --template <flake>#<name> --files ./machines
 ```
 
 `rollout` brings every machine of a [hosts file](#the-hosts-file) to the
-same state: installed by nxf. It asks each machine what it is, and then:
+same state: managed by nxf. It asks each machine what it is, and then:
 
 | The machine is | Rollout |
 | --- | --- |
-| installed by nxf, or runs nxf | leaves it alone |
+| managed: installed by nxf, or with nxf in its system, whatever its root file system is | leaves it alone |
 | a NixOS installer | installs it |
 | another system, such as Ubuntu | starts a NixOS installer from memory (kexec), then installs it |
 | not reachable | reports it and fails |
 
-The command can be repeated: machines that are installed are not touched, so
+A machine with nxf only on its `PATH` is left alone too, unless it is a NixOS
+installer.
+
+The command can be repeated: machines that are managed are not touched, so
 a second run only installs what the first one could not. Installing erases
 disks, so rollout shows the plan and asks before it erases anything; `--yes`
 confirms without a question, and without a terminal nothing is erased unless
-`--yes` is given.
+`--yes` is given. Before the question rollout finds its own package and the
+source of the template. A template that cannot be used, or an nxf that does
+not run from the Nix store, fails the command: nothing is asked and nothing
+is erased.
 
 For each machine it installs, rollout copies this nxf and the template to
 the machine, runs `nxf init --hardware` and `nxf install` there, restarts it,
 and waits until the new system answers with the host key the installation
-made. The flake never exists on your computer. `--files <dir>` gives each
-machine the content of `<dir>/<name>/`, laid over the template.
+made. It waits up to `NXF_ROLLOUT_WAIT` seconds, 600 by default, for the
+installer to answer, and as long again for the new system; a machine that
+takes longer counts as failed and is named under `Not installed`. The flake
+never exists on your computer. `--files <dir>` gives each machine the
+content of `<dir>/<name>/`, laid over the template. The upload fails the
+machine unless both tar and ssh end well: its row is `Sending the machine's
+files failed`, and it is named under `Not installed`. A `<dir>` that is not a
+directory is refused before any machine is asked. A machine without
+`<dir>/<name>/` gets the template alone.
 
 The outcome lists the host key of every installed machine as a `known_hosts`
 line; `--known-hosts <file>` writes them into that file, replacing the key of
-the system that was there before. `--kexec-url` names another installer image.
+the system that was there before. When the file cannot be written, or the old
+key cannot be removed, the machine stays installed and the other machines are
+still installed. The row `Its host key was not written:` shows the cause, the
+line of the machine is still printed, and the command fails. When the old key
+cannot be removed, the new key is not added. `--kexec-url` names another
+installer image.
 
-Limits: the SSH user must be root, and the machine needs a way to the
-internet for the installer image and the inputs. The first connection to a
-machine nobody has connected to accepts its host key; a key that differs from
-one you already know is refused.
+Limits: the SSH user must be root. A machine that another user would install
+is a failed row of the plan, `not installed: the SSH user must be root, and
+its user id is <id>`. It is not installed, the other machines are, and the
+command fails. The machine needs a way to the internet for the installer
+image and the inputs. The first connection to a machine nobody has connected
+to accepts its host key; a key that differs from one you already know is
+refused. `nix copy`, which brings nxf and the template to the machine,
+trusts the same keys: rollout writes them into one file and names it in
+`NIX_SSHOPTS`. A `known_hosts` of yours that is there and cannot be read
+fails the command before any machine is asked. The options of ssh name files
+in the temporary directory, so rollout refuses one whose path holds
+whitespace, a quote or a backslash, before any machine is asked; its message
+calls any whitespace `a space`. It makes a directory of its own there for the
+run, for its user alone, under the first of the names `nxf-rollout.<pid>.0`
+to `nxf-rollout.<pid>.99` that is free. A directory that is there before is
+never used and never changed. When the directory cannot be made, or every
+name is taken, rollout fails before any machine is asked; `TMPDIR` names the
+directory it is made in. The files in it are named by the place of a machine
+in the list, not by its name.
 
 ### Upgrading machines
+
+For the feature brief and acceptance scenarios, see
+[Bulk Upgrade](docs/features/bulk-upgrade.md).
 
 ```sh
 nxf rollout --config hosts.toml --upgrade                 # one machine at a time
@@ -449,7 +531,8 @@ nxf rollout --config hosts.toml --upgrade nixpkgs         # update only these in
 
 With `--upgrade`, rollout installs nothing: it runs `nxf upgrade` on each
 machine of the hosts file, in the order of their names, as you would by hand.
-The first machine upgrades alone. When it succeeded, the others follow in
+The order compares the names byte by byte, so `node-10` comes before
+`node-2`. The first machine upgrades alone. When it succeeded, the others follow in
 waves of `--batch` machines (1 when not given), and each wave starts only when
 the one before has ended without a failure.
 
@@ -457,7 +540,7 @@ the one before has ended without a failure.
 hosts.toml · 3 machines
 
   ✓ node-1    inputs updated, switched
-  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully
+  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | Command exited with status 1. | Some changes may already be active.
   · node-3    not started
 
 ✗ Upgrade failed on 1 of 3 machines
@@ -466,6 +549,8 @@ hosts.toml · 3 machines
 
 - A failure, or a machine that does not answer, lets its own wave end and
   starts no other. The machines of a later wave are listed as not started.
+  The row of a failed task holds what the task said on the machine, its
+  lines joined by ` | `.
 - Each machine updates its own flake, so each commits its own `flake.lock`;
   the machines get the same revisions only when they fetch at the same time.
   A machine with no new revision still switches to its committed flake.
@@ -474,13 +559,18 @@ hosts.toml · 3 machines
   the result is not the automatic update of `nxf status`. A wave stops on
   what `nxf upgrade` reports: a fetch, a build or a switch that fails.
 - The SSH user must be able to work with the flake and switch: root, or a
-  member of the group `nxf`. Each machine has `NXF_UPGRADE_TIMEOUT` seconds,
-  3 hours by default.
+  member of the group `nxf`.
+- Each machine has `NXF_UPGRADE_TIMEOUT` seconds, 3 hours by default. A
+  machine that takes longer has the row
+  `timed out after <N> seconds; the upgrade may still run on the machine`
+  (`1 second` when the limit is 1), and no further wave starts.
 - Named inputs go to every machine; one that a machine's flake does not
   have fails on the first machine, before any other changes.
 
 ## Automatic updates
 
+For the feature brief and acceptance scenarios, see
+[Automatic Update](docs/features/automatic-update.md).
 
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:
@@ -492,8 +582,8 @@ hosts.toml · 3 machines
    does with each, and with one that cannot be fetched or does not build, is
    the input's [strategy](#strategies).
 3. If the committed flake is not what runs, `switch` builds and activates it:
-   a live switch of everything. The machine is never rebooted; a new kernel
-   takes effect at the next reboot, and status says that one is needed.
+   a live switch of everything. The machine is never restarted; a new kernel
+   takes effect at the next restart, and status says that one is needed.
    Shared records let the updater skip `nh os build` when the committed tree
    is already running, even if someone else built it. Configuration selection
    and input strategies still require evaluation before that comparison.
@@ -503,6 +593,20 @@ hosts.toml · 3 machines
    if any task failed. `nxf status` shows them once to each user. nxf sends
    no other notification; after a failure, or an input it is to report, it
    runs the [failure hook](#hooks) of the configuration.
+6. A run that cannot go on is saved too: the results of the tasks that ran,
+   followed by `update` `failed` with the cause. A run that fails before any
+   task ran, for example because the checkout names an unknown strategy, has
+   that one result. The failure hook runs for it too, and the service fails.
+   When the hook fails too, the result `hook` `failed` is saved, and the
+   command shows `The failure hook failed too:` with what the hook said.
+   When the results cannot be saved, the command fails with the cause and
+   the failed save beneath it. The failure hook does not run when the first
+   save fails.
+
+`nxf auto-update --state <dir>` saves `update.json` in `<dir>` instead, and
+`$NXF_RESULTS` names the file there. The hold, the bad marks and the build
+records stay in `/var/lib/nxf`, and `nxf status` reads the results from
+`/var/lib/nxf` only. The service does not use the flag.
 
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
@@ -519,7 +623,7 @@ hosts.toml · 3 machines
 | `healthTimeout` | `300` | Seconds the checks have to pass |
 | `healthInterval` | `10` | Seconds between two rounds of checks |
 | `failureHook` | none | Script that runs after a failed update, or an input to report |
-| `hookTimeout` | `60` | Seconds each of the two hooks has to end |
+| `hookTimeout` | `60` | Seconds each of the two hooks has to end; the module sets `NXF_HOOK_TIMEOUT` from it, which is 60 when nothing sets it |
 | `timeout` | `3h` | Longest run |
 
 ### Health checks
@@ -542,14 +646,20 @@ minutes, just fails until then. The two times are those of the new
 configuration too: they are in `/etc/nxf/health.conf`, which the switch
 replaces together with the scripts.
 
+Each script runs with `set -e`: a check fails when any of its commands does.
+Modules can each add lines to one check, and every line must succeed.
+
 If checks still fail at the end:
 
-- nxf activates the previous system again;
 - the revision is marked as bad in `/var/lib/nxf/bad/<tree>`, with what the
   failing checks said;
-- the run fails and reports `health: failed`;
-- later runs skip the switch until a newer revision is committed. The bad
-  revision stays in the repository, because it built.
+- nxf activates the previous system again, also when the revision could not
+  be marked as bad. When that activation fails, the result reads
+  `Could not return to <system>:` with the cause;
+- the run fails and reports `health: failed`. When the revision could not
+  be marked, the result names that too;
+- later runs skip the switch of a marked revision until a newer revision is
+  committed. The bad revision stays in the repository, because it built.
 
 Tasks run by hand, such as `nxf switch`, run no health checks.
 
@@ -574,12 +684,13 @@ services.nxf.autoUpdate = {
   starts. When it fails, the run is skipped: it reports `skipped` with the
   last line the script printed, and nothing is fetched, built or activated.
   The run does not count as failed.
-- `failureHook` becomes `/etc/nxf/hooks/failure` and runs after a run in which
-  a task failed, such as a switch or the health checks, or which could not
-  update an input whose [strategy](#strategies) is `report`. The file
-  `$NXF_RESULTS` holds the results of the run, the same JSON
-  as `/var/lib/nxf/update.json`. When the hook fails itself, that is
-  reported, as the result `hook`.
+- `failureHook` becomes `/etc/nxf/hooks/failure`. It runs after a run in
+  which a task failed, such as a switch or the health checks. It runs after
+  a run that cannot go on, also when no task ran. It runs after a run that
+  could not update an input whose [strategy](#strategies) is `report`. The
+  file `$NXF_RESULTS` holds the results of the run, the same JSON as
+  `/var/lib/nxf/update.json`. When the hook fails itself, that is reported,
+  as the result `hook`.
 - A hook fails when any of its commands does. Modules can each add lines to
   a hook, and the lines run in the order of the configuration.
 - Each hook has `hookTimeout` seconds; one that does not end is stopped and
@@ -618,7 +729,7 @@ nxf release
 ```
 
 A hold stops the automatic update: the run reports `skipped` with the reason.
-The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
+The hold is the file `/var/lib/nxf/hold.json`, so it survives a restart, and
 only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
 
@@ -710,7 +821,7 @@ flake is pushed to a server that wants an e-mail.
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
 [git-credential-store](https://git-scm.com/docs/git-credential-store), one
-line for each host:
+line for each server:
 
 ```
 https://machine:TOKEN@git.example.org
@@ -747,7 +858,7 @@ nxf status                                     # the latest outcome
 ## Development
 
 ```sh
-nix develop          # Rust, nh, dix, Git and util-linux
+nix develop          # Rust, nh, dix, Git, Nix, OpenSSH, util-linux, just and nixfmt
 just test            # all tests
 just check           # formatting, lints, tests and the flake checks
 ```

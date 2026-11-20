@@ -18,7 +18,10 @@ change them here first.
 - Never leave the checkout with uncommitted changes of nxf's own: `update`
   commits the lockfile only after it built, and restores it otherwise.
 - A failed update never changes the running system.
-- The machine is never rebooted by nxf.
+- The machine is never restarted by nxf, except by an installation:
+  `nxf install --reboot` restarts into the new system, and `rollout`
+  restarts each machine it installs, into the installer when the machine
+  runs another system, and into the new system.
 - nxf is a general tool. It requires a local Git flake with a `flake.lock`
   and one configuration under `nixosConfigurations`, and nothing else: no particular
   files, identities, presets or cluster. What is specific to one environment
@@ -26,8 +29,10 @@ change them here first.
   health checks, and a template given by reference.
 - Remote work is nxf running itself on each machine over ssh. `status`,
   `hold`, `release`, `version` and `doctor` take `--config`; tasks never do.
-  `rollout` is the one command that changes machines. Without `--upgrade`
-  it changes only those that nxf has not installed: it must stay repeatable,
+  `rollout` is the one command that changes the system of machines; `hold`
+  and `release` with `--config` write only the hold of each machine. Without
+  `--upgrade` rollout changes only the machines that nxf does not manage:
+  it must stay repeatable,
   and it must ask before it erases a disk. With `--upgrade` it runs the task
   `upgrade` on each machine, the first alone and then in waves of `--batch`,
   and a failure starts no further wave. No other task runs on a set of
@@ -52,17 +57,20 @@ change them here first.
 | Path | Holds |
 | --- | --- |
 | `docs/features/` | Short feature briefs and use-case scenarios for acceptance tests |
+| `src/main.rs` | The program; it only calls `cli::main` |
+| `src/lib.rs` | The list of the modules |
 | `src/cli.rs` | The commands and their routing; no logic |
 | `src/tasks.rs` | The task table, and planning and running tasks |
 | `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
 | `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
+| `src/strategy.rs` | How the automatic update treats each input: `off`, `flag` or `report`, read from the configuration in the checkout |
 | `src/hold.rs` | The hold on automatic updates |
 | `src/hooks.rs` | The configuration's check hook before an automatic update and its failure hook after a failed one |
 | `src/hosts.rs` | The hosts file: SSH destinations, with everything else ignored |
 | `src/fleet.rs` | Running nxf on the machines of a hosts file over ssh, and the upgrade in waves |
 | `src/init.rs` | Founding a machine flake from a template |
 | `src/install.rs` | Installing from an installer: disks, nixos-install, host key, records |
-| `src/rollout.rs` | Installing the machines of a hosts file that nxf has not installed |
+| `src/rollout.rs` | Installing the machines of a hosts file that nxf does not manage |
 | `src/status.rs` | The status report and the running system's flake commit |
 | `src/doctor.rs` | The doctor's checks |
 | `src/output.rs` | Terminal styles, phase headings, outcomes and streaming diagnostics |
@@ -74,6 +82,7 @@ change them here first.
 | `nix/package.nix` | The package |
 | `nix/module.nix` | The NixOS module |
 | `nix/module-check.nix` | The check that evaluates the module |
+| `nix/shared-records-check.nix` | The NixOS VM test of the shared build records: users of the group, a user outside it, root |
 | `nix/init-module.nix` | The generator of `nix/nxf.nix` from the options of the module |
 | `nix/nxf.nix` | The module file `nxf init` writes; generated, renew it with `just generate` |
 
@@ -84,23 +93,41 @@ change them here first.
   tasks and the status report wire them together.
 - nxf calls the `git`, `nix`, `nh` and `dix` programs. It does not link their
   libraries, so hooks, identities and configuration behave as on the command
-  line.
+  line. It also calls `ssh` for every command with `--config` and for
+  rollout, `ssh-keygen` for install and rollout, `tar` for rollout, `cp` for
+  init and install, `date` for the times of a hold, and `systemctl` for
+  status and `install --reboot`. The package brings these ten programs: `cp`
+  and `date` as coreutils, `systemctl` as systemd. `nixos-install`,
+  `nixos-generate-config` and `nixos-version` are the machine's own, and so
+  is the `sudo` that nh calls.
 
 ## Feature descriptions
 
 - Keep a short brief for each new or changed feature in
-  `docs/features/<feature>.md`: the problem, who uses it, resulting behavior
-  and boundaries.
-- Include concrete Given/When/Then use cases as templates for acceptance
-  tests. Link existing coverage and distinguish scenarios from checks that
-  have actually run. Keep the brief current when the behavior changes.
+  `docs/features/<feature>.md`, and keep it current when the behaviour
+  changes.
+- A brief holds, in this order: a one-line summary; `Brief`, with the problem
+  and who has it, the resulting behaviour and a `Boundaries:` list;
+  `Acceptance scenarios`; `Existing verification`.
+- `Acceptance scenarios` is a table of ID, Given, When and Then, a template
+  for acceptance tests. A When is one action. A Then can be observed: the
+  text of a row or of the outcome, the exit status, a state that a command
+  shows, or what a stand-in program was asked to run.
+- `Existing verification` maps every scenario ID to the test that covers it,
+  by name, or says that no automated test covers it. A run by hand is
+  recorded with the nxf version and the commit it ran on, and with what was
+  seen.
 
 ## Commands and tasks
 
-- `status`, `doctor`, `version`, `init`, `hold`, `release` and `auto-update`
-  are commands. A command is
-  recognised only as the first word and rejects extra arguments, so
-  `nxf status update` fails instead of ignoring `update`.
+- `status`, `doctor`, `version`, `init`, `install`, `rollout`, `hold`,
+  `release` and `auto-update` are commands: the entries of `COMMANDS` in
+  `src/cli.rs`, which also holds `help`. A command is
+  recognised only as the first word, so `nxf test status` is an unknown
+  task. A command refuses a word it does not take: `nxf version update`
+  fails instead of ignoring `update`. `status` and `rollout --upgrade` take
+  the names of inputs, so `nxf status update` fails as
+  `Unknown input: update`.
 - Everything else is a list of tasks. Unknown words are an error and nothing
   runs.
 - Tasks are the entries of `TASKS` in `src/tasks.rs` and run in that order,
@@ -129,29 +156,78 @@ change them here first.
   report; show it with `output::pending` while it runs.
 - Reformat what other tools print into facts; do not pass their layout on.
 - Errors of the command line have the shape of every failure: the cause as
-  the outcome, then facts that help to resolve it.
+  the outcome, then facts that help to resolve it. What clap refuses is
+  printed in that shape too and exits with status 2. Help that is asked for
+  is printed as clap prints it.
 
 ## Tests
 
-- `just test` runs all tests; `just check` also runs the formatter, the lints
-  and the flake checks. CI runs `just check`.
+- `just test` runs all tests; `just check` also checks the format of the Rust
+  and the Nix sources and runs the lints and the flake checks. CI runs
+  `just check`.
 - Each file in `tests/` mirrors a source file. Tests that change the process
   environment are in `tests/environment.rs`; they hold one lock and start no
-  process. Shared fixtures are in `tests/common/mod.rs`.
+  nxf process. Shared fixtures are in `tests/common/mod.rs`.
 - Give a test a short name that does not repeat the file name, and a doc
   comment that says what must hold.
 - Add or update tests with every change of behaviour.
 - The installation of a real machine cannot be a test here. After a change to
   `install.rs` or `rollout.rs`, run `nxf rollout` against a virtual
   machine that starts as another system, and run it a second time.
+- `tests/rollout.rs` plays an installation without a machine. Its mock ssh
+  keeps the files it is sent, reports a host key for `nxf install` and
+  answers as a managed machine from then on. A mock `nix` names the source
+  of the template and does nothing on `nix copy`; a test that looks at what
+  `nix copy` is given puts a `nix` of its own in its place that records it.
+  This does not replace the run against a virtual machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
-  the mock nh; `NXF_SYSTEM`, `NXF_BOOTED`, `NXF_UPDATER_STATE`,
-  `NXF_SYSTEMCTL`, `NXF_HEALTH_DIR`, `NXF_HOOKS_DIR` and
-  `NXF_SSH` stand in for the running and the booted system, the updater,
-  systemd, the health checks, the two hooks and ssh.
+  the mock nh, and variables of the environment stand in for what belongs to
+  the machine. The shipped program reads them too.
+
+  | Stand-in | Stands in for |
+  | --- | --- |
+  | `NXF_SYSTEM` | The running system, `/run/current-system` |
+  | `NXF_BOOTED` | The booted system, `/run/booted-system` |
+  | `NXF_UPDATER_STATE` | The updater's state, `/var/lib/nxf` |
+  | `NXF_SYSTEMCTL` | The `systemctl` that status asks about the update service and that `install --reboot` runs |
+  | `NXF_HEALTH_DIR` | The directory of the health checks, `/etc/nxf/health.d`; `health.conf` is read beside it |
+  | `NXF_HOOKS_DIR` | The directory of the two hooks, `/etc/nxf/hooks` |
+  | `NXF_SSH` | The `ssh` program |
+  | `NXF_INSTALL_ROOT` | Where the new system is mounted, `/mnt`; when it is set, install does not require root |
+  | `NXF_INSTALLER` | The answer whether the system runs from memory: `yes`, anything else is no |
+  | `NXF_DISKO` | The script of the disk layout |
+  | `NXF_PACKAGE` | The package that rollout copies to the machines, for an nxf that does not run from the Nix store; `tests/rollout.rs` sets it |
+
+- These variables are settings, for an operator or the module:
+
+  | Setting | Default | Sets |
+  | --- | --- | --- |
+  | `NXF_FLAKE` | `/etc/nixos` | The checkout of the machine flake |
+  | `NXF_STATE` | `$XDG_STATE_HOME/nxf`, then `~/.local/state/nxf` | The per-user state |
+  | `NXF_HOOK_TIMEOUT` | 60 | Seconds each hook has to end; the module sets it from `hookTimeout` |
+  | `NXF_SSH_CONNECT_TIMEOUT` | 10 | Seconds ssh has to connect to a machine |
+  | `NXF_SSH_TIMEOUT` | 120 | Seconds a machine has to answer a command with `--config` |
+  | `NXF_UPGRADE_TIMEOUT` | 10800 | Seconds a machine has for `rollout --upgrade` |
+  | `NXF_ROLLOUT_WAIT` | 600 | Seconds rollout waits for the installer, and then for the installed system, to answer |
+
+  nxf sets `NXF_RESULTS` for the failure hook and does not read it.
 - Tests of live progress hold the mock nh back and assert that the output is
   there before it is released. Tests of in-place updates run in a
   pseudo-terminal and assert the final screen.
 - When trying nxf by hand, use `--dry-run` or the mock nh. Never run a real
   `build`, `test`, `boot`, `switch`, `upgrade` or `auto-update` to check a
   change.
+
+## Done
+
+A change of behaviour is done when all of this holds:
+
+- The version is bumped; see [Layout](#layout).
+- Tests are added or updated, and `just check` passes; see [Tests](#tests).
+- A change to `install.rs` or `rollout.rs` ran against a virtual machine;
+  see [Tests](#tests).
+- The brief of the feature is current; see
+  [Feature descriptions](#feature-descriptions).
+- The [README](README.md) describes the behaviour.
+- `nix/nxf.nix` is renewed when the options of the module changed; see
+  [Layout](#layout).
