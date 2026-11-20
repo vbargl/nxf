@@ -9,7 +9,7 @@ use std::time::Instant;
 use crate::env;
 use crate::process::{self, TIMED_OUT};
 
-pub const DEFAULT_DIR: &str = "/etc/nxf/hooks";
+const DEFAULT_DIR: &str = "/etc/nxf/hooks";
 
 /// The hook of that name, when the configuration has one. NXF_HOOKS_DIR
 /// stands in for the directory in tests.

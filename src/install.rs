@@ -36,7 +36,7 @@ pub fn root_in_memory(mounts: &str) -> bool {
 /// Whether this system runs from memory, as a NixOS installer does. A system
 /// that runs from a disk would be erased under itself. NXF_INSTALLER (yes or
 /// no) stands in for the answer in tests.
-pub fn installer() -> bool {
+fn installer() -> bool {
     if let Some(answer) = env::text(env::INSTALLER) {
         return answer == "yes";
     }

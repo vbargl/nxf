@@ -166,7 +166,7 @@ pub enum Mark {
 }
 
 impl Mark {
-    pub fn symbol(self) -> &'static str {
+    fn symbol(self) -> &'static str {
         match self {
             Mark::Done => "✓",
             Mark::Failed => "✗",

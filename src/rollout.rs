@@ -20,7 +20,7 @@ use crate::state;
 use crate::text::{last_line, plain};
 
 /// The installer image nxf starts on a machine that runs another system.
-pub const KEXEC_URL: &str = "https://github.com/nix-community/nixos-images/releases/download/nixos-25.11/nixos-kexec-installer-noninteractive-{arch}-linux.tar.gz";
+const KEXEC_URL: &str = "https://github.com/nix-community/nixos-images/releases/download/nixos-25.11/nixos-kexec-installer-noninteractive-{arch}-linux.tar.gz";
 
 pub struct Options {
     pub file: PathBuf,

@@ -54,7 +54,7 @@ pub const CLICOLOR_FORCE: &str = "CLICOLOR_FORCE";
 /// Of the system: `dumb` is a terminal that cannot redraw.
 pub const TERM: &str = "TERM";
 /// Of the system: the configuration of Nix.
-pub const NIX_CONFIG: &str = "NIX_CONFIG";
+const NIX_CONFIG: &str = "NIX_CONFIG";
 /// Of the system: the home directory.
 pub const HOME: &str = "HOME";
 /// Of the system: the directory of the state of a user.

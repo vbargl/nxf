@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::text::{last_line, plain};
 
 /// How many of the last lines a program said go into the error of its failure.
-pub const TAIL: usize = 8;
+const TAIL: usize = 8;
 /// What a script that the deadline cut short says for itself.
 pub const TIMED_OUT: &str = "timed out";
 /// How long the output of a program that ended is waited for.

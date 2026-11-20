@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{env, output, process};
 
-pub const DEFAULT_CHECKOUT: &str = "/etc/nixos";
+const DEFAULT_CHECKOUT: &str = "/etc/nixos";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Location {
@@ -189,7 +189,7 @@ fn input_url(original: &Value) -> String {
 }
 
 /// A root input's locked revision, or how it follows another input.
-pub fn input_rev(lock: &Value, name: &str) -> String {
+fn input_rev(lock: &Value, name: &str) -> String {
     let Some(reference) = root(lock).and_then(|inputs| inputs.get(name)) else {
         return String::new();
     };

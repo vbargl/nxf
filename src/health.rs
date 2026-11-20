@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crate::env;
 use crate::process::{self, TIMED_OUT};
 
-pub const DEFAULT_DIR: &str = "/etc/nxf/health.d";
+const DEFAULT_DIR: &str = "/etc/nxf/health.d";
 /// The file beside the directory of the checks that holds their times.
 const SETTINGS: &str = "health.conf";
 

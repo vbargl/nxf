@@ -249,7 +249,7 @@ fn running(dir: Option<&Path>) -> Check {
 }
 
 /// Runs all checks; a failure makes the doctor exit non-zero.
-pub fn checks() -> Vec<Check> {
+fn checks() -> Vec<Check> {
     let checkout = checkout(&flake::location());
     let passed = checkout.iter().all(|result| result.level != Level::Fail);
     let dir = passed.then(|| flake::location().dir);

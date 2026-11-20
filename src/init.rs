@@ -10,7 +10,7 @@ use crate::{flake, git, output, process};
 /// The module file every founded flake gets. `nix/init-module.nix` generates
 /// it from the options of the NixOS module, and a flake check compares them.
 pub const MODULE: &str = include_str!("../nix/nxf.nix");
-pub const MODULE_FILE: &str = "nxf.nix";
+const MODULE_FILE: &str = "nxf.nix";
 
 pub struct Options {
     pub dir: Option<PathBuf>,

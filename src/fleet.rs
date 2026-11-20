@@ -16,7 +16,7 @@ use crate::text::{last_line, plain};
 use crate::{process, time};
 
 /// What a machine answered. No code means that ssh did not end within the limit.
-pub struct Reply {
+struct Reply {
     pub host: Host,
     pub code: Option<i32>,
     pub limit: Duration,
@@ -75,7 +75,7 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
 
 /// Runs nxf with the arguments on every host at once; replies come back in
 /// the order of the hosts.
-pub fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
+fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
     let timeout = env::seconds(env::SSH_TIMEOUT, 120);
     run_for(hosts, args, timeout)
 }

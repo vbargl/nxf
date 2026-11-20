@@ -21,7 +21,7 @@ pub fn running() -> PathBuf {
 }
 
 /// The system the machine booted. NXF_BOOTED stands in for it in tests.
-pub fn booted() -> PathBuf {
+fn booted() -> PathBuf {
     env::path(env::BOOTED, "/run/booted-system")
 }
 

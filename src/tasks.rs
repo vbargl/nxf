@@ -12,7 +12,7 @@ use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
 use crate::{flake, git, nixos, output, process, state};
 
-pub struct Task {
+struct Task {
     pub name: &'static str,
     pub description: &'static str,
     pub takes_inputs: bool,
@@ -20,13 +20,13 @@ pub struct Task {
     phases: usize,
 }
 
-pub struct Shortcut {
+struct Shortcut {
     pub name: &'static str,
     pub description: &'static str,
     pub expands: &'static [&'static str],
 }
 
-pub const TASKS: &[Task] = &[
+const TASKS: &[Task] = &[
     Task {
         name: "update",
         description: "Update all inputs, or only the named ones, one at a time. Each update is built, then committed; one that does not build is restored.",
@@ -59,7 +59,7 @@ pub const TASKS: &[Task] = &[
     },
 ];
 
-pub const SHORTCUTS: &[Shortcut] = &[Shortcut {
+const SHORTCUTS: &[Shortcut] = &[Shortcut {
     name: "upgrade",
     description: "Update each input, then switch.",
     expands: &["update", "switch"],
