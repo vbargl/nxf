@@ -26,7 +26,6 @@ let
     value = "store --file=${auto.git.credentialsFile}";
   };
 
-  # nh switches with sudo, and an unattended run cannot answer a prompt.
   sudoRules = [
     {
       groups = [ group ];
@@ -326,7 +325,6 @@ in
         inherit group;
         description = "nxf automatic updates";
       };
-      # The rule goes to whichever of the two implementations is enabled.
       security.sudo.extraRules = lib.mkIf config.security.sudo.enable sudoRules;
       security.sudo-rs.extraRules = lib.mkIf config.security.sudo-rs.enable sudoRules;
 
