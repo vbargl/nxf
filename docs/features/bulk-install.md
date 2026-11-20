@@ -74,9 +74,10 @@ Boundaries:
   the directory it is made in. The files in it are named by the place of a
   machine in the list, not by its name.
 - A `~/.ssh/known_hosts` that does not exist is left out. One that is there
-  and cannot be read fails the command before any machine is asked. A file of
-  keys that the run wrote itself and cannot read fails that machine at the
-  copy.
+  and cannot be read fails the command before any machine is asked, also
+  when no machine is to be installed: a run in which every machine is managed
+  fails on an unreadable file. A file of keys that the run wrote itself and
+  cannot read fails that machine at the copy.
 - `--files <dir>` takes a directory. Anything else is refused before any
   machine is asked. A machine without `<dir>/<name>/` gets the template
   alone.
