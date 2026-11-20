@@ -155,9 +155,9 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   outcome is `done`, `unchanged` for an update that found nothing new, or
   `failed`, also when only some inputs failed; `detail` holds the diagnostics
   of a failure. A failure stops later tasks, which are then not listed, and
-  the exit status is 1. A command line that nxf refuses, such as one with an
-  unknown option, exits with status 2. A refusal, or an error before the
-  first task, prints no JSON.
+  the exit status is 1. What the parser of the command line refuses, such as
+  an unknown option, exits with status 2. An error before the first task,
+  such as an unknown task, exits with status 1. Neither prints JSON.
 - `nxf status --json` prints `checkout`, `changes` (tracked files with
   uncommitted changes), `inputs`, `running`, `built` (the system built from
   the committed checkout, or null) and `matches`. For monitoring it also
