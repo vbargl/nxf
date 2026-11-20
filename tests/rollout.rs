@@ -899,7 +899,8 @@ fn missing_temporary_directory() {
 }
 
 /// Runs rollout as a process that first made the given number of scratch
-/// directories of its own id in TMPDIR, as another user could. Returns the id.
+/// directories of its own id in TMPDIR, as another user could. Returns its id and
+/// its output.
 fn rollout_after_planting(fx: &Fixture, hosts: &str, count: usize) -> (u32, std::process::Output) {
     let plant = r#"n=0
 while [ "$n" -lt "$1" ]; do mkdir -m 755 "$TMPDIR/nxf-rollout.$$.$n" || exit 9; n=$((n + 1)); done
