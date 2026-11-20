@@ -422,9 +422,8 @@ pub fn remember(key: &str, system: &Path) {
 }
 
 /// Keeps the sources of the locked inputs in the Nix store, as GC roots in
-/// the state: whoever builds the flake next needs no access to where an input
-/// came from. They replace the sources kept by the build before, which stay
-/// when the new ones cannot be kept.
+/// the state, so that the next build needs no access to their origin. They
+/// replace those of the build before, which stay when these cannot be kept.
 pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
     let sources = state_dir().join("sources");
     std::fs::create_dir_all(&sources)

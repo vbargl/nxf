@@ -260,10 +260,9 @@ fn managed_from_memory() {
 const ROOT_INSTALLER: &str =
     "nxf-probe managed=no installer=yes uid=0 arch=x86_64\nnxf-os NixOS 25.11\n";
 
-/// Installers behind a mock ssh that plays an installation: it keeps the
-/// files it is sent, reports a host key for `nxf install`, and answers as a
-/// managed machine from then on. A mock nix names the source of the template
-/// and records what `nix copy` is given; NXF_PACKAGE stands in for nxf.
+/// Installers behind a mock ssh that plays an installation: it keeps the sent
+/// files, reports a host key for `nxf install`, and answers as managed from
+/// then on. A mock nix names the template's source; NXF_PACKAGE stands in for nxf.
 fn installers(names: &[&str]) -> (Fixture, String) {
     let answers: Vec<(&str, &str)> = names.iter().map(|name| (*name, ROOT_INSTALLER)).collect();
     let (mut fx, hosts) = machines(&answers);

@@ -40,10 +40,9 @@ pub enum Found {
     Unreachable(String),
 }
 
-/// Says in plain sh what the machine is. It is sent on standard input, so
-/// that no login shell has to read it. The record of the installation and
-/// nxf in the system mean a managed machine wherever its root is; nxf on the
-/// path alone may be the copy in an installer.
+/// Says in plain sh what the machine is; sent on standard input, so that no
+/// login shell reads it. The installation record or nxf in the system mean
+/// managed wherever the root is; nxf on the path alone may be an installer's copy.
 pub const PROBE: &str = r#"
 root=$(awk '$2 == "/" { kind = $3 } END { print kind }' /proc/mounts)
 installer=no
