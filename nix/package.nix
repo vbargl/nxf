@@ -5,8 +5,10 @@
   coreutils,
   dix,
   git,
+  gnutar,
   nh,
   nix,
+  openssh,
   systemd,
 }:
 
@@ -39,8 +41,10 @@ rustPlatform.buildRustPackage {
         coreutils
         dix
         git
+        gnutar
         nh
         nix
+        openssh
         systemd
       ]
     }
