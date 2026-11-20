@@ -376,8 +376,8 @@ configuration under `nixosConfigurations`; see [One configuration](#one-configur
    the repository. A `<dir>` that is not a directory fails the command
    before anything is written.
 5. `nxf.nix` is added: a module file that sets
-   `services.nxf.autoUpdate.enable` and shows `services.nxf.flake` and the
-   other options of `services.nxf.autoUpdate`, each commented out with its
+   `services.nxf.autoUpdate.enable = true` and shows `services.nxf.flake` and
+   the other options of `services.nxf.autoUpdate`, each commented out with its
    default. It comes from the nxf version that runs init. A template that
    brings its own `nxf.nix` keeps it.
 6. The directory becomes a Git repository without a remote, the inputs are
