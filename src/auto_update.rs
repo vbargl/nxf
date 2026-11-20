@@ -3,13 +3,12 @@
 //! results for `nxf status`.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy};
+use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -110,11 +109,8 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
 }
 
 fn save(dir: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
-    let time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
-    let report = json!({"time": time, "results": list});
+    let report = json!({"time": time::now(), "results": list});
     let file = state::update_file(dir);
     process::write_atomic(&file, &format!("{report:#}\n"))
         .map_err(|err| format!("cannot save {}: {err}", file.display()))?;

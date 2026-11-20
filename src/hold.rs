@@ -2,24 +2,16 @@
 //! optional end, kept in the updater's state so that it survives a reboot.
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::{process, state};
+use crate::{process, state, time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hold {
     pub reason: String,
     pub since: u64,
     pub until: Option<u64>,
-}
-
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 fn file() -> PathBuf {
@@ -38,7 +30,7 @@ fn saved() -> Option<Hold> {
 
 /// The hold in effect now, if any.
 pub fn active() -> Option<Hold> {
-    saved().filter(|hold| hold.until.is_none_or(|until| now() < until))
+    saved().filter(|hold| hold.until.is_none_or(|until| time::now() < until))
 }
 
 fn denied(action: &str, err: std::io::Error) -> String {
@@ -51,7 +43,7 @@ fn denied(action: &str, err: std::io::Error) -> String {
 pub fn set(reason: &str, until: Option<u64>) -> Result<Hold, String> {
     let hold = Hold {
         reason: reason.to_string(),
-        since: now(),
+        since: time::now(),
         until,
     };
     let text = format!("{:#}\n", hold.to_json());
@@ -100,45 +92,21 @@ pub fn duration(text: &str) -> Result<u64, String> {
 /// now, or none. It lies in the future.
 pub fn end(until: Option<String>, duration: Option<String>) -> Result<Option<u64>, String> {
     let end = match (until, duration) {
-        (Some(until), _) => Some(time(&until)?),
-        (None, Some(duration)) => Some(now() + self::duration(&duration)?),
+        (Some(until), _) => Some(time::parse(&until)?),
+        (None, Some(duration)) => Some(time::now() + self::duration(&duration)?),
         (None, None) => None,
     };
-    if end.is_some_and(|end| end <= now()) {
+    if end.is_some_and(|end| end <= time::now()) {
         return Err("The hold would end in the past.".to_string());
     }
     Ok(end)
-}
-
-/// A point in time as `date --date` understands it, in the local time zone.
-pub fn time(text: &str) -> Result<u64, String> {
-    let output = process::capture(Command::new("date").args(["--date", text, "+%s"]))?;
-    let parsed = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<u64>();
-    match parsed {
-        Ok(time) if output.status.success() => Ok(time),
-        _ => Err(format!(
-            "Invalid time '{text}'; use a date such as 2030-01-31 or '2030-01-31 18:00'."
-        )),
-    }
-}
-
-/// A time for people, in the local time zone.
-pub fn shown(time: u64) -> String {
-    process::capture(Command::new("date").args(["--date", &format!("@{time}"), "+%Y-%m-%d %H:%M"]))
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| format!("@{time}"))
 }
 
 impl Hold {
     /// The reason, and when the hold ends.
     pub fn describe(&self) -> String {
         match self.until {
-            Some(until) => format!("{} (until {})", self.reason, shown(until)),
+            Some(until) => format!("{} (until {})", self.reason, time::shown(until)),
             None => format!("{} (until released)", self.reason),
         }
     }

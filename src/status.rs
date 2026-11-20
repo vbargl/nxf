@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::output::{self, Mark, Style};
 use crate::state::Remembered;
 use crate::text::plain;
-use crate::{flake, git, hold, nixos, process, state};
+use crate::{flake, git, hold, nixos, process, state, time};
 
 /// A size in the largest binary unit that keeps it above one.
 fn human(bytes: u64) -> String {
@@ -23,19 +23,6 @@ fn human(bytes: u64) -> String {
     } else {
         format!("{size:.2} {}", units[unit])
     }
-}
-
-/// How long ago a time was, for people.
-pub fn age(time: u64) -> String {
-    let seconds = hold::now().saturating_sub(time);
-    let (count, unit) = match seconds {
-        0..=59 => return "just now".to_string(),
-        60..=3599 => (seconds / 60, "minute"),
-        3600..=86399 => (seconds / 3600, "hour"),
-        _ => (seconds / 86400, "day"),
-    };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
 }
 
 /// A task result as a row: its state, its name with what happened, and
@@ -131,7 +118,7 @@ fn update_summary() {
     }
 
     let update = &snapshot["update"];
-    let when = update.get("time").and_then(Value::as_u64).map(age);
+    let when = update.get("time").and_then(Value::as_u64).map(time::age);
     output::section("Last automatic update", &when.unwrap_or_default());
     if !update.is_null() {
         let results = update.get("results").and_then(Value::as_array);

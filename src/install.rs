@@ -8,7 +8,7 @@ use std::process::Command;
 use serde_json::json;
 
 use crate::output::{self, Mark};
-use crate::{env, flake, git, hold, nixos, process, state};
+use crate::{env, flake, git, nixos, process, state, time};
 
 pub struct Options {
     pub dir: PathBuf,
@@ -218,7 +218,7 @@ pub fn run(options: &Options) -> Result<(), String> {
         &marker,
         format!(
             "{:#}\n",
-            json!({"time": hold::now(), "tree": tree, "configuration": configuration})
+            json!({"time": time::now(), "tree": tree, "configuration": configuration})
         ),
     )
     .map_err(|err| format!("cannot write {}: {err}", marker.display()))?;

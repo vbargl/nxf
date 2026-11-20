@@ -24,15 +24,15 @@ fn end() {
     let text = |text: &str| Some(text.to_string());
     assert_eq!(hold::end(None, None), Ok(None));
     let end = hold::end(None, text("3d")).unwrap().unwrap();
-    assert!(end > hold::now() + 259_000 && end <= hold::now() + 259_200);
+    assert!(end > nxf::time::now() + 259_000 && end <= nxf::time::now() + 259_200);
     assert_eq!(
         hold::end(text("2999-01-31 18:00"), None),
-        hold::time("2999-01-31 18:00").map(Some)
+        nxf::time::parse("2999-01-31 18:00").map(Some)
     );
     // A time wins over a duration; the options exclude each other for the command.
     assert_eq!(
         hold::end(text("2999-01-31"), text("1m")),
-        hold::time("2999-01-31").map(Some)
+        nxf::time::parse("2999-01-31").map(Some)
     );
     let past = Err("The hold would end in the past.".to_string());
     assert_eq!(hold::end(text("2001-01-31"), None), past);
@@ -96,7 +96,7 @@ fn expiry() {
 
     // The same hold, ended a minute ago.
     let ended =
-        serde_json::json!({"reason": "release week", "since": 1, "until": hold::now() - 60});
+        serde_json::json!({"reason": "release week", "since": 1, "until": nxf::time::now() - 60});
     std::fs::write(fx.updater.join("hold.json"), ended.to_string()).unwrap();
     assert_lacks(&fx.run(&["status"]).stdout, "held");
     fx.run(&["auto-update"]).ok();

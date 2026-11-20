@@ -13,7 +13,7 @@ use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
-use crate::{hold, process, status};
+use crate::{process, time};
 
 /// What a machine answered. No code means that ssh did not end within the limit.
 pub struct Reply {
@@ -124,7 +124,7 @@ fn attention(status: &Value) -> Vec<String> {
     }
     if let Some(reason) = status["hold"]["reason"].as_str() {
         notes.push(match status["hold"]["until"].as_u64() {
-            Some(until) => format!("held: {reason} (until {})", hold::shown(until)),
+            Some(until) => format!("held: {reason} (until {})", time::shown(until)),
             None => format!("held: {reason}"),
         });
     }
@@ -192,7 +192,7 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
                         revision.chars().take(12).collect()
                     });
                 let updated = match status["lastUpdate"]["time"].as_u64() {
-                    Some(time) => format!("updated {}", status::age(time)),
+                    Some(time) => format!("updated {}", time::age(time)),
                     None => "no automatic update yet".to_string(),
                 };
                 let notes = attention(status);
