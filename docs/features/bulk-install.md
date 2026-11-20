@@ -267,7 +267,8 @@ through a mock ssh that answers the probe. No machine was touched:
   installation beside it.
 
 I1, I2 and I5 to I7 were run by hand with nxf 0.13.1, built from commit
-0226ab0, against one Incus Ubuntu 24.04 VM with SSH as root, and with
+0226ab0 of the branch of pull request #9 (squashed into commit e3d896f, whose
+`src/` differs from it), against one Incus Ubuntu 24.04 VM with SSH as root, and with
 `--files` and `--known-hosts`:
 
 - Without `--yes` and without a terminal, rollout showed the plan and failed
@@ -283,7 +284,8 @@ I1, I2 and I5 to I7 were run by hand with nxf 0.13.1, built from commit
 None of the output of that run is kept. The run is not repeatable in CI.
 
 I1 and I5 to I7 were run by hand again with nxf 0.13.1, built from commit
-306eb61, against one Incus Ubuntu 24.04 VM with SSH as root, with `--files`,
+306eb61 of the branch of pull request #9 (its `src/` is that of commit
+e3d896f on `main`), against one Incus Ubuntu 24.04 VM with SSH as root, with `--files`,
 `--known-hosts` and `--yes`:
 
 - The plan row was `Ubuntu 24.04.5 LTS; it will be erased`. The rows of the
