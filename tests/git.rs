@@ -37,12 +37,11 @@ fn commit_of() {
 #[test]
 fn commit_line() {
     let fx = fixture();
+    // The repository's own length comes before the one of the user's configuration.
+    append(&fx.checkout.join(".git/config"), "[core]\n\tabbrev = 12\n");
     let line = git::commit_line(&fx.checkout, "HEAD");
-    // How long the short hash is belongs to the Git configuration of the user.
     let (short, rest) = line.split_once(' ').unwrap();
-    let head = fx.head();
-    assert!(head.starts_with(short), "{line}");
-    assert!((4..head.len()).contains(&short.len()), "{line}");
+    assert_eq!(short, &fx.head()[..12], "{line}");
     assert!(rest.starts_with("init ("), "{line}");
 }
 
