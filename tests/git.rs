@@ -5,10 +5,19 @@ mod common;
 use common::{append, commit, fixture, git as run_git, temp_dir};
 use nxf::git;
 
+/// A fixture for calls of `nxf::git` in this process. A variable of the caller
+/// that names another repository or index would send those calls there.
+fn own_repository() -> common::Fixture {
+    for name in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"] {
+        assert!(std::env::var_os(name).is_none(), "{name} is set");
+    }
+    fixture()
+}
+
 /// The committed tree is HEAD's tree, and none with uncommitted changes.
 #[test]
 fn clean_tree() {
-    let fx = fixture();
+    let fx = own_repository();
     assert_eq!(git::clean_tree(&fx.checkout), Some(fx.tree()));
     append(&fx.checkout.join("flake.nix"), "# dirty\n");
     assert_eq!(git::clean_tree(&fx.checkout), None);
@@ -17,7 +26,7 @@ fn clean_tree() {
 /// A tree maps back to its commit, and an unknown tree to none.
 #[test]
 fn commit_of() {
-    let fx = fixture();
+    let fx = own_repository();
     let first = fx.tree();
     assert_eq!(
         git::commit_of(&fx.checkout, std::slice::from_ref(&first)),
@@ -36,7 +45,7 @@ fn commit_of() {
 /// The commit line shows the short hash and subject.
 #[test]
 fn commit_line() {
-    let fx = fixture();
+    let fx = own_repository();
     // The repository's own length comes before the one of the user's configuration.
     append(&fx.checkout.join(".git/config"), "[core]\n\tabbrev = 12\n");
     let line = git::commit_line(&fx.checkout, "HEAD");
@@ -48,7 +57,7 @@ fn commit_line() {
 /// A file is read as it was at a commit.
 #[test]
 fn show_file() {
-    let fx = fixture();
+    let fx = own_repository();
     let head = fx.head();
     std::fs::write(fx.checkout.join("flake.lock"), "changed\n").unwrap();
     let lock: serde_json::Value =
@@ -59,7 +68,7 @@ fn show_file() {
 /// A repository needs a commit to count.
 #[test]
 fn is_repo() {
-    let fx = fixture();
+    let fx = own_repository();
     assert!(git::is_repo(&fx.checkout));
     let empty = temp_dir("empty-repo");
     assert!(!git::is_repo(&empty));
@@ -71,7 +80,7 @@ fn is_repo() {
 /// A changed file is noticed and restored to HEAD, staged or not.
 #[test]
 fn changed_restore() {
-    let fx = fixture();
+    let fx = own_repository();
     let file = fx.checkout.join("flake.lock");
     let original = std::fs::read_to_string(&file).unwrap();
     assert!(!git::changed(&fx.checkout, "flake.lock"));
@@ -90,7 +99,7 @@ fn changed_restore() {
 /// changes stay as they are.
 #[test]
 fn commit_file() {
-    let fx = fixture();
+    let fx = own_repository();
     append(&fx.checkout.join("flake.nix"), "# kept\n");
     append(&fx.checkout.join("flake.lock"), "\n");
     // This process reads the configuration of the user: the repository's own
@@ -100,8 +109,6 @@ fn commit_file() {
         &fx.checkout.join(".git/config"),
         "[user]\n\tname = test\n\temail = test@example.invalid\n[commit]\n\tgpgSign = false\n[core]\n\thooksPath = /dev/null\n",
     );
-    // With the GIT_DIR of the caller, this process would commit there.
-    assert_eq!(git::commit_of(&fx.checkout, &[fx.tree()]), Some(fx.head()));
     let identity = git::identity(&fx.checkout);
     git::commit_file(&fx.checkout, "flake.lock", "lock only").unwrap();
     assert_eq!(
