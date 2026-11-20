@@ -1,3 +1,5 @@
+# Boots a machine and checks that the members of the group nxf share and
+# replace the build records, and that a user outside it keeps their own.
 { self, pkgs }:
 let
   system = pkgs.runCommand "nxf-test-system" { } "mkdir $out";
