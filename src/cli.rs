@@ -14,7 +14,7 @@ use crate::{
 ///
 /// Tasks run in the order they are defined, whatever order they are given in.
 /// Name flake inputs next to update or upgrade to update only those:
-/// nxf update personal test
+/// nxf update nixpkgs home-manager
 #[derive(Parser)]
 #[command(
     name = "nxf",

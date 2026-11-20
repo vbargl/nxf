@@ -41,3 +41,18 @@ fn commands_reject_tasks() {
         assert_ne!(fx.run(args).code, 0, "nxf {} succeeded", args.join(" "));
     }
 }
+
+/// The example in the help shows what the help claims for it: the words
+/// after `update` are inputs to update, and none of them is a task that
+/// would run as well.
+#[test]
+fn help_example_names_only_inputs() {
+    let result = fixture().run(&["--help"]);
+    result.ok();
+    let (_, example) = result.stdout.split_once("nxf update ").unwrap();
+    let inputs: Vec<&str> = example.lines().next().unwrap().split_whitespace().collect();
+    assert!(!inputs.is_empty());
+    for task in nxf::tasks::defined() {
+        assert!(!inputs.contains(&task.name), "{} is a task", task.name);
+    }
+}
