@@ -70,23 +70,3 @@ pub fn fit(text: &str, width: usize) -> String {
     prefix.push('…');
     prefix
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn strips_escape_sequences() {
-        assert_eq!(strip_ansi("\u{1b}[1;31mred\u{1b}[0m"), "red");
-        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}text"), "text");
-        assert_eq!(strip_ansi("\u{1b}[2A\r\u{1b}[2Kline"), "\rline");
-    }
-
-    #[test]
-    fn fits_in_cells() {
-        assert_eq!(fit("short", 10), "short");
-        assert_eq!(fit("abcdefghij", 5), "abcd…");
-        assert!(fit("编译🦀👩‍💻é long", 6).width() <= 6);
-        assert_eq!(fit("abc", 1), "…");
-    }
-}

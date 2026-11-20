@@ -3,19 +3,15 @@
 mod common;
 
 use common::{
-    append, assert_contains, assert_lacks, commit, events, fake_systems, fixture, hostname,
-    write_script,
+    append, assert_contains, assert_lacks, commit, configurations, events, fake_systems, fixture,
+    hostname, names, write_script,
 };
 use nxf::output::{Style, RESET};
 use nxf::tasks;
 use serde_json::{json, Value};
 
-fn words(words: &[&str]) -> Vec<String> {
-    words.iter().map(|word| word.to_string()).collect()
-}
-
 fn plan(given: &[&str]) -> Result<tasks::Plan, String> {
-    tasks::plan(&words(given), &words(&["a", "b"]))
+    tasks::plan(&names(given), &names(&["a", "b"]))
 }
 
 /// A module-provisioned directory receives records; per-user state stays separate.
@@ -370,7 +366,7 @@ fn input_results_terminal() {
     parser.process(result.stdout.as_bytes());
     let screen = parser.screen().contents();
     let rows: Vec<&str> = screen.lines().map(str::trim_end).collect();
-    assert!(!screen.contains("Checking input a"), "{screen}");
+    assert_lacks(&screen, "Checking input a");
     for input in ["a", "b"] {
         let expected = format!("  · {input}         {}   unchanged", fx.short(input));
         assert_eq!(
@@ -662,7 +658,7 @@ fn failure_stops() {
 
 /// Unknown tasks run nothing.
 #[test]
-fn unknown_task() {
+fn unknown_word() {
     let fx = fixture();
     let result = fx.run(&["test", "status"]);
     assert_ne!(result.code, 0);
@@ -778,15 +774,11 @@ fn json() {
 #[test]
 fn configuration() {
     let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
-    let file = fx.checkout.join("flake.nix");
-    let single = std::fs::read_to_string(&file).unwrap();
-    let host = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
+    let host = hostname();
     fx.run(&["build"]).ok();
-    assert_contains(&fx.nh_calls()[0], &format!("# --hostname {} ", hostname()));
+    assert_contains(&fx.nh_calls()[0], &format!("# --hostname {host} "));
 
-    let several = single.replace(&host, &format!("{host} nixosConfigurations.other = {{ }};"));
-    std::fs::write(&file, &several).unwrap();
-    commit(&fx.checkout, "two configurations");
+    configurations(&fx, &[(&host, ""), ("other", "")], "two configurations");
     let ambiguous = fx.run(&["build"]);
     assert_ne!(ambiguous.code, 0);
     assert_contains(
@@ -795,12 +787,11 @@ fn configuration() {
     );
     assert_eq!(fx.nh_calls().len(), 1);
 
-    std::fs::write(
-        &file,
-        several.replace("nixosConfigurations.other", "nixosConfigurations.default"),
-    )
-    .unwrap();
-    commit(&fx.checkout, "a default configuration");
+    configurations(
+        &fx,
+        &[(&host, ""), ("default", "")],
+        "a default configuration",
+    );
     fx.run(&["build"]).ok();
     assert_contains(&fx.nh_calls()[1], "# --hostname default ");
 }

@@ -50,14 +50,14 @@ let
       lib.splitString "\n" (lib.trim text)
     );
 
-  entry =
-    indent: name: option:
-    ''
-      ${comment indent option.description}
-      ${indent}# ${name} = ${value option};
-    '';
+  entry = indent: name: option: ''
+    ${comment indent option.description}
+    ${indent}# ${name} = ${value option};
+  '';
 in
-assert lib.assertMsg (listed == declared) "nix/init-module.nix must list the options ${toString declared}";
+assert lib.assertMsg (
+  listed == declared
+) "nix/init-module.nix must list the options ${toString declared}";
 pkgs.writeText "nxf.nix" ''
   # Automatic updates of this machine flake with nxf.
   #

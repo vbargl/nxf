@@ -50,7 +50,7 @@ fn steps(fx: &Fixture) -> Vec<String> {
 /// Install partitions, installs from the copied flake, makes the host key and
 /// records the installation; the flake becomes the machine's /etc/nixos.
 #[test]
-fn installs() {
+fn partitions_and_records() {
     let (fx, root) = installer();
     let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
     result.ok();
@@ -154,10 +154,83 @@ fn refuses() {
     assert!(steps(&fx).is_empty());
 }
 
+/// Install refuses a target that --mounted says is there and is not, and a
+/// flake without a lockfile; neither reaches the disks or nixos-install.
+#[test]
+fn refuses_unmounted_and_unlocked() {
+    let (fx, root) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+    let unmounted = fx.run(&["install", &dir, "--mounted"]);
+    assert_ne!(unmounted.code, 0);
+    assert_contains(
+        &unmounted.stderr,
+        &format!("✗ {} is not mounted", root.display()),
+    );
+
+    git(&fx.checkout, &["rm", "--quiet", "flake.lock"]);
+    common::commit(&fx.checkout, "no lockfile");
+    let unlocked = fx.run(&["install", &dir]);
+    assert_ne!(unlocked.code, 0);
+    assert_contains(&unlocked.stderr, &format!("✗ {dir} has no flake.lock"));
+    assert!(steps(&fx).is_empty());
+}
+
+/// The profile of the new system is followed through relative links to the
+/// store path at their end, which is recorded as the machine will see it.
+#[test]
+fn relative_profile_links() {
+    let (fx, root) = installer();
+    write_script(
+        &fx.dir.join("bin/nixos-install"),
+        &format!(
+            "#!/bin/sh\nmkdir -p '{0}'\nln -s system-1-link '{0}/system'\nln -s /nix/store/abc-nixos-system '{0}/system-1-link'\n",
+            root.join("nix/var/nix/profiles").display()
+        ),
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
+    result.ok();
+    assert_contains(
+        &result.stdout,
+        "    System    /nix/store/abc-nixos-system\n",
+    );
+    assert_eq!(
+        std::fs::read_link(root.join("var/lib/nxf/systems").join(fx.tree())).unwrap(),
+        PathBuf::from("/nix/store/abc-nixos-system")
+    );
+}
+
+/// With --reboot the restart is asked for once the system is installed,
+/// and the advice to restart by hand is left out.
+#[test]
+fn reboot() {
+    let (fx, _root) = installer();
+    // The systemctl in front on PATH is the fixture's; here it notes its call.
+    write_script(
+        &fx.systemctl,
+        &format!(
+            "#!/bin/sh\necho \"systemctl $*\" >> '{}/steps'\n",
+            fx.dir.display()
+        ),
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--reboot"]);
+    result.ok();
+    assert_eq!(
+        steps(&fx).last().map(String::as_str),
+        Some("systemctl reboot")
+    );
+    assert!(
+        result
+            .stdout
+            .ends_with("\n  Restarting into the new system.\n"),
+        "{}",
+        result.stdout
+    );
+}
+
 /// A failed nixos-install fails the command with what it said, and nothing
 /// is recorded as installed.
 #[test]
-fn failed_install() {
+fn failure_records_nothing() {
     let (fx, root) = installer();
     let fx = fx.with("NXF_TEST_INSTALL_FAILS", "1");
     let result = fx.run(&["install", fx.checkout.to_str().unwrap()]);
@@ -168,4 +241,70 @@ fn failed_install() {
     );
     assert!(!root.join("var/lib/nxf/installed.json").exists());
     assert_lacks(&result.stdout, "NixOS installed");
+}
+
+/// Install refuses on a system that nxf manages, also when it runs from
+/// memory as an installer does: one that nxf installed, or one whose system
+/// has nxf. Nothing is partitioned or installed.
+#[test]
+fn refuses_a_managed_system() {
+    let (mut fx, _) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+    let refused = |fx: &Fixture| {
+        let result = fx.run(&["install", &dir]);
+        assert_ne!(result.code, 0);
+        assert_contains(
+            &result.stderr,
+            "✗ nxf manages this system, and installing erases disks",
+        );
+        assert!(steps(fx).is_empty());
+    };
+
+    let record = fx.updater.join("installed.json");
+    std::fs::create_dir_all(&fx.updater).unwrap();
+    std::fs::write(&record, "{}\n").unwrap();
+    refused(&fx);
+    std::fs::remove_file(&record).unwrap();
+
+    let system = fx.dir.join("system");
+    std::fs::create_dir_all(system.join("sw/bin")).unwrap();
+    write_script(&system.join("sw/bin/nxf"), "#!/bin/sh\n");
+    fx.set("NXF_SYSTEM", &system);
+    refused(&fx);
+}
+
+/// With `--reboot` the machine is restarted through the stand-in for systemd,
+/// not through whichever `systemctl` the path holds.
+#[test]
+fn reboots_through_the_stand_in() {
+    let (mut fx, _) = installer();
+    let noting = |log: &str| format!("#!/bin/sh\necho \"$*\" >> '{}/{log}'\n", fx.dir.display());
+    // The one of the path stays in front and only notes a call: a call that
+    // went by the path must fail this test, not restart the machine it runs on.
+    write_script(&fx.systemctl, &noting("path.log"));
+    let stand_in = fx.dir.join("stand-in-systemctl");
+    write_script(&stand_in, &noting("stand-in.log"));
+    fx.set("NXF_SYSTEMCTL", &stand_in);
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--reboot"]);
+    result.ok();
+    assert_contains(&result.stdout, "\n  Restarting into the new system.\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.dir.join("stand-in.log")).ok(),
+        Some("reboot\n".to_string())
+    );
+    assert!(!fx.dir.join("path.log").exists());
+}
+
+/// The root is in memory when the last `/` line of the mounts says so: that
+/// mount is in effect, and a `rootfs` listed before a disk lies beneath it.
+#[test]
+fn root_is_the_last_mount() {
+    use nxf::install::root_in_memory;
+    const DISK: &str = "/dev/sda2 / ext4 rw,relatime 0 0\n";
+    const MEMORY: &str = "rootfs / rootfs rw 0 0\n";
+    const ELSEWHERE: &str = "tmpfs /run tmpfs rw,nosuid 0 0\n";
+    assert!(!root_in_memory(&format!("{MEMORY}{ELSEWHERE}{DISK}")));
+    assert!(root_in_memory(&format!("{DISK}{ELSEWHERE}{MEMORY}")));
+    assert!(root_in_memory("tmpfs / tmpfs rw 0 0\n"));
+    assert!(!root_in_memory(ELSEWHERE));
 }

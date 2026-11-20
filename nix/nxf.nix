@@ -44,9 +44,10 @@
     # healthInterval = 10;
 
     # A shell script that runs after an automatic update in which a
-    # task failed, such as a switch or a health check, or which could not
-    # update an input whose strategy is `report`. It finds the results
-    # of the run as JSON in the file `$NXF_RESULTS`.
+    # task failed, such as a switch or a health check, which could not
+    # update an input whose strategy is `report`, or which could not go
+    # on, before or after its tasks. It finds the results of the run as
+    # JSON in the file `$NXF_RESULTS`.
     # When it fails itself, that is reported as the result `hook`.
     # failureHook = "";
 

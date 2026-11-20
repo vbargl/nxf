@@ -6,7 +6,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use common::{fake_systems, temp_dir};
+use common::{assert_contains, fake_systems, temp_dir};
 use nxf::flake::{self, Location};
 use nxf::nixos::{self, Remembered};
 use nxf::output::{styled, Style, RESET};
@@ -106,29 +106,24 @@ fn location() {
     );
 }
 
-/// The checkout is NXF_FLAKE, or /etc/nixos like nh, and must hold a flake.
+/// The checkout is the directory NXF_FLAKE names, and it must hold a flake.
 #[test]
 fn checkout() {
     let dir = temp_dir("checkout");
-    {
-        let _guard = environment(&[("NXF_FLAKE", dir.to_str().unwrap())]);
-        assert!(flake::checkout().unwrap_err().contains("has no flake.nix"));
-        std::fs::write(dir.join("flake.nix"), "{ }").unwrap();
-        assert_eq!(flake::checkout().unwrap(), dir);
-    }
-    let _guard = environment(&[]);
-    if Path::new("/etc/nixos/flake.nix").exists() {
-        assert_eq!(flake::checkout().unwrap(), Path::new("/etc/nixos"));
-    }
+    let _guard = environment(&[("NXF_FLAKE", dir.to_str().unwrap())]);
+    assert_contains(&flake::checkout().unwrap_err(), "has no flake.nix");
+    std::fs::write(dir.join("flake.nix"), "{ }").unwrap();
+    assert_eq!(flake::checkout().unwrap(), dir);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// The running system can be stood in for.
 #[test]
 fn running() {
-    let one = &fake_systems().one;
-    let _guard = environment(&[("NXF_SYSTEM", one.to_str().unwrap())]);
-    assert_eq!(&nixos::running(), one);
+    let system = temp_dir("system");
+    let _guard = environment(&[("NXF_SYSTEM", system.to_str().unwrap())]);
+    assert_eq!(nixos::running(), std::fs::canonicalize(&system).unwrap());
+    std::fs::remove_dir_all(system).unwrap();
 }
 
 /// The state directory follows NXF_STATE, then XDG_STATE_HOME.
@@ -161,17 +156,20 @@ fn shared() {
     assert!(!nixos::share_with_group(&private.join("missing")));
     assert!(nixos::share_with_group(&group));
     assert_eq!(unsafe { libc::umask(before) }, 0o002);
+    std::fs::remove_dir_all(private).unwrap();
+    std::fs::remove_dir_all(group).unwrap();
 }
 
 /// Remembered systems come back by key; dangling records are skipped.
 #[test]
 fn remember() {
-    let systems = fake_systems();
     let state = temp_dir("state");
     let _guard = environment(&[
         ("XDG_STATE_HOME", state.to_str().unwrap()),
         ("NXF_UPDATER_STATE", state.join("none").to_str().unwrap()),
     ]);
+    // Taken under the lock: the first call starts nix-store.
+    let systems = fake_systems();
     nixos::remember("one", &systems.one);
     nixos::remember("one", &systems.one);
     std::os::unix::fs::symlink(state.join("missing"), state.join("nxf/systems/gone")).unwrap();
@@ -188,15 +186,16 @@ fn remember() {
 /// The automatic updater's builds are remembered under their trees.
 #[test]
 fn remembered_updater() {
-    let systems = fake_systems();
     let state = temp_dir("state");
     let updater = state.join("updater");
-    std::fs::create_dir_all(updater.join("systems")).unwrap();
-    std::os::unix::fs::symlink(&systems.two, updater.join("systems/tree")).unwrap();
     let _guard = environment(&[
         ("XDG_STATE_HOME", state.to_str().unwrap()),
         ("NXF_UPDATER_STATE", updater.to_str().unwrap()),
     ]);
+    // Taken under the lock: the first call starts nix-store.
+    let systems = fake_systems();
+    std::fs::create_dir_all(updater.join("systems")).unwrap();
+    std::os::unix::fs::symlink(&systems.two, updater.join("systems/tree")).unwrap();
     assert_eq!(
         nixos::remembered(),
         [Remembered {

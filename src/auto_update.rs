@@ -27,15 +27,14 @@ fn outcome(task: &str, outcome: &str, detail: String) -> Outcome {
 /// Checks the health of the system just switched to. An unhealthy system is
 /// replaced by the previous one, and its source is not tried again.
 fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
-    let failed = match health::check() {
+    let mut failed = match health::check() {
         Health::Unchecked => return None,
         Health::Healthy => return Some(outcome("health", "done", String::new())),
         Health::Unhealthy(failed) => failed,
     };
-    if let Some(tree) = tree {
-        if let Err(err) = nixos::mark_bad(tree, &failed) {
-            return Some(outcome("health", "failed", format!("{failed} | {err}")));
-        }
+    // A mark that cannot be written is said, and never keeps the unhealthy system.
+    if let Some(Err(err)) = tree.map(|tree| nixos::mark_bad(tree, &failed)) {
+        failed.push_str(&format!(" | {err}"));
     }
     output::capture();
     let returned = nixos::activate("switch", previous);
@@ -51,14 +50,17 @@ fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
     Some(outcome("health", "failed", format!("{failed} | {effect}")))
 }
 
-fn decide() -> Result<Vec<Outcome>, String> {
+/// Runs what comes next and adds its results as they come, so that a run
+/// that cannot go on keeps the results of what ran before.
+fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     hold::forget_ended();
     if let Some(hold) = hold::active() {
-        return Ok(vec![outcome(
+        results.push(outcome(
             "update",
             "skipped",
             format!("held: {}", hold.describe()),
-        )]);
+        ));
+        return Ok(());
     }
     // A lockfile left by an interrupted run is not work in progress; update restores it.
     let foreign = status::compare()?
@@ -66,27 +68,29 @@ fn decide() -> Result<Vec<Outcome>, String> {
         .iter()
         .any(|file| file != "flake.lock");
     if foreign {
-        return Ok(vec![outcome(
+        results.push(outcome(
             "update",
             "skipped",
             "the checkout has uncommitted changes".to_string(),
-        )]);
+        ));
+        return Ok(());
     }
     if let Some(refused) = hooks::refused() {
-        return Ok(vec![outcome("update", "skipped", refused)]);
+        results.push(outcome("update", "skipped", refused));
+        return Ok(());
     }
     // What is committed says how each input is treated.
     let dir = flake::checkout()?;
     let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
-    let mut results = tasks::run_unattended(&words(&["update"]), &strategies)?;
+    results.extend(tasks::run_unattended(&words(&["update"]), &strategies)?);
     if results.iter().any(Outcome::failed) {
-        return Ok(results);
+        return Ok(());
     }
     // Whatever is committed now has been built, by this run or an earlier one.
     let checkout = status::compare()?;
     if checkout.matches {
-        return Ok(results);
+        return Ok(());
     }
     if let Some(reason) = checkout.tree.as_deref().and_then(nixos::bad) {
         results.push(outcome(
@@ -94,7 +98,7 @@ fn decide() -> Result<Vec<Outcome>, String> {
             "skipped",
             format!("this revision failed its health check ({reason}); waiting for a newer one"),
         ));
-        return Ok(results);
+        return Ok(());
     }
     let switched = tasks::run(&words(&["switch"]), true)?;
     let activated = !switched.iter().any(Outcome::failed);
@@ -102,7 +106,7 @@ fn decide() -> Result<Vec<Outcome>, String> {
     if activated {
         results.extend(verify(checkout.tree.as_deref(), &checkout.running));
     }
-    Ok(results)
+    Ok(())
 }
 
 fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
@@ -120,19 +124,39 @@ fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+/// What failed after the run did, beneath the cause of the run; alone when
+/// the run has none.
+fn beneath(cause: Option<&str>, then: String) -> String {
+    match cause {
+        Some(cause) => format!("{cause}\n{then}"),
+        None => then,
+    }
+}
+
 /// Runs one update and returns whether every task succeeded.
 pub fn run(state: &Path) -> Result<bool, String> {
-    let mut results = decide()?;
-    let saved = save(state, &results)?;
+    // A run that could not go on failed too: it is saved, and the hook runs.
+    let mut results = Vec::new();
+    let mut error = decide(&mut results).err();
+    if let Some(error) = &error {
+        results.push(outcome("update", "failed", error.replace('\n', " | ")));
+    }
+    let saved = save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
     // The hook reads the saved results; when it fails, that is a result too.
     if results
         .iter()
         .any(|result| result.failed() || result.reported())
     {
         if let Some(failed) = hooks::failure(&saved) {
+            if let Some(error) = &mut error {
+                error.push_str(&format!("\nThe failure hook failed too: {failed}"));
+            }
             results.push(outcome("hook", "failed", failed));
-            save(state, &results)?;
+            save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
         }
+    }
+    if let Some(error) = error {
+        return Err(error);
     }
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
     let rows = status::result_rows(&list);

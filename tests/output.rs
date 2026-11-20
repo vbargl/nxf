@@ -49,21 +49,7 @@ fn screen(output: &str, width: u16) -> Vec<String> {
 fn assert_live(fx: &Fixture, terminal: bool, target: &str) {
     let release = fx.dir.join("release");
     let mut command = if terminal {
-        let mut script = Command::new("script");
-        script
-            .args(["--quiet", "--return", "--command"])
-            .arg(format!(
-                "stty cols 80 rows 24; exec '{}' build",
-                common::NXF
-            ))
-            .arg("/dev/null");
-        for (name, value) in fx.command(&[]).get_envs() {
-            match value {
-                Some(value) => script.env(name, value),
-                None => script.env_remove(name),
-            };
-        }
-        script
+        fx.terminal_command(80, &["build"])
     } else {
         fx.command(&["build"])
     };
@@ -95,7 +81,9 @@ fn assert_live(fx: &Fixture, terminal: bool, target: &str) {
         let _ = stdout.read_to_string(&mut rest);
         seen + &rest
     });
-    let visible = receiver.recv_timeout(Duration::from_millis(2500)).is_ok();
+    // Less than the 30 s the mock nh is held for: what is seen was printed
+    // while nh ran. A passing run does not wait, it goes on at the first row.
+    let visible = receiver.recv_timeout(Duration::from_secs(20)).is_ok();
     std::fs::write(&release, "").unwrap();
     let status = child.wait().unwrap();
     let seen = reader.join().unwrap();
@@ -167,10 +155,7 @@ fn updating_lines() {
         rows[heading + 2].starts_with("    System    /nix/store/"),
         "{rows:#?}"
     );
-    assert!(rows
-        .last()
-        .unwrap()
-        .contains("The running system was not switched."));
+    assert_contains(rows.last().unwrap(), "The running system was not switched.");
 }
 
 /// Every child releases its temporary rows before another child or a summary prints.

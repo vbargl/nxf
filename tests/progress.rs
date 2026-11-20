@@ -1,5 +1,8 @@
 //! Tests for Nix internal-json progress, based on Nix's activity types.
 
+mod common;
+
+use common::names;
 use nxf::progress::{advance, diagnostic, event, initial, snapshot, State};
 use serde_json::{json, Value};
 
@@ -7,10 +10,6 @@ fn after(state: &State, events: &[Value]) -> State {
     events
         .iter()
         .fold(state.clone(), |state, event| advance(&state, Some(event)))
-}
-
-fn names(inputs: &[&str]) -> Vec<String> {
-    inputs.iter().map(|name| name.to_string()).collect()
 }
 
 /// Build counts come from aggregate progress; stopping an activity is not success.
@@ -154,7 +153,7 @@ fn diagnostics() {
 fn inputs() {
     let message = |name: &str| json!({"action": "msg", "level": 6, "msg": format!("computing input '{name}'")});
     let personal = after(
-        &initial(&names(&["personal", "ysoft"])),
+        &initial(&names(&["personal", "work"])),
         &[message("personal")],
     );
     assert_eq!(snapshot(&personal, false), ["Checking input personal"]);
@@ -162,6 +161,6 @@ fn inputs() {
     assert_eq!(snapshot(&nested, false), ["Checking input personal"]);
     let pinned = after(&nested, &[message("unselected")]);
     assert_eq!(snapshot(&pinned, false), ["Checking input personal"]);
-    let next = after(&pinned, &[message("ysoft")]);
-    assert_eq!(snapshot(&next, false), ["Checking input ysoft"]);
+    let next = after(&pinned, &[message("work")]);
+    assert_eq!(snapshot(&next, false), ["Checking input work"]);
 }

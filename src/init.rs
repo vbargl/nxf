@@ -84,6 +84,10 @@ pub fn run(options: &Options) -> Result<(), String> {
         Some(dir) => std::path::absolute(dir).map_err(|err| format!("{}: {err}", dir.display()))?,
         None => flake::location().dir,
     };
+    // Checked before the first write: a failure must leave nothing behind.
+    if let Some(files) = options.files.as_ref().filter(|files| !files.is_dir()) {
+        return Err(format!("{} is not a directory", files.display()));
+    }
     let shown = dir.display();
     let empty = match std::fs::read_dir(&dir) {
         Ok(mut entries) => entries.next().is_none(),
@@ -108,9 +112,6 @@ pub fn run(options: &Options) -> Result<(), String> {
         output::fact("Hardware", "hardware.nix from nixos-generate-config");
     }
     if let Some(files) = &options.files {
-        if !files.is_dir() {
-            return Err(format!("{} is not a directory", files.display()));
-        }
         // The machine's own values: laid over the template, never read by nxf.
         let copied = Command::new("cp")
             .args(["--recursive", "--no-target-directory"])

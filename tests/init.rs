@@ -41,19 +41,6 @@ fn template(fx: &Fixture, host: &str, name: &str) -> String {
     format!("{}#{name}", templates(fx, host).display())
 }
 
-fn status_of(output: &str, check: &str) -> Option<&'static str> {
-    output.lines().find_map(|line| {
-        let mut columns = line.split_whitespace();
-        let status = match columns.next()? {
-            "✓" => "ok",
-            "!" => "warn",
-            "✗" => "fail",
-            _ => return None,
-        };
-        (columns.next()? == check).then_some(status)
-    })
-}
-
 fn files(dir: &Path) -> Vec<String> {
     git(dir, &["ls-files"])
         .lines()
@@ -99,7 +86,7 @@ fn founds_a_flake() {
         "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "config", "module",
     ] {
         assert_eq!(
-            status_of(&result.stdout, check),
+            common::status_of(&result.stdout, check),
             Some("ok"),
             "{}",
             result.stdout
@@ -134,6 +121,8 @@ fn module_file() {
     );
     for option in [
         "# services.nxf.flake = \"/etc/nixos\";",
+        "# strategy = \"report\";",
+        "# inputs = { };",
         "# schedule = \"*-*-* 00/6:00:00\";",
         "# randomizedDelay = \"1h\";",
         "# fixedDelay = true;",
@@ -181,7 +170,7 @@ fn template_without_module() {
         &template(&fx, &hostname(), "bare"),
     ]);
     result.ok();
-    assert_eq!(status_of(&result.stdout, "module"), Some("warn"));
+    assert_eq!(common::status_of(&result.stdout, "module"), Some("warn"));
     assert_contains(&result.stdout, "does not import the nxf module");
     assert_contains(&result.stdout, "nxf.nixosModules.default");
     assert!(target.join("nxf.nix").exists());
@@ -202,8 +191,8 @@ fn any_configuration_name() {
             &template(&fx, name, "machine"),
         ]);
         result.ok();
-        assert_eq!(status_of(&result.stdout, "config"), Some("ok"));
-        assert_eq!(status_of(&result.stdout, "module"), Some("ok"));
+        assert_eq!(common::status_of(&result.stdout, "config"), Some("ok"));
+        assert_eq!(common::status_of(&result.stdout, "module"), Some("ok"));
         assert_contains(&result.stdout, &format!("nixosConfigurations.{name}"));
     }
 }
@@ -369,4 +358,35 @@ fn machine_files() {
     ]);
     assert_ne!(missing.code, 0);
     assert_contains(&missing.stderr, "is not a directory");
+}
+
+/// The options are checked before anything is written: a `--files` that is
+/// no directory leaves no half-founded flake behind, so the corrected
+/// command can run on the same directory.
+#[test]
+fn bad_files_write_nothing() {
+    let fx = fixture();
+    let target = fx.dir.join("retried");
+    let machine = template(&fx, "default", "machine");
+    let found = |files: &Path| {
+        fx.run(&[
+            "init",
+            target.to_str().unwrap(),
+            "--template",
+            &machine,
+            "--files",
+            files.to_str().unwrap(),
+        ])
+    };
+    let missing = found(&fx.dir.join("no-files"));
+    assert_ne!(missing.code, 0);
+    assert_contains(&missing.stderr, "no-files is not a directory");
+    assert_lacks(&missing.stdout, "Founding the machine flake");
+    assert!(!target.exists());
+
+    let own = fx.dir.join("files");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(own.join("identity.toml"), "name = \"node-7\"\n").unwrap();
+    found(&own).ok();
+    assert!(target.join("identity.toml").exists());
 }

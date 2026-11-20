@@ -14,7 +14,7 @@ use crate::{
 ///
 /// Tasks run in the order they are defined, whatever order they are given in.
 /// Name flake inputs next to update or upgrade to update only those:
-/// nxf update personal test
+/// nxf update nixpkgs home-manager
 #[derive(Parser)]
 #[command(
     name = "nxf",
@@ -203,6 +203,21 @@ fn fail(error: &str) -> ExitCode {
         output::effect_err(line);
     }
     ExitCode::FAILURE
+}
+
+/// What clap refused, in the same shape and with clap's exit status of a
+/// wrong call. Help that was asked for is printed as it is.
+fn refuse(error: clap::Error) -> ExitCode {
+    if !error.use_stderr() {
+        let _ = error.print();
+        return ExitCode::SUCCESS;
+    }
+    let text = error.render().to_string();
+    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+    let cause = lines.next().unwrap_or("Failed");
+    output::failure(cause.strip_prefix("error: ").unwrap_or(cause));
+    lines.for_each(output::effect_err);
+    ExitCode::from(2)
 }
 
 fn run_tasks(args: RunArgs) -> ExitCode {
@@ -430,10 +445,16 @@ pub fn main() -> ExitCode {
     let first = std::env::args().nth(1).unwrap_or_default();
     let wants_command = COMMANDS.contains(&first.as_str()) || first == "-h" || first == "--help";
     if !wants_command {
-        return run_tasks(TaskCli::parse().run);
+        return match TaskCli::try_parse() {
+            Ok(cli) => run_tasks(cli.run),
+            Err(error) => refuse(error),
+        };
     }
     let cli = Cli::command().after_help(task_list());
-    let matches = cli.get_matches();
+    let matches = match cli.try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => return refuse(error),
+    };
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
