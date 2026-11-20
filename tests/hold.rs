@@ -26,13 +26,13 @@ fn end() {
     let end = hold::end(None, text("3d")).unwrap().unwrap();
     assert!(end > nxf::time::now() + 259_000 && end <= nxf::time::now() + 259_200);
     assert_eq!(
-        hold::end(text("2999-01-31 18:00"), None),
-        nxf::time::parse("2999-01-31 18:00").map(Some)
+        hold::end(text("2999-01-31 18:00 UTC"), None),
+        Ok(Some(32_474_800_800))
     );
     // A time wins over a duration; the options exclude each other for the command.
     assert_eq!(
-        hold::end(text("2999-01-31"), text("1m")),
-        nxf::time::parse("2999-01-31").map(Some)
+        hold::end(text("2999-01-31 00:00 UTC"), text("1m")),
+        Ok(Some(32_474_736_000))
     );
     let past = Err("The hold would end in the past.".to_string());
     assert_eq!(hold::end(text("2001-01-31"), None), past);

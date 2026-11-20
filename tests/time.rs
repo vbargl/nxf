@@ -16,10 +16,7 @@ fn now() {
 #[test]
 fn parse() {
     assert_eq!(time::parse("@1790000000"), Ok(1_790_000_000));
-    assert_eq!(
-        time::parse("2030-01-31 18:00"),
-        time::parse("2030-01-31 18:00")
-    );
+    assert_eq!(time::parse("2030-01-31 18:00 UTC"), Ok(1_896_112_800));
     assert!(time::parse("2030-01-31").unwrap() < time::parse("2030-02-01").unwrap());
     let error = time::parse("next never").unwrap_err();
     assert_eq!(
