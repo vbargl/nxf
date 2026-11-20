@@ -40,7 +40,9 @@ fn commit_line() {
     let line = git::commit_line(&fx.checkout, "HEAD");
     // How long the short hash is belongs to the Git configuration of the user.
     let (short, rest) = line.split_once(' ').unwrap();
-    assert!(fx.head().starts_with(short), "{line}");
+    let head = fx.head();
+    assert!(head.starts_with(short), "{line}");
+    assert!((4..head.len()).contains(&short.len()), "{line}");
     assert!(rest.starts_with("init ("), "{line}");
 }
 
