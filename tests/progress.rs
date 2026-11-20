@@ -1,5 +1,8 @@
 //! Tests for Nix internal-json progress, based on Nix's activity types.
 
+mod common;
+
+use common::names;
 use nxf::progress::{advance, diagnostic, event, initial, snapshot, State};
 use serde_json::{json, Value};
 
@@ -7,10 +10,6 @@ fn after(state: &State, events: &[Value]) -> State {
     events
         .iter()
         .fold(state.clone(), |state, event| advance(&state, Some(event)))
-}
-
-fn names(inputs: &[&str]) -> Vec<String> {
-    inputs.iter().map(|name| name.to_string()).collect()
 }
 
 /// Build counts come from aggregate progress; stopping an activity is not success.

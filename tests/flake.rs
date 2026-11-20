@@ -2,13 +2,9 @@
 
 mod common;
 
-use common::{assert_contains, fixture, hostname};
+use common::{assert_contains, fixture, hostname, names};
 use nxf::flake::{self, InputRow, InputUpdate};
 use serde_json::json;
-
-fn names(inputs: &[&str]) -> Vec<String> {
-    inputs.iter().map(|name| name.to_string()).collect()
-}
 
 /// Input rows carry revisions, sources and differences from another lock.
 #[test]

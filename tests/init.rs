@@ -41,19 +41,6 @@ fn template(fx: &Fixture, host: &str, name: &str) -> String {
     format!("{}#{name}", templates(fx, host).display())
 }
 
-fn status_of(output: &str, check: &str) -> Option<&'static str> {
-    output.lines().find_map(|line| {
-        let mut columns = line.split_whitespace();
-        let status = match columns.next()? {
-            "✓" => "ok",
-            "!" => "warn",
-            "✗" => "fail",
-            _ => return None,
-        };
-        (columns.next()? == check).then_some(status)
-    })
-}
-
 fn files(dir: &Path) -> Vec<String> {
     git(dir, &["ls-files"])
         .lines()
@@ -99,7 +86,7 @@ fn founds_a_flake() {
         "tools", "flake", "git", "lockfile", "writable", "identity", "changes", "config", "module",
     ] {
         assert_eq!(
-            status_of(&result.stdout, check),
+            common::status_of(&result.stdout, check),
             Some("ok"),
             "{}",
             result.stdout
@@ -183,7 +170,7 @@ fn template_without_module() {
         &template(&fx, &hostname(), "bare"),
     ]);
     result.ok();
-    assert_eq!(status_of(&result.stdout, "module"), Some("warn"));
+    assert_eq!(common::status_of(&result.stdout, "module"), Some("warn"));
     assert_contains(&result.stdout, "does not import the nxf module");
     assert_contains(&result.stdout, "nxf.nixosModules.default");
     assert!(target.join("nxf.nix").exists());
@@ -204,8 +191,8 @@ fn any_configuration_name() {
             &template(&fx, name, "machine"),
         ]);
         result.ok();
-        assert_eq!(status_of(&result.stdout, "config"), Some("ok"));
-        assert_eq!(status_of(&result.stdout, "module"), Some("ok"));
+        assert_eq!(common::status_of(&result.stdout, "config"), Some("ok"));
+        assert_eq!(common::status_of(&result.stdout, "module"), Some("ok"));
         assert_contains(&result.stdout, &format!("nixosConfigurations.{name}"));
     }
 }

@@ -2,30 +2,10 @@
 
 mod common;
 
-use common::{append, assert_contains, fake_systems, fixture, git, lose, strategies, Fixture};
+use common::{
+    append, assert_contains, fake_systems, fixture, git, lose, outcomes, pair, saved, strategies,
+};
 use serde_json::{json, Value};
-
-fn saved(fx: &Fixture) -> Value {
-    serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap()).unwrap()
-}
-
-fn outcomes(report: &Value) -> Vec<(String, String)> {
-    report["results"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|result| {
-            (
-                result["task"].as_str().unwrap().to_string(),
-                result["outcome"].as_str().unwrap().to_string(),
-            )
-        })
-        .collect()
-}
-
-fn pair(task: &str, outcome: &str) -> (String, String) {
-    (task.to_string(), outcome.to_string())
-}
 
 /// A new input revision is built, committed and switched to.
 #[test]

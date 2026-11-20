@@ -311,8 +311,8 @@ impl Fixture {
         Ran::from(self.command(args).output().unwrap())
     }
 
-    /// Runs nxf in a pseudo-terminal of the given width; stderr joins stdout.
-    pub fn terminal(&self, width: usize, args: &[&str]) -> Ran {
+    /// nxf in a pseudo-terminal of the given width; stderr joins stdout.
+    pub fn terminal_command(&self, width: usize, args: &[&str]) -> Command {
         let mut script = Command::new("script");
         script
             .args(["--quiet", "--return", "--command"])
@@ -326,7 +326,12 @@ impl Fixture {
             script.env_remove(name);
         }
         script.envs(&self.env);
-        Ran::from(script.output().unwrap())
+        script
+    }
+
+    /// Runs nxf in that pseudo-terminal to its end.
+    pub fn terminal(&self, width: usize, args: &[&str]) -> Ran {
+        Ran::from(self.terminal_command(width, args).output().unwrap())
     }
 
     pub fn locked(&self, input: &str) -> String {
@@ -443,20 +448,75 @@ pub fn events(records: &[serde_json::Value]) -> String {
         .join("\n")
 }
 
+/// Gives the flake in the checkout these configurations, each a name and
+/// the Nix text of its body, and commits: nxf reads what is committed.
 #[track_caller]
-/// Sets `services.nxf.autoUpdate` of the configuration in the checkout, and
-/// commits it: nxf reads the strategies from what is committed.
-pub fn strategies(fx: &Fixture, settings: &str) {
+pub fn configurations(fx: &Fixture, configurations: &[(&str, &str)], message: &str) {
     let file = fx.checkout.join("flake.nix");
     let text = std::fs::read_to_string(&file).unwrap();
-    let plain = format!("nixosConfigurations.\"{}\" = {{ }};", hostname());
-    assert_contains(&text, &plain);
-    let set = format!(
-        "nixosConfigurations.\"{}\" = {{ config.services.nxf.autoUpdate = {settings}; }};",
-        hostname()
-    );
-    std::fs::write(&file, text.replace(&plain, &set)).unwrap();
-    commit(&fx.checkout, "strategies");
+    let outputs: String = configurations
+        .iter()
+        .map(|(name, body)| format!("nixosConfigurations.\"{name}\" = {{ {body} }}; "))
+        .collect();
+    let (before, rest) = text.split_once("  outputs = ").expect("an outputs line");
+    let (_, after) = rest.split_once('\n').expect("the end of the outputs line");
+    std::fs::write(
+        &file,
+        format!("{before}  outputs = _: {{ {outputs}}};\n{after}"),
+    )
+    .unwrap();
+    commit(&fx.checkout, message);
+}
+
+/// Sets `services.nxf.autoUpdate` of the configuration in the checkout: nxf
+/// reads the strategies from what is committed.
+#[track_caller]
+pub fn strategies(fx: &Fixture, settings: &str) {
+    let body = format!("config.services.nxf.autoUpdate = {settings};");
+    configurations(fx, &[(&hostname(), &body)], "strategies");
+}
+
+/// What the automatic update saved last.
+pub fn saved(fx: &Fixture) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap()).unwrap()
+}
+
+/// The task and the outcome of each result in a saved report, in order.
+pub fn outcomes(report: &serde_json::Value) -> Vec<(String, String)> {
+    report["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| {
+            pair(
+                result["task"].as_str().unwrap(),
+                result["outcome"].as_str().unwrap(),
+            )
+        })
+        .collect()
+}
+
+pub fn pair(task: &str, outcome: &str) -> (String, String) {
+    (task.to_string(), outcome.to_string())
+}
+
+/// The status of a check in the doctor's output.
+pub fn status_of(output: &str, check: &str) -> Option<&'static str> {
+    output.lines().find_map(|line| {
+        let mut columns = line.split_whitespace();
+        let status = match columns.next()? {
+            "✓" => "ok",
+            "!" => "warn",
+            "✗" => "fail",
+            _ => return None,
+        };
+        (columns.next()? == check).then_some(status)
+    })
+}
+
+/// Owned names from literals, such as those of inputs.
+pub fn names(names: &[&str]) -> Vec<String> {
+    names.iter().map(|name| name.to_string()).collect()
 }
 
 /// Takes away where an input comes from: its update cannot be fetched.

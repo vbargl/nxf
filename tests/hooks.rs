@@ -5,7 +5,7 @@ mod common;
 
 use std::path::PathBuf;
 
-use common::{assert_contains, fake_systems, fixture, strategies, write_script, Fixture};
+use common::{assert_contains, fake_systems, fixture, saved, strategies, write_script, Fixture};
 use serde_json::{json, Value};
 
 const CHECK: &str = "check";
@@ -50,10 +50,7 @@ fn marking(fx: &Fixture) -> PathBuf {
 }
 
 fn results(fx: &Fixture) -> Value {
-    let report: Value =
-        serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap())
-            .unwrap();
-    report["results"].clone()
+    saved(fx)["results"].clone()
 }
 
 /// Without hooks the update runs as before.

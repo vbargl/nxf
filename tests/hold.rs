@@ -2,13 +2,9 @@
 
 mod common;
 
-use common::{assert_contains, assert_lacks, fake_systems, fixture, Fixture};
+use common::{assert_contains, assert_lacks, fake_systems, fixture, saved};
 use nxf::hold;
 use serde_json::Value;
-
-fn saved(fx: &Fixture) -> Value {
-    serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap()).unwrap()
-}
 
 /// Durations are a number with a unit.
 #[test]

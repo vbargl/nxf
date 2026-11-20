@@ -3,7 +3,7 @@
 mod common;
 
 use common::{
-    append, assert_contains, assert_lacks, commit, fake_systems, fixture, git, write_script,
+    append, assert_contains, assert_lacks, commit, fake_systems, fixture, git, saved, write_script,
     Fixture,
 };
 use serde_json::{json, Value};
@@ -43,10 +43,7 @@ fn unread_update() {
         again.ok();
         assert_lacks(&again.stdout, "Last automatic update");
     }
-    let saved: Value =
-        serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap())
-            .unwrap();
-    assert_eq!(saved["time"], 1);
+    assert_eq!(saved(&fx)["time"], 1);
 }
 
 /// Only the latest result is displayed; a new run becomes unread even if its

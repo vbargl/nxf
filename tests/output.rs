@@ -49,21 +49,7 @@ fn screen(output: &str, width: u16) -> Vec<String> {
 fn assert_live(fx: &Fixture, terminal: bool, target: &str) {
     let release = fx.dir.join("release");
     let mut command = if terminal {
-        let mut script = Command::new("script");
-        script
-            .args(["--quiet", "--return", "--command"])
-            .arg(format!(
-                "stty cols 80 rows 24; exec '{}' build",
-                common::NXF
-            ))
-            .arg("/dev/null");
-        for (name, value) in fx.command(&[]).get_envs() {
-            match value {
-                Some(value) => script.env(name, value),
-                None => script.env_remove(name),
-            };
-        }
-        script
+        fx.terminal_command(80, &["build"])
     } else {
         fx.command(&["build"])
     };

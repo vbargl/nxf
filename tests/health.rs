@@ -2,7 +2,10 @@
 
 mod common;
 
-use common::{assert_contains, assert_lacks, fake_systems, fixture, write_script, Fixture};
+use common::{
+    assert_contains, assert_lacks, fake_systems, fixture, outcomes, pair, saved, write_script,
+    Fixture,
+};
 use serde_json::Value;
 
 /// A fixture that runs one system and builds another, with quick health rounds.
@@ -34,11 +37,9 @@ fn check(fx: &Fixture, name: &str, script: &str) {
     );
 }
 
+/// The task, the outcome and the detail of each saved result.
 fn results(fx: &Fixture) -> Vec<(String, String, String)> {
-    let report: Value =
-        serde_json::from_str(&std::fs::read_to_string(fx.updater.join("update.json")).unwrap())
-            .unwrap();
-    report["results"]
+    saved(fx)["results"]
         .as_array()
         .unwrap()
         .iter()
@@ -49,17 +50,6 @@ fn results(fx: &Fixture) -> Vec<(String, String, String)> {
         .collect()
 }
 
-fn outcomes(fx: &Fixture) -> Vec<(String, String)> {
-    results(fx)
-        .into_iter()
-        .map(|(task, outcome, _)| (task, outcome))
-        .collect()
-}
-
-fn pair(task: &str, outcome: &str) -> (String, String) {
-    (task.to_string(), outcome.to_string())
-}
-
 /// Without checks nothing is verified, as before.
 #[test]
 fn no_checks() {
@@ -67,7 +57,7 @@ fn no_checks() {
     std::fs::write(fx.dir.join("health.d/README"), "not executable").unwrap();
     fx.run(&["auto-update"]).ok();
     assert_eq!(
-        outcomes(&fx),
+        outcomes(&saved(&fx)),
         [pair("update", "unchanged"), pair("switch", "done")]
     );
 }
@@ -81,7 +71,7 @@ fn healthy() {
     fx.run(&["auto-update"]).ok();
     assert_eq!(fx.nh_actions(), ["build", "switch"]);
     assert_eq!(
-        outcomes(&fx),
+        outcomes(&saved(&fx)),
         [
             pair("update", "unchanged"),
             pair("switch", "done"),
@@ -109,7 +99,7 @@ fn passes_later() {
         std::fs::read_to_string(&counter).unwrap().lines().count(),
         3
     );
-    assert_eq!(outcomes(&fx)[2], pair("health", "done"));
+    assert_eq!(outcomes(&saved(&fx))[2], pair("health", "done"));
 }
 
 /// An unhealthy system is replaced by the previous one, the run fails, and
@@ -167,7 +157,7 @@ fn unhealthy_returns_and_marks() {
     fx.bump(&["a"]);
     fx.run(&["auto-update"]).ok();
     assert_eq!(
-        outcomes(&fx),
+        outcomes(&saved(&fx)),
         [
             pair("update", "done"),
             pair("switch", "done"),
@@ -218,7 +208,7 @@ fn failed_switch() {
     assert_eq!(fx.nh_actions(), ["build", "switch"]);
     assert!(!fx.dir.join("ran").exists());
     assert_eq!(
-        outcomes(&fx),
+        outcomes(&saved(&fx)),
         [pair("update", "unchanged"), pair("switch", "failed")]
     );
 }
