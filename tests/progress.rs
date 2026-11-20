@@ -154,7 +154,7 @@ fn diagnostics() {
 fn inputs() {
     let message = |name: &str| json!({"action": "msg", "level": 6, "msg": format!("computing input '{name}'")});
     let personal = after(
-        &initial(&names(&["personal", "ysoft"])),
+        &initial(&names(&["personal", "work"])),
         &[message("personal")],
     );
     assert_eq!(snapshot(&personal, false), ["Checking input personal"]);
@@ -162,6 +162,6 @@ fn inputs() {
     assert_eq!(snapshot(&nested, false), ["Checking input personal"]);
     let pinned = after(&nested, &[message("unselected")]);
     assert_eq!(snapshot(&pinned, false), ["Checking input personal"]);
-    let next = after(&pinned, &[message("ysoft")]);
-    assert_eq!(snapshot(&next, false), ["Checking input ysoft"]);
+    let next = after(&pinned, &[message("work")]);
+    assert_eq!(snapshot(&next, false), ["Checking input work"]);
 }

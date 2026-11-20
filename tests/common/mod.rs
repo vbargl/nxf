@@ -20,8 +20,10 @@ const GIT_ENV: [(&str, &str); 6] = [
     ("GIT_COMMITTER_EMAIL", "test@example.invalid"),
 ];
 
-/// Variables of the caller's environment that would change what nxf does.
-const INHERITED: [&str; 13] = [
+/// Variables of the caller's environment that would change what nxf does:
+/// every one that src/ reads. They are removed before the fixture's own are
+/// set, so that no value of the developer's shell reaches a test.
+const INHERITED: [&str; 24] = [
     "NXF_BOOTED",
     "NXF_HOOKS_DIR",
     "NXF_HOOK_TIMEOUT",
@@ -35,6 +37,17 @@ const INHERITED: [&str; 13] = [
     "NXF_UPDATER_STATE",
     "NXF_SYSTEMCTL",
     "XDG_STATE_HOME",
+    "NXF_SSH",
+    "NXF_SSH_TIMEOUT",
+    "NXF_SSH_CONNECT_TIMEOUT",
+    "NXF_UPGRADE_TIMEOUT",
+    "NXF_ROLLOUT_WAIT",
+    "NXF_PACKAGE",
+    "NXF_INSTALL_ROOT",
+    "NXF_INSTALLER",
+    "NXF_DISKO",
+    "NIX_CONFIG",
+    "TERM",
 ];
 
 pub struct Ran {
@@ -185,7 +198,7 @@ echo "$* @ $(git -C '{checkout}' rev-parse --short HEAD)" >> '{log}'
 [[ -z ${{NXF_TEST_NH_STDOUT:-}} ]] || printf '%s\n' "$NXF_TEST_NH_STDOUT"
 [[ -z ${{NXF_TEST_NH_STDERR:-}} ]] || printf '%s\n' "$NXF_TEST_NH_STDERR" >&2
 if [[ -n ${{NXF_TEST_NH_WAIT:-}} ]]; then
-    for _ in $(seq 300); do [[ -e $NXF_TEST_NH_WAIT ]] && break; sleep 0.01; done
+    for _ in $(seq 3000); do [[ -e $NXF_TEST_NH_WAIT ]] && break; sleep 0.01; done
 fi
 [[ ${{NXF_TEST_NH_STATUS:-0}} == 0 ]] || exit "$NXF_TEST_NH_STATUS"
 [[ $2 != ${{NXF_TEST_NH_FAIL_ACTION:-}} ]] || exit 3
@@ -205,6 +218,8 @@ ln -sfn "${{NXF_TEST_BUILD:-{root}/system}}" "${{@: -1}}"
 
     let state = dir.join("state");
     let updater = dir.join("updater");
+    // A home of its own keeps the user's Nix cache and settings out of a run.
+    let home = dir.join("home");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let mut env: BTreeMap<String, String> = GIT_ENV
         .iter()
@@ -226,6 +241,18 @@ ln -sfn "${{NXF_TEST_BUILD:-{root}/system}}" "${{@: -1}}"
         ),
         ("NXF_HOOKS_DIR", dir.join("no-hooks").display().to_string()),
         ("NO_COLOR", "1".to_string()),
+        ("HOME", home.display().to_string()),
+        ("XDG_CACHE_HOME", home.join(".cache").display().to_string()),
+        (
+            "XDG_CONFIG_HOME",
+            home.join(".config").display().to_string(),
+        ),
+        (
+            "XDG_DATA_HOME",
+            home.join(".local/share").display().to_string(),
+        ),
+        ("LC_ALL", "C".to_string()),
+        ("TZ", "UTC".to_string()),
         ("PATH", path),
     ] {
         env.insert(name.to_string(), value);

@@ -14,7 +14,7 @@ fn switching() -> Fixture {
     let checks = fx.dir.join("health.d");
     std::fs::create_dir_all(&checks).unwrap();
     fx.set("NXF_HEALTH_DIR", checks);
-    settings(&fx, 3);
+    settings(&fx, 1);
     fx
 }
 

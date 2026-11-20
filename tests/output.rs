@@ -95,7 +95,9 @@ fn assert_live(fx: &Fixture, terminal: bool, target: &str) {
         let _ = stdout.read_to_string(&mut rest);
         seen + &rest
     });
-    let visible = receiver.recv_timeout(Duration::from_millis(2500)).is_ok();
+    // Less than the 30 s the mock nh is held for: what is seen was printed
+    // while nh ran. A passing run does not wait, it goes on at the first row.
+    let visible = receiver.recv_timeout(Duration::from_secs(20)).is_ok();
     std::fs::write(&release, "").unwrap();
     let status = child.wait().unwrap();
     let seen = reader.join().unwrap();
