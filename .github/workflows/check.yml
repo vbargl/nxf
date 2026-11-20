@@ -8,9 +8,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to a pull request replaces its run; runs of main all finish.
+# A newer push to a pull request replaces its run; every push to main has a
+# group of its own, so its run ends.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
