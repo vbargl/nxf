@@ -110,6 +110,22 @@ enum Trust {
     Made { known: PathBuf },
 }
 
+/// The known_hosts file of the user, which every link trusts before the installation.
+fn user_known_hosts() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    Some(format!("{home}/.ssh/known_hosts").into())
+}
+
+/// The keys of a known_hosts file as ssh reads them, as bytes; none when the
+/// file is not there. One that is there and cannot be read is an error.
+fn keys_of(file: &Path) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::read(file) {
+        Ok(keys) => Ok(Some(keys)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("cannot read {}: {err}", file.display())),
+    }
+}
+
 #[derive(Clone)]
 struct Link {
     host: Host,
@@ -121,7 +137,7 @@ impl Link {
     fn trusted(&self) -> Vec<PathBuf> {
         match &self.trust {
             Trust::First { seen } => std::iter::once(seen.clone())
-                .chain(std::env::var("HOME").map(|home| format!("{home}/.ssh/known_hosts").into()))
+                .chain(user_known_hosts())
                 .collect(),
             Trust::Made { known } => vec![known.clone()],
         }
@@ -333,16 +349,11 @@ fn copy(link: &Link, paths: &[&Path], stem: &Path) -> Result<(), String> {
     // One file with the keys the link trusts: not every Nix splits NIX_SSHOPTS
     // as a shell does, so no option may need a quote.
     let trusted = stem.with_extension("trusted");
-    // Read as ssh reads them, as bytes; only a file that is not there is left out.
     let mut keys = Vec::new();
     for file in link.trusted() {
-        match std::fs::read(&file) {
-            Ok(known) => {
-                keys.extend(known);
-                keys.push(b'\n');
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(format!("cannot read {}: {err}", file.display())),
+        if let Some(known) = keys_of(&file)? {
+            keys.extend(known);
+            keys.push(b'\n');
         }
     }
     // For the user alone: it holds a copy of the keys the user knows.
@@ -611,6 +622,13 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
             "{} is not a directory\n--files takes a directory that holds one directory of files for each machine, by name.",
             files.display()
         ));
+    }
+    // Before any machine is asked too: nix copy reads these keys only after a
+    // machine that ran another system was started into the installer.
+    if let Some(file) = user_known_hosts() {
+        keys_of(&file).map_err(|err| {
+            format!("{err}\nrollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.")
+        })?;
     }
     let temp = std::env::temp_dir();
     // ssh and Nix split their options at spaces, and files under it are named in them.

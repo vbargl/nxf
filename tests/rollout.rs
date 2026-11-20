@@ -680,7 +680,7 @@ esac
 
 /// The keys the user knows reach `nix copy` as ssh reads them, as bytes: a
 /// file that is not UTF-8 is not left out. One that is there and cannot be
-/// read fails the machine, instead of a copy with fewer keys than the link has.
+/// read is refused before any machine is asked, not when its system is down.
 #[test]
 fn copy_reads_keys_as_ssh() {
     let (fx, hosts) = installers(&["node-1"]);
@@ -690,10 +690,10 @@ fn copy_reads_keys_as_ssh() {
     let result = rollout();
     assert_eq!(result.code, 1);
     assert_contains(
-        &result.stdout,
-        &format!("\n  ✗ cannot read {}: ", known.display()),
+        &result.stderr,
+        &format!("✗ cannot read {}: ", known.display()),
     );
-    assert_lacks(&ssh_log(&fx), "bin/nxf init");
+    assert_eq!(ssh_log(&fx), "");
 
     std::fs::remove_dir(&known).unwrap();
     let keys = b"node-9 ssh-ed25519 AAAAuser caf\xe9\n";
@@ -743,6 +743,36 @@ exec '{dir}/ssh' "$@"
     assert_contains(&result.stdout, &cause);
     assert_contains(&result.stdout, "/0.known: ");
     assert_contains(&result.stderr, "Not installed: node-1.");
+}
+
+/// A file of keys that the run wrote itself and cannot read fails the machine
+/// at the copy, instead of a copy with fewer keys than the link has.
+#[test]
+fn copy_needs_the_keys_of_the_run() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let dir = fx.dir.join("machines");
+    // An ssh that leaves a directory where the keys it accepted are to be.
+    let ssh = dir.join("ssh-blocking");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+for option in "$@"; do
+    [[ $option == UserKnownHostsFile=* ]] || continue
+    files=${{option#*=}}
+    mkdir -p "${{files%% *}}"
+done
+exec '{dir}/ssh' "$@"
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stdout, "\n  ✗ cannot read ");
+    assert_contains(&result.stdout, "/0.seen: ");
+    assert_lacks(&ssh_log(&fx), "bin/nxf init");
 }
 
 /// The scratch files that ssh options name are called by the place of the
