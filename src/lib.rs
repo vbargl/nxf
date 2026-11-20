@@ -18,6 +18,7 @@ pub mod output;
 pub mod process;
 pub mod progress;
 pub mod rollout;
+pub mod ssh;
 pub mod status;
 pub mod strategy;
 pub mod tasks;

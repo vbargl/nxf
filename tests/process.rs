@@ -5,10 +5,21 @@ mod common;
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use common::{assert_contains, assert_lacks, temp_dir, write_script};
 use nxf::process;
+
+static SERIAL: Mutex<()> = Mutex::new(());
+
+/// One test at a time: another thread that starts a program while a script
+/// is written would hold it open, and the script could not be run.
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn sh(script: &str) -> Command {
     let mut command = Command::new("sh");
@@ -19,6 +30,7 @@ fn sh(script: &str) -> Command {
 /// A program that is asked for input gets none.
 #[test]
 fn no_input() {
+    let _serial = serial();
     for run in [process::capture, process::run] {
         let output = run(&mut sh("readlink /proc/self/fd/0")).unwrap();
         assert_eq!(String::from_utf8_lossy(&output.stdout), "/dev/null\n");
@@ -29,6 +41,7 @@ fn no_input() {
 /// its output and its errors, the last eight lines.
 #[test]
 fn failure() {
+    let _serial = serial();
     let error = process::run(&mut sh("echo out; echo error >&2; exit 3")).unwrap_err();
     assert_eq!(error, "sh exited with status 3.\nout\nerror");
     let error = process::run(&mut sh("seq 1 20; exit 1")).unwrap_err();
@@ -56,6 +69,7 @@ fn seq(first: u32, last: u32) -> String {
 /// The program of a failure has no directory, however it was run.
 #[test]
 fn failure_name() {
+    let _serial = serial();
     let dir = temp_dir("process");
     write_script(&dir.join("tool"), "#!/bin/sh\nexit 2\n");
     let error = process::run(&mut Command::new(dir.join("tool"))).unwrap_err();
@@ -66,6 +80,7 @@ fn failure_name() {
 /// A program that cannot be run says which one.
 #[test]
 fn missing() {
+    let _serial = serial();
     for error in [
         process::run(&mut Command::new("/nonexistent/tool")).unwrap_err(),
         process::capture(&mut Command::new("/nonexistent/tool")).unwrap_err(),
@@ -77,6 +92,7 @@ fn missing() {
 /// Capturing is not judging: the status of the program is the caller's.
 #[test]
 fn captured_status() {
+    let _serial = serial();
     let output = process::capture(&mut sh("echo said; exit 5")).unwrap();
     assert_eq!(output.status.code(), Some(5));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "said\n");
@@ -85,6 +101,7 @@ fn captured_status() {
 /// The first line of a failure is told from what the program said.
 #[test]
 fn failure_line() {
+    let _serial = serial();
     assert!(process::is_failure_line("nh exited with status 3."));
     assert!(process::is_failure_line("nh was stopped by a signal."));
     assert!(!process::is_failure_line("error: build failed"));
@@ -93,6 +110,7 @@ fn failure_line() {
 /// The tail keeps the last eight lines that are not empty.
 #[test]
 fn tail() {
+    let _serial = serial();
     assert_eq!(process::tail(&format!("{}\n\n", seq(1, 12))), seq(5, 12));
     assert_eq!(process::tail("\n \n"), "");
 }
@@ -101,6 +119,7 @@ fn tail() {
 /// both in the order they were written.
 #[test]
 fn within() {
+    let _serial = serial();
     let in_time = || Instant::now() + Duration::from_secs(30);
     let script = "echo one; echo two >&2; echo three";
     let done = process::run_within(&mut sh(script), in_time(), false).unwrap();
@@ -120,9 +139,10 @@ fn within() {
 /// a child of it holds its output open.
 #[test]
 fn deadline() {
+    let _serial = serial();
     let started = Instant::now();
     let deadline = started + Duration::from_millis(300);
-    let done = process::run_within(&mut sh("sleep 30 & sleep 30"), deadline, false).unwrap();
+    let done = process::run_within(&mut sh("sleep 20 & sleep 20"), deadline, false).unwrap();
     assert!(done.status.is_none());
     assert!(started.elapsed() < Duration::from_secs(10));
 }
@@ -131,9 +151,10 @@ fn deadline() {
 /// of it holds its output open; what it said is kept.
 #[test]
 fn lingering_child() {
+    let _serial = serial();
     let started = Instant::now();
     let deadline = started + Duration::from_secs(30);
-    let done = process::run_within(&mut sh("sleep 30 & echo said"), deadline, false).unwrap();
+    let done = process::run_within(&mut sh("sleep 20 & echo said"), deadline, false).unwrap();
     assert!(done.status.unwrap().success());
     assert_eq!(done.stdout, "said\n");
     assert!(started.elapsed() < Duration::from_secs(10));
@@ -143,6 +164,7 @@ fn lingering_child() {
 /// one that the deadline cut short says nothing, whatever it printed.
 #[test]
 fn script() {
+    let _serial = serial();
     let dir = temp_dir("process");
     let at = |seconds| Instant::now() + Duration::from_secs(seconds);
     let make = |name: &str, body: &str| {
@@ -190,6 +212,7 @@ fn script() {
 /// there, and no temporary file is left, whether the write worked or not.
 #[test]
 fn atomic() {
+    let _serial = serial();
     let dir = temp_dir("process");
     let file = dir.join("deeper/file.json");
     process::write_atomic(&file, "one").unwrap();

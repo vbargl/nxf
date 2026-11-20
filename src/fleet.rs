@@ -4,7 +4,6 @@
 //! upgrade is the one of these that changes machines, and it goes in waves.
 
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -12,6 +11,7 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark, Style};
+use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
 use crate::{hold, process, status};
 
@@ -45,45 +45,16 @@ impl Reply {
     }
 }
 
-/// Quotes a word for the remote login shell, which is not always POSIX: a
-/// plain word stays bare, single quotes hold anything without a single quote,
-/// and double quotes hold a single quote when nothing in the word is special
-/// inside them. These three forms mean the same to sh, fish and Nushell.
-pub fn quoted(word: &str) -> String {
-    let bare = !word.is_empty()
-        && word
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || "-_./:@=+,".contains(ch));
-    if bare {
-        word.to_string()
-    } else if !word.contains('\'') {
-        format!("'{word}'")
-    } else if !word.contains(['"', '$', '`', '\\', '!']) {
-        format!("\"{word}\"")
-    } else {
-        // Only a POSIX shell reads this form.
-        format!("'{}'", word.replace('\'', "'\\''"))
-    }
-}
-
 fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
-    let program = env::path(env::SSH, "ssh");
     let remote = std::iter::once("nxf".to_string())
-        .chain(args.iter().map(|arg| quoted(arg)))
+        .chain(args.iter().map(|arg| ssh::quoted(arg)))
         .collect::<Vec<_>>()
         .join(" ");
-    let mut ssh = Command::new(program);
-    ssh.args(["-o", "BatchMode=yes"]).args([
-        "-o",
-        &format!(
-            "ConnectTimeout={}",
-            env::seconds(env::SSH_CONNECT_TIMEOUT, 10).as_secs()
-        ),
-    ]);
-    if let Some(port) = host.port {
-        ssh.args(["-p", &port.to_string()]);
-    }
-    ssh.arg(host.destination()).arg(remote);
+    let link = Link {
+        host: host.clone(),
+        trust: Trust::Keys,
+    };
+    let mut ssh = link.command(&remote);
     let reply = |code, stdout, stderr| Reply {
         host: host.clone(),
         code,

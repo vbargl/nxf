@@ -360,19 +360,6 @@ fn invalid_requests() {
     assert!(set.calls().is_empty());
 }
 
-/// Words are quoted in forms that sh, fish and Nushell read alike.
-#[test]
-fn quoting() {
-    use nxf::fleet::quoted;
-    assert_eq!(quoted("status"), "status");
-    assert_eq!(quoted("@1790000000"), "@1790000000");
-    assert_eq!(quoted("release week"), "'release week'");
-    assert_eq!(quoted(""), "''");
-    assert_eq!(quoted("it's bad"), "\"it's bad\"");
-    assert_eq!(quoted("say \"no\" & $HOME"), "'say \"no\" & $HOME'");
-    assert_eq!(quoted("it's $HOME"), "'it'\\''s $HOME'");
-}
-
 impl Machines {
     fn upgrade(&self, args: &[&str]) -> common::Ran {
         self.fx
