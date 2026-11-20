@@ -21,7 +21,7 @@ changes to the flake itself.
 | `nxf init --template <flake>#<name>` | Found a machine flake; see [Founding a machine flake](#founding-a-machine-flake) |
 | `nxf <command> --config <file>` | Run `status`, `hold`, `release`, `version` or `doctor` on a set of machines; see [Several machines](#several-machines) |
 | `nxf install <dir>` | Install the machine a flake describes, from a NixOS installer on it; see [Installing a machine](#installing-a-machine) |
-| `nxf rollout --config <file> --template <ref>` | Install every machine of a hosts file that nxf has not installed yet |
+| `nxf rollout --config <file> --template <flake>#<name>` | Install every machine of a hosts file that nxf does not manage yet; see [From another computer](#from-another-computer) |
 | `nxf rollout --config <file> --upgrade` | Upgrade every machine of a hosts file, the first alone, then in waves; see [Upgrading machines](#upgrading-machines) |
 | `nxf hold --reason <text>` | Hold automatic updates back; see [Holding updates](#holding-updates) |
 | `nxf release` | Release the hold |
@@ -33,7 +33,7 @@ changes to the flake itself.
 | --- | --- |
 | `update` | Update all inputs, or only the named ones, one at a time: build with each update and commit it, or restore the lockfile |
 | `build` | Build with nh and summarize package changes |
-| `test` | Build, then activate until the next reboot |
+| `test` | Build, then activate until the next restart |
 | `boot` | Build, then make the configuration the boot default |
 | `switch` | Build, activate, and make the configuration the boot default |
 | `upgrade` | Shortcut for `update` and `switch`: update each input, then switch |
@@ -230,7 +230,7 @@ Below the first line, status says when something needs attention:
 
 - `Restart needed`: the kernel, the initrd or the kernel modules of the
   running system differ from those of the booted system. No task and no
-  automatic update reboots the machine.
+  automatic update restarts the machine.
 - `Automatic updates are held`, with the reason and the end of the hold.
 - `The checkout failed its health check`, with what the failing checks said.
 
@@ -413,6 +413,9 @@ then warns and names the lines to add.
 
 ### On the machine
 
+For the feature brief and acceptance scenarios, see
+[Install](docs/features/install.md).
+
 ```sh
 nxf init /tmp/machine --template <flake>#<name> --hardware
 nxf install /tmp/machine
@@ -440,16 +443,19 @@ on the machine, so a private input needs its credentials in the installer.
 
 ### From another computer
 
+For the feature brief and acceptance scenarios, see
+[Bulk Install](docs/features/bulk-install.md).
+
 ```sh
 nxf rollout --config hosts.toml --template <flake>#<name> --files ./machines
 ```
 
 `rollout` brings every machine of a [hosts file](#the-hosts-file) to the
-same state: installed by nxf. It asks each machine what it is, and then:
+same state: managed by nxf. It asks each machine what it is, and then:
 
 | The machine is | Rollout |
 | --- | --- |
-| installed by nxf, or has nxf in its system, whatever its root file system is | leaves it alone |
+| managed: installed by nxf, or with nxf in its system, whatever its root file system is | leaves it alone |
 | a NixOS installer | installs it |
 | another system, such as Ubuntu | starts a NixOS installer from memory (kexec), then installs it |
 | not reachable | reports it and fails |
@@ -457,7 +463,7 @@ same state: installed by nxf. It asks each machine what it is, and then:
 A machine with nxf only on its `PATH` is left alone too, unless it is a NixOS
 installer.
 
-The command can be repeated: machines that are installed are not touched, so
+The command can be repeated: machines that are managed are not touched, so
 a second run only installs what the first one could not. Installing erases
 disks, so rollout shows the plan and asks before it erases anything; `--yes`
 confirms without a question, and without a terminal nothing is erased unless
@@ -497,6 +503,9 @@ rollout refuses one whose path holds a space, a quote or a backslash, before
 any machine is asked.
 
 ### Upgrading machines
+
+For the feature brief and acceptance scenarios, see
+[Bulk Upgrade](docs/features/bulk-upgrade.md).
 
 ```sh
 nxf rollout --config hosts.toml --upgrade                 # one machine at a time
@@ -544,6 +553,8 @@ hosts.toml · 3 machines
 
 ## Automatic updates
 
+For the feature brief and acceptance scenarios, see
+[Automatic Update](docs/features/automatic-update.md).
 
 `nxf-auto-update.timer` starts `nxf-auto-update.service`, which runs
 `nxf auto-update`:
@@ -555,8 +566,8 @@ hosts.toml · 3 machines
    does with each, and with one that cannot be fetched or does not build, is
    the input's [strategy](#strategies).
 3. If the committed flake is not what runs, `switch` builds and activates it:
-   a live switch of everything. The machine is never rebooted; a new kernel
-   takes effect at the next reboot, and status says that one is needed.
+   a live switch of everything. The machine is never restarted; a new kernel
+   takes effect at the next restart, and status says that one is needed.
    Shared records let the updater skip `nh os build` when the committed tree
    is already running, even if someone else built it. Configuration selection
    and input strategies still require evaluation before that comparison.
@@ -701,7 +712,7 @@ nxf release
 ```
 
 A hold stops the automatic update: the run reports `skipped` with the reason.
-The hold is the file `/var/lib/nxf/hold.json`, so it survives a reboot, and
+The hold is the file `/var/lib/nxf/hold.json`, so it survives a restart, and
 only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
 
@@ -793,7 +804,7 @@ flake is pushed to a server that wants an e-mail.
 Inputs fetched with Git over HTTPS (`git+https://...`) take a token from
 `gitCredentialsFile`, a file in the format of
 [git-credential-store](https://git-scm.com/docs/git-credential-store), one
-line for each host:
+line for each server:
 
 ```
 https://machine:TOKEN@git.example.org
