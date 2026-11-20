@@ -27,15 +27,14 @@ fn outcome(task: &str, outcome: &str, detail: String) -> Outcome {
 /// Checks the health of the system just switched to. An unhealthy system is
 /// replaced by the previous one, and its source is not tried again.
 fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
-    let failed = match health::check() {
+    let mut failed = match health::check() {
         Health::Unchecked => return None,
         Health::Healthy => return Some(outcome("health", "done", String::new())),
         Health::Unhealthy(failed) => failed,
     };
-    if let Some(tree) = tree {
-        if let Err(err) = nixos::mark_bad(tree, &failed) {
-            return Some(outcome("health", "failed", format!("{failed} | {err}")));
-        }
+    // A mark that cannot be written is said, and never keeps the unhealthy system.
+    if let Some(Err(err)) = tree.map(|tree| nixos::mark_bad(tree, &failed)) {
+        failed.push_str(&format!(" | {err}"));
     }
     output::capture();
     let returned = nixos::activate("switch", previous);

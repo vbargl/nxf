@@ -231,3 +231,27 @@ fn manual_switch() {
     fx.run(&["switch"]).ok();
     assert_eq!(fx.nh_actions(), ["build", "switch"]);
 }
+
+/// An unhealthy system is replaced by the previous one also when its
+/// revision cannot be marked as bad, and the result names all three: the
+/// check that failed, the mark that was not written and the return.
+#[test]
+fn unmarked_still_returns() {
+    let systems = fake_systems();
+    let fx = switching();
+    check(&fx, "20-k3s", "echo 'k3s is not running' >&2; exit 1");
+    // A file where the directory of the marks belongs: no mark can be written.
+    std::fs::create_dir_all(&fx.updater).unwrap();
+    std::fs::write(fx.updater.join("bad"), "").unwrap();
+    assert_eq!(fx.run(&["auto-update"]).code, 1);
+    let calls = fx.nh_calls();
+    assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
+    assert_contains(&calls[2], &format!("os switch {} ", systems.one.display()));
+    let health = &results(&fx)[2];
+    assert_eq!((health.0.as_str(), health.1.as_str()), ("health", "failed"));
+    assert_contains(&health.2, "20-k3s: k3s is not running | cannot write ");
+    assert_contains(
+        &health.2,
+        &format!(" | Returned to {}.", systems.one.display()),
+    );
+}
