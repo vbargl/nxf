@@ -149,7 +149,9 @@ change them here first.
   report; show it with `output::pending` while it runs.
 - Reformat what other tools print into facts; do not pass their layout on.
 - Errors of the command line have the shape of every failure: the cause as
-  the outcome, then facts that help to resolve it.
+  the outcome, then facts that help to resolve it. What clap refuses is
+  printed in that shape too and exits with status 2. Help that is asked for
+  is printed as clap prints it.
 
 ## Tests
 
@@ -165,6 +167,12 @@ change them here first.
 - The installation of a real machine cannot be a test here. After a change to
   `install.rs` or `rollout.rs`, run `nxf rollout` against a virtual
   machine that starts as another system, and run it a second time.
+- `tests/rollout.rs` plays an installation without a machine. Its mock ssh
+  keeps the files it is sent, reports a host key for `nxf install` and
+  answers as a managed machine from then on. A mock `nix` names the source
+  of the template and records what `nix copy` is given, and `NXF_PACKAGE`
+  names the package. This does not replace the run against a virtual
+  machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh, and variables of the environment stand in for what belongs to
   the machine. The shipped program reads them too: `NXF_INSTALLER=yes`, for
@@ -182,7 +190,7 @@ change them here first.
   | `NXF_INSTALL_ROOT` | Where the new system is mounted, `/mnt`; when it is set, install does not require root |
   | `NXF_INSTALLER` | The answer whether the system runs from memory: `yes`, anything else is no |
   | `NXF_DISKO` | The script of the disk layout |
-  | `NXF_PACKAGE` | The package that rollout copies to the machines, for an nxf that does not run from the Nix store; no test sets it |
+  | `NXF_PACKAGE` | The package that rollout copies to the machines, for an nxf that does not run from the Nix store; `tests/rollout.rs` sets it |
 
 - These variables are settings, for an operator or the module:
 
