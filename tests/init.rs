@@ -124,7 +124,7 @@ fn module_file() {
         "# strategy = \"report\";",
         "# inputs = { };",
         "# schedule = \"*-*-* 00/6:00:00\";",
-        "# randomizedDelay = \"1h\";",
+        "# randomizedDelay = 3600;",
         "# fixedDelay = true;",
         "# checkHook = \"\";",
         "# healthChecks = { };",
@@ -135,7 +135,7 @@ fn module_file() {
         "# gitIdentity = ",
         "# gitCredentialsFile = null;",
         "# nixConfigFile = null;",
-        "# timeout = \"3h\";",
+        "# updateTimeout = 10800;",
     ] {
         assert_contains(MODULE, option);
     }

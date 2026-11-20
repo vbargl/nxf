@@ -47,9 +47,9 @@ let
       autoUpdate = {
         enable = true;
         schedule = "hourly";
-        randomizedDelay = "20min";
+        randomizedDelay = 1200;
         fixedDelay = false;
-        timeout = "45min";
+        updateTimeout = 2700;
         gitIdentity = null;
       };
     };
@@ -57,6 +57,10 @@ let
 
   # The command alone, with no timer.
   command = system { services.nxf.enable = true; };
+
+  # Whether the types of the options take a configuration.
+  accepts =
+    module: (builtins.tryEval (builtins.deepSeq (system module).services.nxf.autoUpdate true)).success;
 
   unit = config: name: config.systemd.units.${name}.text;
 in
@@ -93,6 +97,19 @@ pkgs.runCommand "nxf-module-check"
     commandSudo = builtins.toJSON (
       builtins.any (rule: rule.groups == [ "nxf" ]) command.security.sudo.extraRules
     );
+    durationsAccepted = builtins.toJSON (accepts {
+      services.nxf.autoUpdate = {
+        enable = true;
+        randomizedDelay = 0;
+        updateTimeout = 60;
+      };
+    });
+    systemdStringRefused = builtins.toJSON (accepts {
+      services.nxf.autoUpdate.randomizedDelay = "20min";
+    });
+    zeroTimeoutRefused = builtins.toJSON (accepts {
+      services.nxf.autoUpdate.updateTimeout = 0;
+    });
     commandHasTimer = builtins.toJSON (builtins.hasAttr "nxf-auto-update" command.systemd.timers);
     healthCheck = root.environment.etc."nxf/health.d/10-units".source;
     healthSettings = root.environment.etc."nxf/health.conf".text;
@@ -180,12 +197,12 @@ pkgs.runCommand "nxf-module-check"
     has "$gitconfig" 'directory = "/etc/nixos"'
     has "$commandGitconfig" 'directory = "/etc/nixos"'
     has "$rootTimerPath" 'OnCalendar=*-*-* 00/6:00:00'
-    has "$rootTimerPath" 'RandomizedDelaySec=1h'
+    has "$rootTimerPath" 'RandomizedDelaySec=3600s'
     has "$rootTimerPath" 'FixedRandomDelay=true'
     has "$rootTimerPath" 'Persistent=true'
     # A oneshot is starting for as long as it runs, so this ends the update.
     has "$rootServicePath" 'Type=oneshot'
-    has "$rootServicePath" 'TimeoutStartSec=3h'
+    has "$rootServicePath" 'TimeoutStartSec=10800s'
 
     has "$plainServicePath" 'User=nxf'
     has "$plainServicePath" '"NXF_FLAKE=/srv/machine"'
@@ -195,9 +212,14 @@ pkgs.runCommand "nxf-module-check"
     has "$plainPermissionsPath" "flake=/srv/machine"
     has "$plainGitconfig" 'directory = "/srv/machine"'
     has "$plainTimerPath" 'OnCalendar=hourly'
-    has "$plainTimerPath" 'RandomizedDelaySec=20min'
+    has "$plainTimerPath" 'RandomizedDelaySec=1200s'
     has "$plainTimerPath" 'FixedRandomDelay=false'
-    has "$plainServicePath" 'TimeoutStartSec=45min'
+    has "$plainServicePath" 'TimeoutStartSec=2700s'
+
+    # Every duration is a number of seconds.
+    test "$durationsAccepted" = true
+    test "$systemdStringRefused" = false
+    test "$zeroTimeoutRefused" = false
 
     touch $out
   ''

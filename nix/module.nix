@@ -26,6 +26,9 @@ let
     value = "store --file=${auto.gitCredentialsFile}";
   };
 
+  # systemd takes the seconds as a time span.
+  span = seconds: "${toString seconds}s";
+
   # The update may have started before a switch; use the running system's tools.
   tools = ''
     export PATH=${
@@ -94,9 +97,9 @@ in
       };
 
       randomizedDelay = lib.mkOption {
-        type = lib.types.str;
-        default = "1h";
-        description = "The update starts up to this long after the schedule.";
+        type = lib.types.ints.unsigned;
+        default = 3600;
+        description = "The update starts up to this many seconds after the schedule.";
       };
 
       fixedDelay = lib.mkOption {
@@ -256,10 +259,10 @@ in
         description = "Seconds the `checkHook` and the `failureHook` each have to end.";
       };
 
-      timeout = lib.mkOption {
-        type = lib.types.str;
-        default = "3h";
-        description = "The update is stopped after this long.";
+      updateTimeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 10800;
+        description = "The update is stopped after this many seconds.";
       };
     };
   };
@@ -429,7 +432,7 @@ in
           CacheDirectory = "nxf";
           CacheDirectoryMode = "0750";
           ExecStart = "${lib.getExe cfg.package} auto-update";
-          TimeoutStartSec = auto.timeout;
+          TimeoutStartSec = span auto.updateTimeout;
           Nice = 10;
           IOSchedulingClass = "idle";
         };
@@ -439,7 +442,7 @@ in
         wantedBy = [ "timers.target" ];
         timerConfig = {
           OnCalendar = auto.schedule;
-          RandomizedDelaySec = auto.randomizedDelay;
+          RandomizedDelaySec = span auto.randomizedDelay;
           FixedRandomDelay = auto.fixedDelay;
           Persistent = true;
         };

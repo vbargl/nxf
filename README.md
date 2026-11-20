@@ -611,7 +611,7 @@ records stay in `/var/lib/nxf`, and `nxf status` reads the results from
 | Option under `services.nxf.autoUpdate` | Default | Meaning |
 | --- | --- | --- |
 | `schedule` | `*-*-* 00/6:00:00` | systemd calendar expression |
-| `randomizedDelay` | `1h` | Latest start after the schedule |
+| `randomizedDelay` | `3600` | Seconds after the schedule within which the update starts |
 | `fixedDelay` | `true` | Keep the same delay on every run, different for each machine |
 | `gitIdentity` | `nxf`, no e-mail | Identity of the lockfile commits of the update |
 | `gitCredentialsFile` | none | Tokens for Git inputs over HTTPS |
@@ -624,7 +624,9 @@ records stay in `/var/lib/nxf`, and `nxf status` reads the results from
 | `healthInterval` | `10` | Seconds between two rounds of checks |
 | `failureHook` | none | Script that runs after a failed update, or an input to report |
 | `hookTimeout` | `60` | Seconds each of the two hooks has to end; the module sets `NXF_HOOK_TIMEOUT` from it, which is 60 when nothing sets it |
-| `timeout` | `3h` | Longest run |
+| `updateTimeout` | `10800` | Seconds after which the update is stopped |
+
+Every duration is a whole number of seconds.
 
 ### Health checks
 

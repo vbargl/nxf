@@ -17,8 +17,8 @@
     # When the update starts, as a systemd calendar expression.
     # schedule = "*-*-* 00/6:00:00";
 
-    # The update starts up to this long after the schedule.
-    # randomizedDelay = "1h";
+    # The update starts up to this many seconds after the schedule.
+    # randomizedDelay = 3600;
 
     # Keep the same delay on every run. systemd derives it from the
     # machine ID, so machines spread out and each keeps its own slot.
@@ -86,7 +86,7 @@
     # commit changes them, without a switch.
     # inputs = { };
 
-    # The update is stopped after this long.
-    # timeout = "3h";
+    # The update is stopped after this many seconds.
+    # updateTimeout = 10800;
   };
 }

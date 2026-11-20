@@ -32,7 +32,7 @@ let
     "nixConfigFile"
     "strategy"
     "inputs"
-    "timeout"
+    "updateTimeout"
   ];
   listed = lib.sort lib.lessThan ([ "enable" ] ++ order);
   declared = lib.attrNames options.autoUpdate;
