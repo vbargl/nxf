@@ -305,4 +305,30 @@ e3d896f on `main`), against one Incus Ubuntu 24.04 VM with SSH as root, with `--
 
 The run is not repeatable in CI.
 
+I1 and I5 to I7 were run by hand again with nxf 0.14.0, built from commit
+60c93d7 of the branch of pull request #11 (its `src/` is that of the head of
+that branch), against one Incus Ubuntu 24.04 VM with SSH as root, with
+`--files`, `--known-hosts` and `--yes`, a scratch `HOME` and `TMPDIR`, and a
+template with a disko layout and the nxf module, pinned to that commit:
+
+- The plan row was `Ubuntu 24.04.5 LTS; it will be erased`. The rows of the
+  phases were `Started from memory`, `Founded on the machine`, `Installed`
+  and `Started, and its host key is the one it was given`. The outcome was
+  `1 machine installed`, with the revision `61c3c76d004a` of the machine
+  beside its name (I5).
+- The installed machine had the file of its own in `/etc/nixos`, the
+  installation record and nxf 0.14.0, and the commit of the flake that its
+  `nxf status` named was the revision the run reported (I6).
+- The Ubuntu key in the `--known-hosts` file was replaced by the key the
+  machine answers with, and the line of another machine was kept. The
+  `known_hosts` file of the scratch `HOME` was not changed, and the scratch
+  `TMPDIR` was empty afterwards (I7).
+- A second run only probed the machine: its row was `installed by nxf` and
+  the outcome was `1 machine installed by nxf` (I1).
+- `status`, `version`, `version --system`, `doctor`, `hold --for 1h` and
+  `release` with `--config` each gave one row for the machine and an outcome
+  that named the one machine.
+
+The run is not repeatable in CI.
+
 See the [operating documentation](../../README.md#from-another-computer).
