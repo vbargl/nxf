@@ -4,6 +4,7 @@
 //! installed there with `nxf init` and `nxf install`.
 
 use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -581,7 +582,16 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
             std::env::temp_dir().display()
         ));
     }
-    std::fs::create_dir_all(&scratch).map_err(|err| err.to_string())?;
+    // Made here, for this user alone: one that is there may be another user's,
+    // with links that lead the writes of this run elsewhere.
+    let made = std::fs::DirBuilder::new().mode(0o700).create(&scratch);
+    made.map_err(|err| match err.kind() {
+        std::io::ErrorKind::AlreadyExists => format!(
+            "{} is there already\nrollout keeps the keys of a run in a directory it makes itself. Remove that one, or set TMPDIR to another directory.",
+            scratch.display()
+        ),
+        _ => err.to_string(),
+    })?;
     let result = rollout(options, hosts, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     result

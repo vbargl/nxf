@@ -696,6 +696,48 @@ fn unusable_scratch_is_refused() {
     }
 }
 
+/// The scratch directory of a run is made by it, for the user alone. One that
+/// is there before, as another user could make it, is refused before any
+/// machine is asked, and is left as it is.
+#[test]
+fn scratch_is_its_own() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let tmp = fx.dir.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    fx.set("TMPDIR", &tmp);
+    // A shell that makes the directory of its process, and then becomes nxf.
+    let planted = std::process::Command::new("sh")
+        .args(["-c", r#"mkdir "$TMPDIR/nxf-rollout.$$" && exec "$@""#, "sh"])
+        .args([common::NXF, "rollout", "--config", &hosts])
+        .args(["--template", "x#y", "--yes"])
+        .env_clear()
+        .envs(&fx.env)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(planted.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&planted.stderr);
+    assert_contains(&said, &format!("✗ {}/nxf-rollout.", tmp.display()));
+    assert_contains(&said, " is there already\n");
+    assert_eq!(ssh_log(&fx), "");
+    assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 1);
+
+    // A nix that tells the mode of the directory of the nxf that runs it.
+    write_script(
+        &fx.dir.join("bin/nix"),
+        r#"#!/bin/sh
+[ "$1" = copy ] || { echo '{"storePath": "/nix/store/template-source"}'; exit; }
+stat -c %a "$TMPDIR/nxf-rollout.$PPID" > "$TMPDIR/mode"
+"#,
+    );
+    fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"])
+        .ok();
+    assert_eq!(
+        std::fs::read_to_string(tmp.join("mode")).unwrap().trim(),
+        "700"
+    );
+}
+
 /// What the operator names reaches the shell of the machine as one word each,
 /// whatever it holds: a template name with a space, an image address with a quote.
 #[test]
