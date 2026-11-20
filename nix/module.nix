@@ -118,7 +118,7 @@ in
               };
               email = lib.mkOption {
                 type = lib.types.str;
-                description = "Their e-mail address; it may be empty.";
+                description = "The e-mail address of the author and the committer; it may be empty.";
               };
             };
           }
