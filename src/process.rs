@@ -15,7 +15,7 @@ use crate::text::{last_line, plain};
 const TAIL: usize = 8;
 /// What a script that the deadline cut short says for itself.
 pub const TIMED_OUT: &str = "timed out";
-/// How long the output of a program that ended is waited for.
+/// How long the output of a program that ended is waited for, all of it.
 const DRAIN: Duration = Duration::from_secs(1);
 
 /// The program of a command, without the directory it is run from.
@@ -137,11 +137,14 @@ impl Drain {
         Drain { held, ended }
     }
 
-    /// The text read so far, after waiting for the end of the pipe when asked
-    /// to: a child of the program may hold the pipe open after it ended.
-    fn text(self, wait: bool) -> String {
-        if wait {
-            let _ = self.ended.recv_timeout(DRAIN);
+    /// The text read so far, after waiting for the end of the pipe until the
+    /// given time, when there is one: a child of the program may hold the pipe
+    /// open after it ended.
+    fn text(self, until: Option<Instant>) -> String {
+        if let Some(until) = until {
+            let _ = self
+                .ended
+                .recv_timeout(until.saturating_duration_since(Instant::now()));
         }
         let held = self
             .held
@@ -231,11 +234,11 @@ pub fn run_within(
         }
     };
     // A killed program may have children that hold its pipes open.
-    let ended = status.is_some();
+    let until = status.is_some().then(|| Instant::now() + DRAIN);
     Ok(Finished {
         status,
-        stdout: stdout.text(ended),
-        stderr: stderr.map_or_else(String::new, |stderr| stderr.text(ended)),
+        stdout: stdout.text(until),
+        stderr: stderr.map_or_else(String::new, |stderr| stderr.text(until)),
     })
 }
 

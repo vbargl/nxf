@@ -147,17 +147,26 @@ fn deadline() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
-/// A program that ended is not waited for longer than a moment, when a child
-/// of it holds its output open; what it said is kept.
+/// A program that ended is not waited for longer than a second in all, when a
+/// child of it holds its output open; what it said is kept.
 #[test]
 fn lingering_child() {
     let _serial = serial();
     let started = Instant::now();
     let deadline = started + Duration::from_secs(30);
-    let done = process::run_within(&mut sh("sleep 20 & echo said"), deadline, false).unwrap();
+    let script = "sleep 20 & echo said; echo error >&2";
+    let done = process::run_within(&mut sh(script), deadline, false).unwrap();
     assert!(done.status.unwrap().success());
-    assert_eq!(done.stdout, "said\n");
-    assert!(started.elapsed() < Duration::from_secs(10));
+    assert_eq!(
+        (done.stdout.as_str(), done.stderr.as_str()),
+        ("said\n", "error\n")
+    );
+    // One second in all, not for each of the two pipes.
+    assert!(
+        started.elapsed() < Duration::from_millis(1700),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 /// A script passes, or says why it did not: its last line, else its status;
