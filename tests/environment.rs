@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use common::{assert_contains, fake_systems, temp_dir};
+use nxf::env;
 use nxf::flake::{self, Location};
 use nxf::nixos;
 use nxf::output::{styled, Style, RESET};
@@ -14,7 +15,7 @@ use nxf::state::{self, Remembered};
 
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
-const CHANGED: [&str; 9] = [
+const CHANGED: [&str; 12] = [
     "NO_COLOR",
     "CLICOLOR",
     "CLICOLOR_FORCE",
@@ -24,6 +25,9 @@ const CHANGED: [&str; 9] = [
     "NXF_SYSTEM",
     "NXF_UPDATER_STATE",
     "XDG_STATE_HOME",
+    "TMPDIR",
+    "NXF_TEST_ONE",
+    "NXF_TEST_TWO",
 ];
 
 /// Holds the lock and starts from an environment without the variables above.
@@ -252,4 +256,34 @@ fn state_paths() {
     assert_eq!(state::result_link(), Path::new("/user/state/result"));
     assert_eq!(state::read_marker(), Path::new("/user/state/update-read"));
     assert_eq!(state::hold_file(), Path::new("/updater/hold.json"));
+}
+
+/// A variable that is set, one that is empty and one that is not set are read
+/// by every reader of `env`: only the text and `is_set` tell empty from not set.
+#[test]
+fn readers() {
+    use std::time::Duration;
+    let _guard = environment(&[("NXF_TEST_ONE", "12"), ("NXF_TEST_TWO", "")]);
+    let (set, empty, unset) = ("NXF_TEST_ONE", "NXF_TEST_TWO", "NXF_TEST_THREE");
+    assert_eq!(env::var(set), Some(PathBuf::from("12")));
+    assert_eq!((env::var(empty), env::var(unset)), (None, None));
+    assert_eq!(env::path(set, "/default"), Path::new("12"));
+    assert_eq!(env::path(empty, "/default"), Path::new("/default"));
+    assert_eq!(env::path(unset, "/default"), Path::new("/default"));
+    assert_eq!(env::text(set), Some("12".to_string()));
+    assert_eq!(env::text(empty), Some(String::new()));
+    assert_eq!(env::text(unset), None);
+    assert_eq!([set, empty, unset].map(env::is_set), [true, true, false]);
+    assert_eq!(env::seconds(set, 5), Duration::from_secs(12));
+    assert_eq!(env::seconds(empty, 5), Duration::from_secs(5));
+    assert_eq!(env::seconds(unset, 5), Duration::from_secs(5));
+    std::env::set_var("NXF_TEST_ONE", "soon");
+    assert_eq!(env::seconds(set, 5), Duration::from_secs(5));
+}
+
+/// Temporary files go where TMPDIR says.
+#[test]
+fn temporary_files() {
+    let _guard = environment(&[("TMPDIR", "/x/tmp")]);
+    assert_eq!(env::temp_dir(), Path::new("/x/tmp"));
 }

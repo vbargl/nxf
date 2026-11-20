@@ -1,6 +1,6 @@
 //! Tests for src/text.rs: escape-sequence removal and clipping to cells.
 
-use nxf::text::{fit, strip_ansi};
+use nxf::text::{fit, last_line, strip_ansi};
 use unicode_width::UnicodeWidthStr;
 
 /// CSI and OSC sequences are removed; the text and a carriage return stay.
@@ -19,4 +19,13 @@ fn fits_in_cells() {
     assert_eq!(fit("abcdefghij", 5), "abcd…");
     assert!(fit("编译🦀👩‍💻é long", 6).width() <= 6);
     assert_eq!(fit("abc", 1), "…");
+}
+
+/// The last line is the last one with something on it, trimmed.
+#[test]
+fn last_lines() {
+    assert_eq!(last_line("one\n  two  \n\n \n"), Some("two".to_string()));
+    assert_eq!(last_line("only"), Some("only".to_string()));
+    assert_eq!(last_line(""), None);
+    assert_eq!(last_line("\n \n"), None);
 }

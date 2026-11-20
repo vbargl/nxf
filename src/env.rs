@@ -61,6 +61,8 @@ pub const HOME: &str = "HOME";
 pub const XDG_STATE_HOME: &str = "XDG_STATE_HOME";
 /// Of the system: the name of the user.
 pub const USER: &str = "USER";
+/// Of the system: the directory for temporary files.
+pub const TMPDIR: &str = "TMPDIR";
 /// Of the system: where the programs are.
 pub const PATH: &str = "PATH";
 
@@ -69,6 +71,11 @@ pub fn var(name: &str) -> Option<PathBuf> {
     std::env::var_os(name)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+}
+
+/// The directory for temporary files: `TMPDIR`, or `/tmp`.
+pub fn temp_dir() -> PathBuf {
+    std::env::temp_dir()
 }
 
 /// A path variable, or the default.

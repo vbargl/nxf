@@ -72,9 +72,9 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
     let dir = &location.dir;
     let shown = dir.display();
     let origin = if location.source == "default" {
-        "default; set NXF_FLAKE to change"
+        format!("default; set {} to change", env::FLAKE)
     } else {
-        "from NXF_FLAKE"
+        format!("from {}", env::FLAKE)
     };
     if !dir.join("flake.nix").exists() {
         return vec![check(

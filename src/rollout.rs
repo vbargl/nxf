@@ -318,8 +318,9 @@ fn install(
             .unwrap_or_else(|| KEXEC_URL.to_string())
             .replace("{arch}", &probe.arch);
         let script = format!(
-            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL {image}; else wget -qO- {image}; fi | tar -xzf -\nTMPDIR=/root/kexec setsid --wait /root/kexec/kexec/run\n",
-            image = quoted(&url)
+            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL {image}; else wget -qO- {image}; fi | tar -xzf -\n{tmpdir}=/root/kexec setsid --wait /root/kexec/kexec/run\n",
+            image = quoted(&url),
+            tmpdir = env::TMPDIR
         );
         let (ok, stdout, stderr) = link.capture("sh", &script);
         if !ok {
@@ -455,16 +456,18 @@ fn make_scratch(temp: &Path) -> Result<PathBuf, String> {
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(err) => {
                 return Err(format!(
-                    "cannot create {}: {err}\nrollout keeps the keys of a run there. TMPDIR names the directory it is made in.",
-                    scratch.display()
+                    "cannot create {}: {err}\nrollout keeps the keys of a run there. {} names the directory it is made in.",
+                    scratch.display(),
+                    env::TMPDIR
                 ))
             }
         }
     }
     Err(format!(
-        "{} to {} are all there already\nrollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.",
+        "{} to {} are all there already\nrollout keeps the keys of a run in a directory it makes itself. Remove them, or set {} to another directory.",
         named(0).display(),
-        named(SCRATCH_NAMES - 1).display()
+        named(SCRATCH_NAMES - 1).display(),
+        env::TMPDIR
     ))
 }
 
@@ -484,13 +487,14 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
             format!("{err}\nrollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.")
         })?;
     }
-    let temp = std::env::temp_dir();
+    let temp = env::temp_dir();
     // ssh and Nix split their options at spaces, and files under it are named in them.
     let splits = |ch: char| ch.is_whitespace() || "'\"\\".contains(ch);
     if temp.to_string_lossy().contains(splits) {
         return Err(format!(
-            "The temporary directory {} has a space, a quote or a backslash in its path\nThe options of ssh cannot name a file there. Set TMPDIR to a directory without one.",
-            temp.display()
+            "The temporary directory {} has a space, a quote or a backslash in its path\nThe options of ssh cannot name a file there. Set {} to a directory without one.",
+            temp.display(),
+            env::TMPDIR
         ));
     }
     let scratch = make_scratch(&temp)?;

@@ -20,7 +20,7 @@ pub fn location() -> Location {
     match env::var(env::FLAKE) {
         Some(dir) => Location {
             dir: std::path::absolute(&dir).unwrap_or(dir),
-            source: "NXF_FLAKE",
+            source: env::FLAKE,
         },
         None => Location {
             dir: PathBuf::from(DEFAULT_CHECKOUT),
@@ -34,8 +34,9 @@ pub fn checkout() -> Result<PathBuf, String> {
     let dir = location().dir;
     if !dir.join("flake.nix").exists() {
         return Err(format!(
-            "{} has no flake.nix; set NXF_FLAKE to the machine flake checkout.",
-            dir.display()
+            "{} has no flake.nix; set {} to the machine flake checkout.",
+            dir.display(),
+            env::FLAKE
         ));
     }
     Ok(dir)
