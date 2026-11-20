@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use crate::fleet::quoted;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::text::plain;
@@ -432,7 +433,8 @@ fn install(
             .unwrap_or_else(|| KEXEC_URL.to_string())
             .replace("{arch}", &probe.arch);
         let script = format!(
-            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL '{url}'; else wget -qO- '{url}'; fi | tar -xzf -\nTMPDIR=/root/kexec setsid --wait /root/kexec/kexec/run\n"
+            "set -e\nmkdir -p /root/kexec && cd /root/kexec\nif command -v curl >/dev/null 2>&1; then curl -fsSL {image}; else wget -qO- {image}; fi | tar -xzf -\nTMPDIR=/root/kexec setsid --wait /root/kexec/kexec/run\n",
+            image = quoted(&url)
         );
         let (ok, stdout, stderr) = link.capture("sh", &script);
         if !ok {
@@ -453,10 +455,11 @@ fn install(
 
     output::start("Founding the machine flake");
     copy(&link, &[package, source], scratch)?;
-    let nxf = format!("{}/bin/nxf", package.display());
+    // What the operator and the file system name is one word each to the machine's shell.
+    let nxf = quoted(&format!("{}/bin/nxf", package.display()));
+    let template = quoted(&format!("path:{}#{name}", source.display()));
     let mut init = format!(
-        "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template path:{}#{name} --hardware",
-        source.display()
+        "rm -rf /tmp/nxf-machine && {nxf} init /tmp/nxf-machine --template {template} --hardware"
     );
     if let Some(files) = &files {
         upload(&link, files, "/tmp/nxf-files")?;

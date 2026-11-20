@@ -717,3 +717,55 @@ fn unusable_scratch_is_refused() {
     );
     assert_eq!(ssh_log(&fx), "");
 }
+
+/// What the operator names reaches the shell of the machine as one word each,
+/// whatever it holds: a template name with a space, an image address with a quote.
+#[test]
+fn names_reach_the_machine_whole() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let dir = fx.dir.join("machines");
+    std::fs::write(dir.join("installer.probe"), ROOT_INSTALLER).unwrap();
+    std::fs::write(
+        dir.join("node-1.probe"),
+        "nxf-probe managed=no installer=no uid=0 arch=x86_64\nnxf-os Ubuntu 24.04.5 LTS\n",
+    )
+    .unwrap();
+    // An ssh whose machine keeps the script that starts the installer, and is one from then on.
+    let ssh = dir.join("ssh-starting");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+if [[ ${{*: -1}} == sh ]]; then
+    script=$(cat)
+    [[ $script == *kexec* ]] || exec '{dir}/ssh' "$@" <<< "$script"
+    echo "$script" > '{dir}/kexec.sh'
+    exec cp '{dir}/installer.probe' '{dir}/node-1.probe'
+fi
+exec '{dir}/ssh' "$@"
+"#,
+            dir = dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#my machine",
+        "--yes",
+        "--kexec-url",
+        "http://mirror/it's/{arch}.tar.gz",
+    ]);
+    result.ok();
+    assert_contains(
+        &ssh_log(&fx),
+        "node-1 rm -rf /tmp/nxf-machine && /nix/store/nxf-package/bin/nxf init /tmp/nxf-machine --template 'path:/nix/store/template-source#my machine' --hardware\n",
+    );
+    let script = std::fs::read_to_string(dir.join("kexec.sh")).unwrap();
+    assert_contains(
+        &script,
+        "curl -fsSL \"http://mirror/it's/x86_64.tar.gz\"; else",
+    );
+}
