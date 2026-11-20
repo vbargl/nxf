@@ -21,10 +21,43 @@ let
     "report"
   ];
 
-  gitConfig = lib.optional (auto.gitCredentialsFile != null) {
+  gitConfig = lib.optional (auto.git.credentialsFile != null) {
     key = "credential.helper";
-    value = "store --file=${auto.gitCredentialsFile}";
+    value = "store --file=${auto.git.credentialsFile}";
   };
+
+  sudoRules = [
+    {
+      groups = [ group ];
+      commands = [
+        {
+          command = "ALL";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
+  ];
+
+  # A file with tokens must stay out of the store, which everyone can read. A
+  # path literal is copied there when it is interpolated.
+  secretFile =
+    option: example: file:
+    let
+      name = "services.nxf.autoUpdate.${option}";
+    in
+    [
+      {
+        assertion = file == null || !lib.hasPrefix "${builtins.storeDir}/" (toString file);
+        message = "${name} is in the Nix store, where everyone can read the tokens: set it to a path outside the store, such as \"${example}\".";
+      }
+      {
+        assertion = !builtins.isPath file;
+        message = "${name} is a Nix path, which Nix copies into the store, where everyone can read the tokens: give it as a string, such as \"${example}\".";
+      }
+    ];
+
+  # systemd takes the seconds as a time span.
+  span = seconds: "${toString seconds}s";
 
   # The update may have started before a switch; use the running system's tools.
   tools = ''
@@ -94,9 +127,9 @@ in
       };
 
       randomizedDelay = lib.mkOption {
-        type = lib.types.str;
-        default = "1h";
-        description = "The update starts up to this long after the schedule.";
+        type = lib.types.ints.unsigned;
+        default = 3600;
+        description = "The update starts up to this many seconds after the schedule.";
       };
 
       fixedDelay = lib.mkOption {
@@ -108,57 +141,10 @@ in
         '';
       };
 
-      gitIdentity = lib.mkOption {
-        type = lib.types.nullOr (
-          lib.types.submodule {
-            options = {
-              name = lib.mkOption {
-                type = lib.types.str;
-                description = "The name of the author and the committer.";
-              };
-              email = lib.mkOption {
-                type = lib.types.str;
-                description = "The e-mail address of the author and the committer; it may be empty.";
-              };
-            };
-          }
-        );
-        default = {
-          name = "nxf";
-          email = "";
-        };
-        defaultText = lib.literalExpression ''{ name = "nxf"; email = ""; }'';
-        description = ''
-          The identity of the lockfile commits of the automatic update. The
-          e-mail is empty by default: the commits stay on the machine and
-          nobody writes to their author. With null, Git's own configuration
-          decides. The commits that members of the group make by hand carry
-          their own identity.
-        '';
-      };
-
-      gitCredentialsFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        example = "/run/secrets/nxf-git-credentials";
-        description = ''
-          A file in the format of git-credential-store, one
-          `https://user:token@host` line per host, for inputs fetched with Git
-          over HTTPS. It may be anywhere outside the Nix store; the user
-          `nxf` must be able to read it, and nobody else should.
-        '';
-      };
-
-      nixConfigFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        example = "/run/secrets/nxf-nix.conf";
-        description = ''
-          A nix.conf fragment for the update only, such as
-          `access-tokens = github.com=<token>` for `github:` inputs or
-          `netrc-file = <path>` for tarball inputs. Like `gitCredentialsFile`,
-          it may be anywhere the user `nxf` can read.
-        '';
+      updateTimeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 10800;
+        description = "The update is stopped after this many seconds.";
       };
 
       strategy = lib.mkOption {
@@ -170,7 +156,7 @@ in
           updated by hand. With `flag` it tries, and an update that cannot be
           fetched or does not build is only recorded: the run goes on and
           does not fail, and `nxf status` shows the record. With `report` it
-          does the same, and the `failureHook` runs after the run.
+          does the same, and the `hooks.failure` runs after the run.
         '';
       };
 
@@ -190,76 +176,131 @@ in
         '';
       };
 
-      healthChecks = lib.mkOption {
-        type = lib.types.attrsOf lib.types.lines;
-        default = { };
-        example = lib.literalExpression ''
-          {
-            "10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
-            "20-k3s" = "systemctl is-active --quiet k3s";
-          }
-        '';
+      health = {
+        checks = lib.mkOption {
+          type = lib.types.attrsOf lib.types.lines;
+          default = { };
+          example = lib.literalExpression ''
+            {
+              "10-units" = "test -z \"$(systemctl --failed --no-legend)\"";
+              "20-k3s" = "systemctl is-active --quiet k3s";
+            }
+          '';
+          description = ''
+            Shell scripts that must all succeed after an automatic switch. They
+            are those of the new configuration, run in name order, and are
+            repeated until all pass or `health.timeout` runs out. Then the
+            previous system is activated again and the revision is not tried
+            again until a newer one comes.
+          '';
+        };
+
+        timeout = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 300;
+          description = "Seconds the health checks have to pass.";
+        };
+
+        interval = lib.mkOption {
+          type = lib.types.ints.unsigned;
+          default = 10;
+          description = "Seconds between two rounds of health checks.";
+        };
+      };
+
+      hooks = {
+        check = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+          example = ''
+            test "$(curl --fail --silent https://example.org/rollout)" = open
+          '';
+          description = ''
+            A shell script that is asked before an automatic update starts.
+            When one of its commands fails, the run is skipped: it reports
+            `skipped` with the last line the script printed, and nothing is
+            fetched, built or activated. Updates run by hand do not ask it.
+          '';
+        };
+
+        failure = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+          example = ''
+            curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
+          '';
+          description = ''
+            A shell script that runs after an automatic update in which a
+            task failed, such as a switch or a health check, which could not
+            update an input whose strategy is `report`, or which could not go
+            on, before or after its tasks. It finds the results of the run as
+            JSON in the file `$NXF_RESULTS`.
+            When it fails itself, that is reported as the result `hook`.
+          '';
+        };
+
+        timeout = lib.mkOption {
+          type = lib.types.ints.positive;
+          default = 60;
+          description = "Seconds the `hooks.check` and the `hooks.failure` each have to end.";
+        };
+      };
+
+      git = {
+        identity = lib.mkOption {
+          type = lib.types.nullOr (
+            lib.types.submodule {
+              options = {
+                name = lib.mkOption {
+                  type = lib.types.str;
+                  description = "The name of the author and the committer.";
+                };
+                email = lib.mkOption {
+                  type = lib.types.str;
+                  description = "The e-mail address of the author and the committer; it may be empty.";
+                };
+              };
+            }
+          );
+          default = {
+            name = "nxf";
+            email = "";
+          };
+          defaultText = lib.literalExpression ''{ name = "nxf"; email = ""; }'';
+          description = ''
+            The identity of the lockfile commits of the automatic update. The
+            e-mail is empty by default: the commits stay on the machine and
+            nobody writes to their author. With null, Git's own configuration
+            decides. The commits that members of the group make by hand carry
+            their own identity.
+          '';
+        };
+
+        credentialsFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.path;
+          default = null;
+          example = "/run/secrets/nxf-git-credentials";
+          description = ''
+            A file in the format of git-credential-store, one
+            `https://user:token@host` line per host, for inputs fetched with Git
+            over HTTPS. It may be anywhere outside the Nix store; the user
+            `nxf` must be able to read it, and nobody else should. Give it as a
+            string: Nix copies a path literal into the store.
+          '';
+        };
+      };
+
+      nixConfigFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/nxf-nix.conf";
         description = ''
-          Shell scripts that must all succeed after an automatic switch. They
-          are those of the new configuration, run in name order, and are
-          repeated until all pass or `healthTimeout` runs out. Then the
-          previous system is activated again and the revision is not tried
-          again until a newer one comes.
+          A nix.conf fragment for the update only, such as
+          `access-tokens = github.com=<token>` for `github:` inputs or
+          `netrc-file = <path>` for tarball inputs. It may be anywhere outside the
+          Nix store; the user `nxf` must be able to read it, and nobody else
+          should. Give it as a string: Nix copies a path literal into the store.
         '';
-      };
-
-      healthTimeout = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 300;
-        description = "Seconds the health checks have to pass.";
-      };
-
-      healthInterval = lib.mkOption {
-        type = lib.types.ints.unsigned;
-        default = 10;
-        description = "Seconds between two rounds of health checks.";
-      };
-
-      checkHook = lib.mkOption {
-        type = lib.types.lines;
-        default = "";
-        example = ''
-          test "$(curl --fail --silent https://example.org/rollout)" = open
-        '';
-        description = ''
-          A shell script that is asked before an automatic update starts.
-          When one of its commands fails, the run is skipped: it reports
-          `skipped` with the last line the script printed, and nothing is
-          fetched, built or activated. Updates run by hand do not ask it.
-        '';
-      };
-
-      failureHook = lib.mkOption {
-        type = lib.types.lines;
-        default = "";
-        example = ''
-          curl --fail --silent --request POST --data @"$NXF_RESULTS" https://example.org/rollout/pause
-        '';
-        description = ''
-          A shell script that runs after an automatic update in which a
-          task failed, such as a switch or a health check, which could not
-          update an input whose strategy is `report`, or which could not go
-          on, before or after its tasks. It finds the results of the run as
-          JSON in the file `$NXF_RESULTS`.
-          When it fails itself, that is reported as the result `hook`.
-        '';
-      };
-
-      hookTimeout = lib.mkOption {
-        type = lib.types.ints.positive;
-        default = 60;
-        description = "Seconds the `checkHook` and the `failureHook` each have to end.";
-      };
-
-      timeout = lib.mkOption {
-        type = lib.types.str;
-        default = "3h";
-        description = "The update is stopped after this long.";
       };
     };
   };
@@ -284,15 +325,13 @@ in
         inherit group;
         description = "nxf automatic updates";
       };
-      security.sudo.extraRules = [
+      security.sudo.extraRules = lib.mkIf config.security.sudo.enable sudoRules;
+      security.sudo-rs.extraRules = lib.mkIf config.security.sudo-rs.enable sudoRules;
+
+      assertions = [
         {
-          groups = [ group ];
-          commands = [
-            {
-              command = "ALL";
-              options = [ "NOPASSWD" ];
-            }
-          ];
+          assertion = config.security.sudo.enable || config.security.sudo-rs.enable;
+          message = "services.nxf needs sudo: the group ${group} switches the system with it. Set security.sudo.enable or security.sudo-rs.enable to true.";
         }
       ];
 
@@ -351,6 +390,15 @@ in
     })
 
     (lib.mkIf auto.enable {
+      assertions = [
+        {
+          assertion = cfg.flake != "";
+          message = "services.nxf.autoUpdate.enable needs services.nxf.flake: set it to the directory of the machine flake, such as \"/etc/nixos\".";
+        }
+      ]
+      ++ secretFile "git.credentialsFile" "/run/secrets/nxf-git-credentials" auto.git.credentialsFile
+      ++ secretFile "nixConfigFile" "/run/secrets/nxf-nix.conf" auto.nixConfigFile;
+
       environment.etc =
         lib.mapAttrs' (
           name: script:
@@ -362,16 +410,16 @@ in
               ${script}
             '';
           }
-        ) auto.healthChecks
-        // lib.optionalAttrs (auto.healthChecks != { }) {
+        ) auto.health.checks
+        // lib.optionalAttrs (auto.health.checks != { }) {
           # nxf reads the times after the switch, so those of the new system count.
           "nxf/health.conf".text = ''
-            timeout=${toString auto.healthTimeout}
-            interval=${toString auto.healthInterval}
+            timeout=${toString auto.health.timeout}
+            interval=${toString auto.health.interval}
           '';
         }
-        // hook "check" auto.checkHook
-        // hook "failure" auto.failureHook;
+        // hook "check" auto.hooks.check
+        // hook "failure" auto.hooks.failure;
 
       systemd.services.nxf-auto-update = {
         description = "Update the machine flake with nxf, build it and switch to it";
@@ -402,7 +450,7 @@ in
           NXF_FLAKE = cfg.flake;
           # Build records every member's `nxf status` can read.
           NXF_STATE = "/var/lib/nxf";
-          NXF_HOOK_TIMEOUT = toString auto.hookTimeout;
+          NXF_HOOK_TIMEOUT = toString auto.hooks.timeout;
           # Unattended: never ask, never hang.
           GIT_TERMINAL_PROMPT = "0";
           GIT_SSH_COMMAND = "${pkgs.openssh}/bin/ssh -o BatchMode=yes -o ConnectTimeout=30";
@@ -410,11 +458,11 @@ in
         // lib.optionalAttrs (gitConfig != [ ]) (
           gitConfigEnvironment // { GIT_CONFIG_COUNT = toString (lib.length gitConfig); }
         )
-        // lib.optionalAttrs (auto.gitIdentity != null) {
-          GIT_AUTHOR_NAME = auto.gitIdentity.name;
-          GIT_AUTHOR_EMAIL = auto.gitIdentity.email;
-          GIT_COMMITTER_NAME = auto.gitIdentity.name;
-          GIT_COMMITTER_EMAIL = auto.gitIdentity.email;
+        // lib.optionalAttrs (auto.git.identity != null) {
+          GIT_AUTHOR_NAME = auto.git.identity.name;
+          GIT_AUTHOR_EMAIL = auto.git.identity.email;
+          GIT_COMMITTER_NAME = auto.git.identity.name;
+          GIT_COMMITTER_EMAIL = auto.git.identity.email;
         }
         // lib.optionalAttrs (auto.nixConfigFile != null) {
           NIX_CONFIG = "!include ${auto.nixConfigFile}";
@@ -429,7 +477,7 @@ in
           CacheDirectory = "nxf";
           CacheDirectoryMode = "0750";
           ExecStart = "${lib.getExe cfg.package} auto-update";
-          TimeoutStartSec = auto.timeout;
+          TimeoutStartSec = span auto.updateTimeout;
           Nice = 10;
           IOSchedulingClass = "idle";
         };
@@ -439,7 +487,7 @@ in
         wantedBy = [ "timers.target" ];
         timerConfig = {
           OnCalendar = auto.schedule;
-          RandomizedDelaySec = auto.randomizedDelay;
+          RandomizedDelaySec = span auto.randomizedDelay;
           FixedRandomDelay = auto.fixedDelay;
           Persistent = true;
         };
