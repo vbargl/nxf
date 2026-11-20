@@ -199,6 +199,25 @@ fn relative_profile_links() {
     );
 }
 
+/// A restart that fails does not fail the installation: it says that the
+/// machine was not restarted and what systemctl said.
+#[test]
+fn reboot_fails() {
+    let (fx, _root) = installer();
+    write_script(
+        &fx.systemctl,
+        "#!/bin/sh\necho 'cannot reach the bus' >&2\nexit 1\n",
+    );
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--reboot"]);
+    result.ok();
+    assert_contains(
+        &result.stdout,
+        "! The machine was not restarted; restart it by hand.\n",
+    );
+    assert_contains(&result.stdout, "systemctl exited with status 1.\n");
+    assert_contains(&result.stdout, "cannot reach the bus");
+}
+
 /// With --reboot the restart is asked for once the system is installed,
 /// and the advice to restart by hand is left out.
 #[test]
@@ -237,7 +256,7 @@ fn failure_records_nothing() {
     assert_ne!(result.code, 0);
     assert_contains(
         &result.stderr,
-        "✗ nixos-install failed\n  Command exited with status 1.\n  error: builder failed",
+        "✗ error: builder failed\n  nixos-install exited with status 1.",
     );
     assert!(!root.join("var/lib/nxf/installed.json").exists());
     assert_lacks(&result.stdout, "NixOS installed");
@@ -274,11 +293,16 @@ fn refuses_a_managed_system() {
 }
 
 /// With `--reboot` the machine is restarted through the stand-in for systemd,
-/// not through whichever `systemctl` the path holds.
+/// not through whichever `systemctl` the path holds, and with no input.
 #[test]
 fn reboots_through_the_stand_in() {
     let (mut fx, _) = installer();
-    let noting = |log: &str| format!("#!/bin/sh\necho \"$*\" >> '{}/{log}'\n", fx.dir.display());
+    let noting = |log: &str| {
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{0}/{log}'\nreadlink /proc/self/fd/0 >> '{0}/{log}'\n",
+            fx.dir.display()
+        )
+    };
     // The one of the path stays in front and only notes a call: a call that
     // went by the path must fail this test, not restart the machine it runs on.
     write_script(&fx.systemctl, &noting("path.log"));
@@ -290,9 +314,32 @@ fn reboots_through_the_stand_in() {
     assert_contains(&result.stdout, "\n  Restarting into the new system.\n");
     assert_eq!(
         std::fs::read_to_string(fx.dir.join("stand-in.log")).ok(),
-        Some("reboot\n".to_string())
+        Some("reboot\n/dev/null\n".to_string())
     );
     assert!(!fx.dir.join("path.log").exists());
+}
+
+/// What an installation writes has the mask of the caller, also when the group
+/// may write the checkout: install does not work on that checkout.
+#[test]
+fn keeps_the_mask() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let (fx, root) = installer();
+    std::fs::set_permissions(&fx.checkout, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    let mut command = fx.command(&["install", fx.checkout.to_str().unwrap()]);
+    unsafe {
+        command.pre_exec(|| {
+            libc::umask(0o022);
+            Ok(())
+        })
+    };
+    assert!(command.output().unwrap().status.success());
+    let marker = root.join("var/lib/nxf/installed.json");
+    assert_eq!(
+        std::fs::metadata(marker).unwrap().permissions().mode() & 0o020,
+        0
+    );
 }
 
 /// The root is in memory when the last `/` line of the mounts says so: that

@@ -1,12 +1,12 @@
 //! Terminal presentation shared by the commands and tool wrappers.
 
 use std::io::{BufRead, BufReader, IsTerminal, Write};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use crate::progress;
 use crate::text::{fit, strip_ansi};
+use crate::{env, process, progress};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -80,23 +80,19 @@ fn capturing() -> bool {
     screen().captured.is_some()
 }
 
-fn set(name: &str) -> Option<String> {
-    std::env::var(name).ok()
-}
-
 fn plain_requested() -> bool {
-    std::env::var_os("NO_COLOR").is_some() || set("CLICOLOR").as_deref() == Some("0")
+    env::is_set(env::NO_COLOR) || env::text(env::CLICOLOR).as_deref() == Some("0")
 }
 
 fn capable_terminal() -> bool {
-    std::io::stdout().is_terminal() && set("TERM").as_deref() != Some("dumb")
+    std::io::stdout().is_terminal() && env::text(env::TERM).as_deref() != Some("dumb")
 }
 
 fn colored() -> bool {
     if capturing() || plain_requested() {
         return false;
     }
-    match set("CLICOLOR_FORCE").as_deref() {
+    match env::text(env::CLICOLOR_FORCE).as_deref() {
         Some(force) if !force.is_empty() && force != "0" => true,
         _ => capable_terminal(),
     }
@@ -147,6 +143,34 @@ pub fn line_err(text: &str) {
 /// The width of the label column that facts share.
 pub const LABEL: usize = 10;
 
+/// A count of machines, as the outcomes say it.
+pub fn machines(count: usize) -> String {
+    if count == 1 {
+        "1 machine".to_string()
+    } else {
+        format!("{count} machines")
+    }
+}
+
+/// How many characters of a revision are shown.
+pub const REVISION: usize = 12;
+
+/// The part of a revision that is shown.
+pub fn revision(revision: &str) -> String {
+    revision.chars().take(REVISION).collect()
+}
+
+/// The width of a label column that holds these names: `LABEL`, or the
+/// longest name and two more.
+pub fn widened<'a>(names: impl IntoIterator<Item = &'a str>) -> usize {
+    names
+        .into_iter()
+        .map(|name| name.chars().count() + 2)
+        .max()
+        .unwrap_or(0)
+        .max(LABEL)
+}
+
 /// What a row reports. The mark and its colour carry the state, so that the
 /// hierarchy also reads without colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,7 +183,7 @@ pub enum Mark {
 }
 
 impl Mark {
-    pub fn symbol(self) -> &'static str {
+    fn symbol(self) -> &'static str {
         match self {
             Mark::Done => "✓",
             Mark::Failed => "✗",
@@ -208,7 +232,12 @@ pub fn section(text: &str, note: &str) {
 
 /// A fact: a label in the shared column and its value.
 pub fn fact(label: &str, value: &str) {
-    indented(false, 2, &format!("{label:<LABEL$}{value}"));
+    fact_in(LABEL, label, value);
+}
+
+/// A fact whose label column is as wide as given, such as `widened` says.
+pub fn fact_in(width: usize, label: &str, value: &str) {
+    indented(false, 2, format!("{label:<width$}{value}").trim_end());
 }
 
 /// A row with its state: what happened to one thing.
@@ -219,6 +248,11 @@ pub fn row(mark: Mark, text: &str) {
         text.to_string()
     };
     indented(false, 2, &format!("{} {text}", mark.styled()));
+}
+
+/// A supporting line beneath a row, in the column of its text.
+pub fn beneath(text: &str) {
+    indented(false, 4 + LABEL, &dim(text));
 }
 
 /// A supporting fact beneath a row.
@@ -345,6 +379,7 @@ pub fn verdict(text: &str, system: &str, matches: bool) {
 }
 
 fn columns() -> usize {
+    // SAFETY: winsize is plain numbers, and TIOCGWINSZ fills the one it is given.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
     if ok && size.ws_col > 0 {
@@ -445,19 +480,7 @@ impl Monitor {
 /// Runs a tool with curated output. Its raw output stays hidden unless it
 /// fails; then the last diagnostic lines are part of the error.
 pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Result<(), String> {
-    let program = command.get_program().to_string_lossy().into_owned();
-    let (reader, writer) = os_pipe::pipe().map_err(|err| format!("cannot create a pipe: {err}"))?;
-    let stderr = writer
-        .try_clone()
-        .map_err(|err| format!("cannot create a pipe: {err}"))?;
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(writer)
-        .stderr(stderr)
-        .spawn()
-        .map_err(|err| format!("cannot run {program}: {err}"))?;
-    // The command keeps the write ends until it is dropped or reconfigured.
-    command.stdout(Stdio::null()).stderr(Stdio::null());
+    let (mut child, reader) = process::spawn_merged(command)?;
 
     let mut monitor = progress.then(|| Monitor::new(inputs));
     let mut output = String::new();
@@ -483,7 +506,7 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
     }
     let status = child
         .wait()
-        .map_err(|err| format!("cannot wait for {program}: {err}"))?;
+        .map_err(|err| format!("cannot wait for {}: {err}", process::name(command)))?;
     if status.success() {
         return Ok(());
     }
@@ -494,15 +517,5 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
         .collect::<Vec<_>>()
         .join("\n")
         .replace('\r', "\n");
-    let lines: Vec<&str> = decoded.lines().filter(|line| !line.is_empty()).collect();
-    let tail = lines[lines.len().saturating_sub(8)..].join("\n");
-    let code = status
-        .code()
-        .map(|code| code.to_string())
-        .unwrap_or_else(|| "signal".to_string());
-    Err(if tail.is_empty() {
-        format!("Command exited with status {code}.")
-    } else {
-        format!("Command exited with status {code}.\n{tail}")
-    })
+    Err(process::failure(&process::name(command), status, &decoded))
 }

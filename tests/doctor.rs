@@ -24,6 +24,14 @@ fn healthy() {
         );
     }
     assert_eq!(status_of(&result.stdout, "running"), Some("warn"));
+    // The rows are indented like every row, and the names stand in the label column.
+    assert!(
+        result
+            .stdout
+            .starts_with("  ✓ tools     nix, nh, git and dix are available\n"),
+        "{}",
+        result.stdout
+    );
     // One outcome ends the report.
     assert!(
         result.stdout.ends_with("\n\n✓ Checks passed, 1 warning\n"),

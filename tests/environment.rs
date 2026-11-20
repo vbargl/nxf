@@ -7,13 +7,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use common::{assert_contains, fake_systems, temp_dir};
+use nxf::env;
 use nxf::flake::{self, Location};
-use nxf::nixos::{self, Remembered};
+use nxf::nixos;
 use nxf::output::{styled, Style, RESET};
+use nxf::state::{self, Remembered};
 
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
-const CHANGED: [&str; 9] = [
+const CHANGED: [&str; 12] = [
     "NO_COLOR",
     "CLICOLOR",
     "CLICOLOR_FORCE",
@@ -23,6 +25,9 @@ const CHANGED: [&str; 9] = [
     "NXF_SYSTEM",
     "NXF_UPDATER_STATE",
     "XDG_STATE_HOME",
+    "TMPDIR",
+    "NXF_TEST_ONE",
+    "NXF_TEST_TWO",
 ];
 
 /// Holds the lock and starts from an environment without the variables above.
@@ -131,13 +136,13 @@ fn running() {
 fn state_dir() {
     {
         let _guard = environment(&[("XDG_STATE_HOME", "/x/state")]);
-        assert_eq!(nixos::state_dir(), Path::new("/x/state/nxf"));
+        assert_eq!(state::dir(), Path::new("/x/state/nxf"));
     }
     let _guard = environment(&[
         ("XDG_STATE_HOME", "/x/state"),
         ("NXF_STATE", "/var/lib/nxf"),
     ]);
-    assert_eq!(nixos::state_dir(), Path::new("/var/lib/nxf"));
+    assert_eq!(state::dir(), Path::new("/var/lib/nxf"));
 }
 
 /// A checkout the group may write makes what nxf creates writable by the
@@ -151,10 +156,10 @@ fn shared() {
     std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::set_permissions(&group, std::fs::Permissions::from_mode(0o2775)).unwrap();
     let before = unsafe { libc::umask(0o022) };
-    assert!(!nixos::share_with_group(&private));
+    assert!(!state::share_with_group(&private));
     assert_eq!(unsafe { libc::umask(0o022) }, 0o022);
-    assert!(!nixos::share_with_group(&private.join("missing")));
-    assert!(nixos::share_with_group(&group));
+    assert!(!state::share_with_group(&private.join("missing")));
+    assert!(state::share_with_group(&group));
     assert_eq!(unsafe { libc::umask(before) }, 0o002);
     std::fs::remove_dir_all(private).unwrap();
     std::fs::remove_dir_all(group).unwrap();
@@ -170,11 +175,11 @@ fn remember() {
     ]);
     // Taken under the lock: the first call starts nix-store.
     let systems = fake_systems();
-    nixos::remember("one", &systems.one);
-    nixos::remember("one", &systems.one);
+    state::remember("one", &systems.one);
+    state::remember("one", &systems.one);
     std::os::unix::fs::symlink(state.join("missing"), state.join("nxf/systems/gone")).unwrap();
     assert_eq!(
-        nixos::remembered(),
+        state::remembered(),
         [Remembered {
             key: "one".to_string(),
             system: systems.one.clone()
@@ -197,11 +202,88 @@ fn remembered_updater() {
     std::fs::create_dir_all(updater.join("systems")).unwrap();
     std::os::unix::fs::symlink(&systems.two, updater.join("systems/tree")).unwrap();
     assert_eq!(
-        nixos::remembered(),
+        state::remembered(),
         [Remembered {
             key: "tree".to_string(),
             system: systems.two.clone()
         }]
     );
     std::fs::remove_dir_all(state).unwrap();
+}
+
+/// A source that failed its health check is marked in the updater's state,
+/// with the reason, and the mark is read back by the key of the source.
+#[test]
+fn bad_marks() {
+    let updater = temp_dir("updater");
+    let _guard = environment(&[("NXF_UPDATER_STATE", updater.join("state").to_str().unwrap())]);
+    assert_eq!(state::bad("tree"), None);
+    state::mark_bad("tree", "web: timed out").unwrap();
+    assert_eq!(state::bad("tree"), Some("web: timed out".to_string()));
+    assert_eq!(state::bad("other"), None);
+    assert_contains(
+        &state::mark_bad("tree/../x", "no").unwrap_err(),
+        &updater.join("state/bad").display().to_string(),
+    );
+    std::fs::remove_dir_all(updater).unwrap();
+}
+
+/// Records go to the updater's shared directory once it is provisioned, and
+/// to the state of the user before.
+#[test]
+fn record_dir() {
+    let state_dir = temp_dir("state");
+    let updater = state_dir.join("updater");
+    let _guard = environment(&[
+        ("XDG_STATE_HOME", state_dir.to_str().unwrap()),
+        ("NXF_UPDATER_STATE", updater.to_str().unwrap()),
+    ]);
+    assert_eq!(state::record_dir(), state_dir.join("nxf/systems"));
+    std::fs::create_dir_all(updater.join("systems")).unwrap();
+    assert_eq!(state::record_dir(), updater.join("systems"));
+    assert_eq!(state::shared_records(), updater.join("systems"));
+    std::fs::remove_dir_all(state_dir).unwrap();
+}
+
+/// The files of the state have their place in the state of the user or in the
+/// updater's.
+#[test]
+fn state_paths() {
+    let _guard = environment(&[
+        ("NXF_STATE", "/user/state"),
+        ("NXF_UPDATER_STATE", "/updater"),
+    ]);
+    assert_eq!(state::result_link(), Path::new("/user/state/result"));
+    assert_eq!(state::read_marker(), Path::new("/user/state/update-read"));
+    assert_eq!(state::hold_file(), Path::new("/updater/hold.json"));
+}
+
+/// A variable that is set, one that is empty and one that is not set are read
+/// by every reader of `env`: only the text and `is_set` tell empty from not set.
+#[test]
+fn readers() {
+    use std::time::Duration;
+    let _guard = environment(&[("NXF_TEST_ONE", "12"), ("NXF_TEST_TWO", "")]);
+    let (set, empty, unset) = ("NXF_TEST_ONE", "NXF_TEST_TWO", "NXF_TEST_THREE");
+    assert_eq!(env::var(set), Some(PathBuf::from("12")));
+    assert_eq!((env::var(empty), env::var(unset)), (None, None));
+    assert_eq!(env::path(set, "/default"), Path::new("12"));
+    assert_eq!(env::path(empty, "/default"), Path::new("/default"));
+    assert_eq!(env::path(unset, "/default"), Path::new("/default"));
+    assert_eq!(env::text(set), Some("12".to_string()));
+    assert_eq!(env::text(empty), Some(String::new()));
+    assert_eq!(env::text(unset), None);
+    assert_eq!([set, empty, unset].map(env::is_set), [true, true, false]);
+    assert_eq!(env::seconds(set, 5), Duration::from_secs(12));
+    assert_eq!(env::seconds(empty, 5), Duration::from_secs(5));
+    assert_eq!(env::seconds(unset, 5), Duration::from_secs(5));
+    std::env::set_var("NXF_TEST_ONE", "soon");
+    assert_eq!(env::seconds(set, 5), Duration::from_secs(5));
+}
+
+/// Temporary files go where TMPDIR says.
+#[test]
+fn temporary_files() {
+    let _guard = environment(&[("TMPDIR", "/x/tmp")]);
+    assert_eq!(env::temp_dir(), Path::new("/x/tmp"));
 }

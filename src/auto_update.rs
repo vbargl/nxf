@@ -1,15 +1,14 @@
-//! The unattended update the timer starts. The tasks do every operation and
-//! report their results; this only decides what comes next, and saves the
-//! results for `nxf status`.
+//! The unattended update the timer starts. It decides which task comes next,
+//! checks the health of the system it switched to and returns to the one before
+//! when that fails, and saves the results for `nxf status`.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::health::{self, Health};
 use crate::tasks::{self, Outcome};
-use crate::{flake, hold, hooks, nixos, output, status, strategy};
+use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -33,7 +32,7 @@ fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
         Health::Unhealthy(failed) => failed,
     };
     // A mark that cannot be written is said, and never keeps the unhealthy system.
-    if let Some(Err(err)) = tree.map(|tree| nixos::mark_bad(tree, &failed)) {
+    if let Some(Err(err)) = tree.map(|tree| state::mark_bad(tree, &failed)) {
         failed.push_str(&format!(" | {err}"));
     }
     output::capture();
@@ -44,7 +43,7 @@ fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
         Err(err) => format!(
             "Could not return to {}: {}",
             previous.display(),
-            err.replace('\n', " | ")
+            process::cause_first(&err).replace('\n', " | ")
         ),
     };
     Some(outcome("health", "failed", format!("{failed} | {effect}")))
@@ -92,7 +91,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     if checkout.matches {
         return Ok(());
     }
-    if let Some(reason) = checkout.tree.as_deref().and_then(nixos::bad) {
+    if let Some(reason) = checkout.tree.as_deref().and_then(state::bad) {
         results.push(outcome(
             "switch",
             "skipped",
@@ -109,17 +108,11 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     Ok(())
 }
 
-fn save(state: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
-    let time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+fn save(dir: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
     let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
-    let report = json!({"time": time, "results": list});
-    let file = state.join("update.json");
-    let temporary = state.join("update.json.tmp");
-    std::fs::create_dir_all(state)
-        .and_then(|()| std::fs::write(&temporary, format!("{report:#}\n")))
-        .and_then(|()| std::fs::rename(&temporary, &file))
+    let report = json!({"time": time::now(), "results": list});
+    let file = state::update_file(dir);
+    process::write_atomic(&file, &format!("{report:#}\n"))
         .map_err(|err| format!("cannot save {}: {err}", file.display()))?;
     Ok(file)
 }
@@ -139,7 +132,11 @@ pub fn run(state: &Path) -> Result<bool, String> {
     let mut results = Vec::new();
     let mut error = decide(&mut results).err();
     if let Some(error) = &error {
-        results.push(outcome("update", "failed", error.replace('\n', " | ")));
+        results.push(outcome(
+            "update",
+            "failed",
+            process::cause_first(error).replace('\n', " | "),
+        ));
     }
     let saved = save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
     // The hook reads the saved results; when it fails, that is a result too.

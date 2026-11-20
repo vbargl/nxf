@@ -2,12 +2,10 @@
 //! optional end, kept in the updater's state so that it survives a reboot.
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::nixos;
+use crate::{process, state, time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hold {
@@ -16,14 +14,8 @@ pub struct Hold {
     pub until: Option<u64>,
 }
 
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 fn file() -> PathBuf {
-    nixos::updater_dir().join("hold.json")
+    state::hold_file()
 }
 
 /// The hold as saved, even when it has ended.
@@ -38,7 +30,7 @@ fn saved() -> Option<Hold> {
 
 /// The hold in effect now, if any.
 pub fn active() -> Option<Hold> {
-    saved().filter(|hold| hold.until.is_none_or(|until| now() < until))
+    saved().filter(|hold| hold.until.is_none_or(|until| time::now() < until))
 }
 
 fn denied(action: &str, err: std::io::Error) -> String {
@@ -51,22 +43,11 @@ fn denied(action: &str, err: std::io::Error) -> String {
 pub fn set(reason: &str, until: Option<u64>) -> Result<Hold, String> {
     let hold = Hold {
         reason: reason.to_string(),
-        since: now(),
+        since: time::now(),
         until,
     };
-    let dir = nixos::updater_dir();
-    let temporary = dir.join(format!("hold.json.{}.tmp", std::process::id()));
-    let text = format!(
-        "{:#}\n",
-        json!({"reason": hold.reason, "since": hold.since, "until": hold.until})
-    );
-    std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(&temporary, text))
-        .and_then(|()| std::fs::rename(&temporary, file()))
-        .map_err(|err| {
-            let _ = std::fs::remove_file(&temporary);
-            denied("write", err)
-        })?;
+    let text = format!("{:#}\n", hold.to_json());
+    process::write_atomic(&file(), &text).map_err(|err| denied("write", err))?;
     Ok(hold)
 }
 
@@ -107,40 +88,25 @@ pub fn duration(text: &str) -> Result<u64, String> {
         .ok_or_else(invalid)
 }
 
-/// A point in time as `date --date` understands it, in the local time zone.
-pub fn time(text: &str) -> Result<u64, String> {
-    let output = Command::new("date")
-        .args(["--date", text, "+%s"])
-        .output()
-        .map_err(|err| format!("cannot run date: {err}"))?;
-    let parsed = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<u64>();
-    match parsed {
-        Ok(time) if output.status.success() => Ok(time),
-        _ => Err(format!(
-            "Invalid time '{text}'; use a date such as 2030-01-31 or '2030-01-31 18:00'."
-        )),
+/// The end of a hold from the options of the command: a time, a duration from
+/// now, or none. It lies in the future.
+pub fn end(until: Option<String>, duration: Option<String>) -> Result<Option<u64>, String> {
+    let end = match (until, duration) {
+        (Some(until), _) => Some(time::parse(&until)?),
+        (None, Some(duration)) => Some(time::now() + self::duration(&duration)?),
+        (None, None) => None,
+    };
+    if end.is_some_and(|end| end <= time::now()) {
+        return Err("The hold would end in the past.".to_string());
     }
-}
-
-/// A time for people, in the local time zone.
-pub fn shown(time: u64) -> String {
-    Command::new("date")
-        .args(["--date", &format!("@{time}"), "+%Y-%m-%d %H:%M"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| format!("@{time}"))
+    Ok(end)
 }
 
 impl Hold {
     /// The reason, and when the hold ends.
     pub fn describe(&self) -> String {
         match self.until {
-            Some(until) => format!("{} (until {})", self.reason, shown(until)),
+            Some(until) => format!("{} (until {})", self.reason, time::shown(until)),
             None => format!("{} (until released)", self.reason),
         }
     }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
 use crate::status::system_commit;
-use crate::{flake, git, nixos, output};
+use crate::{env, flake, git, nixos, output, state};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -30,17 +30,18 @@ pub fn check(level: Level, name: &'static str, message: String) -> Check {
 }
 
 fn on_path(tool: &str) -> bool {
-    std::env::var_os("PATH")
+    env::var(env::PATH)
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
 }
 
 fn writable(path: &Path) -> bool {
+    // SAFETY: the path is a C string that lives through the call.
     CString::new(path.as_os_str().as_bytes())
         .is_ok_and(|path| unsafe { libc::access(path.as_ptr(), libc::W_OK) } == 0)
 }
 
 fn user() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "you".to_string())
+    env::text(env::USER).unwrap_or_else(|| "you".to_string())
 }
 
 pub fn tools() -> Check {
@@ -71,9 +72,9 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
     let dir = &location.dir;
     let shown = dir.display();
     let origin = if location.source == "default" {
-        "default; set NXF_FLAKE to change"
+        format!("default; set {} to change", env::FLAKE)
     } else {
-        "from NXF_FLAKE"
+        format!("from {}", env::FLAKE)
     };
     if !dir.join("flake.nix").exists() {
         return vec![check(
@@ -172,7 +173,7 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
 }
 
 fn state() -> Check {
-    let dir = nixos::state_dir();
+    let dir = state::dir();
     // The state directory may not exist yet; its nearest existing parent decides.
     let mut existing: PathBuf = dir.clone();
     while !existing.exists() {
@@ -181,7 +182,7 @@ fn state() -> Check {
             None => break,
         }
     }
-    if nixos::writable_directory(&existing) {
+    if state::writable_directory(&existing) {
         check(
             Level::Ok,
             "state",
@@ -203,9 +204,9 @@ fn state() -> Check {
 }
 
 fn records() -> Check {
-    let shared = nixos::updater_dir().join("systems");
-    let destination = nixos::record_dir();
-    if shared.exists() && !nixos::writable_directory(&shared) {
+    let shared = state::shared_records();
+    let destination = state::record_dir();
+    if shared.exists() && !state::writable_directory(&shared) {
         let effect = if destination == shared {
             "build records cannot be saved".to_string()
         } else {
@@ -233,7 +234,7 @@ fn running(dir: Option<&Path>) -> Check {
             "skipped until the checkout checks pass".to_string(),
         );
     };
-    match system_commit(dir, &nixos::running(), &nixos::remembered()) {
+    match system_commit(dir, &nixos::running(), &state::remembered()) {
         Some(commit) => check(
             Level::Ok,
             "running",
@@ -249,7 +250,7 @@ fn running(dir: Option<&Path>) -> Check {
 }
 
 /// Runs all checks; a failure makes the doctor exit non-zero.
-pub fn checks() -> Vec<Check> {
+fn checks() -> Vec<Check> {
     let checkout = checkout(&flake::location());
     let passed = checkout.iter().all(|result| result.level != Level::Fail);
     let dir = passed.then(|| flake::location().dir);
@@ -263,20 +264,17 @@ pub fn checks() -> Vec<Check> {
 
 /// Prints one row for each check. Only the state has colour; what passed is
 /// supporting text, what did not stands out.
-pub fn print(results: &[Check], indent: usize) {
+pub fn print(results: &[Check]) {
     for result in results {
         let (mark, message) = match result.level {
             Level::Ok => (Mark::Done, output::dim(&result.message)),
             Level::Warn => (Mark::Attention, result.message.clone()),
             Level::Fail => (Mark::Failed, result.message.clone()),
         };
-        output::line(&format!(
-            "{:indent$}{} {:<width$}{message}",
-            "",
-            mark.styled(),
-            result.name,
-            width = output::LABEL
-        ));
+        output::row(
+            mark,
+            &format!("{:<width$}{message}", result.name, width = output::LABEL),
+        );
     }
 }
 
@@ -310,7 +308,7 @@ pub fn verdict(results: &[Check]) -> Result<String, String> {
 
 pub fn report() -> Result<(), String> {
     let results = checks();
-    print(&results, 0);
+    print(&results);
     output::success(&verdict(&results)?);
     Ok(())
 }

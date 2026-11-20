@@ -5,9 +5,9 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::output;
+use crate::{env, output, process};
 
-pub const DEFAULT_CHECKOUT: &str = "/etc/nixos";
+const DEFAULT_CHECKOUT: &str = "/etc/nixos";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Location {
@@ -17,10 +17,10 @@ pub struct Location {
 
 /// Where the flake checkout is said to be, and what said so.
 pub fn location() -> Location {
-    match std::env::var_os("NXF_FLAKE").filter(|value| !value.is_empty()) {
+    match env::var(env::FLAKE) {
         Some(dir) => Location {
-            dir: std::path::absolute(&dir).unwrap_or_else(|_| PathBuf::from(dir)),
-            source: "NXF_FLAKE",
+            dir: std::path::absolute(&dir).unwrap_or(dir),
+            source: env::FLAKE,
         },
         None => Location {
             dir: PathBuf::from(DEFAULT_CHECKOUT),
@@ -34,8 +34,9 @@ pub fn checkout() -> Result<PathBuf, String> {
     let dir = location().dir;
     if !dir.join("flake.nix").exists() {
         return Err(format!(
-            "{} has no flake.nix; set NXF_FLAKE to the machine flake checkout.",
-            dir.display()
+            "{} has no flake.nix; set {} to the machine flake checkout.",
+            dir.display(),
+            env::FLAKE
         ));
     }
     Ok(dir)
@@ -54,15 +55,12 @@ pub fn update(dir: &Path, inputs: &[String]) -> Result<(), String> {
 
 /// The NixOS configurations a flake directory defines.
 pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
-    let output = Command::new("nix")
-        .args(["eval", "--json"])
-        .arg(format!("{}#nixosConfigurations", dir.display()))
-        .args(["--apply", "builtins.attrNames"])
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(
+        Command::new("nix")
+            .args(["eval", "--json"])
+            .arg(format!("{}#nixosConfigurations", dir.display()))
+            .args(["--apply", "builtins.attrNames"]),
+    )?;
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
@@ -70,22 +68,18 @@ pub fn configurations(dir: &Path) -> Result<Vec<String>, String> {
 /// its inputs: the strategy for all of them and those of single ones, from
 /// `services.nxf.autoUpdate`. Null and empty where it does not have the option.
 pub fn update_settings(dir: &Path, configuration: &str) -> Result<Value, String> {
-    let output = Command::new("nix")
-        .args(["eval", "--json"])
-        .arg(format!(
-            "{}#nixosConfigurations.\"{configuration}\"",
-            dir.display()
-        ))
-        .args([
-            "--apply",
-            "c: { strategy = c.config.services.nxf.autoUpdate.strategy or null; inputs = c.config.services.nxf.autoUpdate.inputs or { }; }",
-        ])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(
+        Command::new("nix")
+            .args(["eval", "--json"])
+            .arg(format!(
+                "{}#nixosConfigurations.\"{configuration}\"",
+                dir.display()
+            ))
+            .args([
+                "--apply",
+                "c: { strategy = c.config.services.nxf.autoUpdate.strategy or null; inputs = c.config.services.nxf.autoUpdate.inputs or { }; }",
+            ]),
+    )?;
     serde_json::from_slice(&output.stdout).map_err(|err| err.to_string())
 }
 
@@ -129,10 +123,11 @@ pub fn choose(names: &[String]) -> Result<String, String> {
         [] => Err("The flake has no nixosConfigurations.".to_string()),
         [only] => Ok(only.clone()),
         several => Err(format!(
-            "The flake has {} nixosConfigurations and none is named {CONFIGURATION}\n{:<10}{}\nnxf works with one configuration for each flake; name it {CONFIGURATION} or keep only one.",
+            "The flake has {} nixosConfigurations and none is named {CONFIGURATION}\n{:<LABEL$}{}\nnxf works with one configuration for each flake; name it {CONFIGURATION} or keep only one.",
             several.len(),
             "Found",
-            several.join(", ")
+            several.join(", "),
+            LABEL = output::LABEL
         )),
     }
 }
@@ -195,7 +190,7 @@ fn input_url(original: &Value) -> String {
 }
 
 /// A root input's locked revision, or how it follows another input.
-pub fn input_rev(lock: &Value, name: &str) -> String {
+fn input_rev(lock: &Value, name: &str) -> String {
     let Some(reference) = root(lock).and_then(|inputs| inputs.get(name)) else {
         return String::new();
     };
@@ -207,7 +202,7 @@ pub fn input_rev(lock: &Value, name: &str) -> String {
         .iter()
         .find_map(|field| locked?.get(field)?.as_str())
         .unwrap_or("");
-    pin.chars().take(12).collect()
+    output::revision(pin)
 }
 
 /// The complete pin, so that comparisons do not rely on abbreviated revisions.
@@ -300,15 +295,7 @@ pub fn input_rows(lock: &Value, only: &[String], other: Option<&Value>) -> Vec<I
 }
 
 fn nix(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("nix")
-        .args(args)
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+    let output = process::run(Command::new("nix").args(args).current_dir(dir))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

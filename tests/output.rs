@@ -226,7 +226,7 @@ fn stream_failure() {
     failing.args(["-c", "echo diagnostic >&2; exit 3"]);
     assert_eq!(
         output::stream(&mut failing, true, &[]).unwrap_err(),
-        "Command exited with status 3.\ndiagnostic"
+        "sh exited with status 3.\ndiagnostic"
     );
     let mut missing = Command::new("/nonexistent/tool");
     assert_contains(
@@ -244,11 +244,50 @@ fn stream_failure_tail() {
     assert_eq!(
         error,
         format!(
-            "Command exited with status 1.\n{}",
+            "sh exited with status 1.\n{}",
             (13..=20)
                 .map(|n| n.to_string())
                 .collect::<Vec<_>>()
                 .join("\n")
         )
     );
+}
+
+/// A label column is as wide as the labels, and two more than the longest
+/// name when that is wider.
+#[test]
+fn widened() {
+    assert_eq!(output::widened([]), output::LABEL);
+    assert_eq!(output::widened(["a", "node-1"]), output::LABEL);
+    assert_eq!(output::widened(["a", "a-name-of-ten"]), 15);
+    // Characters, not bytes.
+    assert_eq!(output::widened(["ééééééééééé"]), 13);
+}
+
+/// A revision is shown by its first twelve characters, and a shorter one whole.
+#[test]
+fn revision() {
+    assert_eq!(output::REVISION, 12);
+    assert_eq!(output::revision("0123456789abcdef0123"), "0123456789ab");
+    assert_eq!(output::revision("0123456789ab"), "0123456789ab");
+    assert_eq!(output::revision("unknown"), "unknown");
+    assert_eq!(output::revision("ééééééééééééé"), "éééééééééééé");
+}
+
+/// Machines are counted in the singular for one.
+#[test]
+fn machines() {
+    assert_eq!(output::machines(0), "0 machines");
+    assert_eq!(output::machines(1), "1 machine");
+    assert_eq!(output::machines(3), "3 machines");
+}
+
+/// A fact with no value ends with its label, not with the padding after it.
+#[test]
+fn fact_without_value() {
+    output::capture();
+    output::fact_in(12, "name", "");
+    output::fact("Flake", "value");
+    let printed = output::release();
+    assert_eq!(printed.stdout, "  name\n  Flake     value\n");
 }

@@ -277,6 +277,12 @@ fn invalid_requests() {
     let result = fx.run(&["init", target.to_str().unwrap(), "--template", &missing]);
     assert_ne!(result.code, 0);
     assert_contains(&result.stderr, "cannot unpack the template");
+    // What nix said comes before the line that gives its exit status.
+    let (said, exit) = (
+        result.stderr.find("error:"),
+        result.stderr.find("nix exited with status"),
+    );
+    assert!(said.is_some() && said < exit, "{}", result.stderr);
     assert_lacks(&result.stdout, "Machine flake founded");
     assert!(!target.join(".git").exists());
 }

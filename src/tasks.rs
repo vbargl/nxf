@@ -10,9 +10,9 @@ use serde_json::{json, Value};
 use crate::output::Mark;
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
-use crate::{flake, git, nixos, output};
+use crate::{flake, git, nixos, output, process, state};
 
-pub struct Task {
+struct Task {
     pub name: &'static str,
     pub description: &'static str,
     pub takes_inputs: bool,
@@ -20,13 +20,13 @@ pub struct Task {
     phases: usize,
 }
 
-pub struct Shortcut {
+struct Shortcut {
     pub name: &'static str,
     pub description: &'static str,
     pub expands: &'static [&'static str],
 }
 
-pub const TASKS: &[Task] = &[
+const TASKS: &[Task] = &[
     Task {
         name: "update",
         description: "Update all inputs, or only the named ones, one at a time. Each update is built, then committed; one that does not build is restored.",
@@ -59,7 +59,7 @@ pub const TASKS: &[Task] = &[
     },
 ];
 
-pub const SHORTCUTS: &[Shortcut] = &[Shortcut {
+const SHORTCUTS: &[Shortcut] = &[Shortcut {
     name: "upgrade",
     description: "Update each input, then switch.",
     expands: &["update", "switch"],
@@ -214,16 +214,6 @@ struct Stopped {
     build: bool,
 }
 
-/// The cause in a tool's error, and the exit status line that led it.
-fn cause(error: &str) -> (Vec<&str>, Option<&str>) {
-    let mut lines: Vec<&str> = error.lines().collect();
-    let exit = lines
-        .first()
-        .is_some_and(|line| line.starts_with("Command exited with status"))
-        .then(|| lines.remove(0));
-    (lines, exit)
-}
-
 /// Reports a failure: the cause first, what it means for the run in muted
 /// text, then the command to retry. It does not promise an activation rollback.
 fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped) -> Stop {
@@ -235,7 +225,7 @@ fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped
     output::failure(&title);
     let mut exits: Vec<&str> = Vec::new();
     for error in causes {
-        let (lines, exit) = cause(error);
+        let (lines, exit) = process::split(error);
         if lines.is_empty() {
             output::effect_err(error);
         }
@@ -300,7 +290,7 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
                 && base.as_ref().and_then(|tree| git::worktree_diff(dir, tree)) == source
             {
                 if let Some(tree) = git::clean_tree(dir) {
-                    nixos::remember(&tree, &system);
+                    state::remember(&tree, &system);
                 }
             } else {
                 output::warning("checkout changed during the update build: this build cannot be identified by nxf status.");
@@ -350,7 +340,7 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
 /// The sources of the locked inputs stay in the Nix store, so that the next
 /// build, by whoever, needs no access to where an input came from.
 fn keep_inputs(dir: &Path) {
-    let kept = flake::archive(dir).and_then(|paths| nixos::keep_sources(&paths));
+    let kept = flake::archive(dir).and_then(|paths| state::keep_sources(&paths));
     if let Err(err) = kept {
         let cause = err.lines().last().unwrap_or_default().trim();
         output::warning(&format!(
@@ -388,12 +378,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
         inputs.to_vec()
     };
     // Input names share the label column, widened for long names.
-    let width = selected
-        .iter()
-        .map(|name| name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL);
+    let width = output::widened(selected.iter().map(String::as_str));
     let mut results = Vec::new();
     for input in &selected {
         let pending = output::pending(&format!("Checking input {input}"));
@@ -434,7 +419,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
             .iter()
             .map(|result| {
                 let error = result.error.as_deref().unwrap_or_default();
-                let (lines, exit) = cause(error);
+                let (lines, exit) = process::split(error);
                 // The first line of the cause names its input.
                 match lines.split_first() {
                     Some((first, rest)) => exit
@@ -496,7 +481,7 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
     })?;
     match tree.filter(|before| git::clean_tree(dir).as_ref() == Some(before)) {
         Some(tree) => {
-            nixos::remember(&tree, &built);
+            state::remember(&tree, &built);
             keep_inputs(dir);
         }
         None => {
@@ -608,7 +593,8 @@ impl Outcome {
     }
 }
 
-/// What a failed task said, without its styling and recovery hint.
+/// What a failed task said, without its styling and recovery hint. It reads
+/// the texts that `stopped` prints, and stops at the first of its hints.
 fn diagnostics(stderr: &str) -> String {
     strip_ansi(stderr)
         .lines()

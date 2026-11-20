@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::doctor::{self, Check, Level};
-use crate::{flake, git, output};
+use crate::{flake, git, output, process};
 
 /// The module file every founded flake gets. `nix/init-module.nix` generates
 /// it from the options of the NixOS module, and a flake check compares them.
 pub const MODULE: &str = include_str!("../nix/nxf.nix");
-pub const MODULE_FILE: &str = "nxf.nix";
+const MODULE_FILE: &str = "nxf.nix";
 
 pub struct Options {
     pub dir: Option<PathBuf>,
@@ -38,17 +38,11 @@ fn absolute(template: &str) -> String {
 }
 
 fn hardware(dir: &Path) -> Result<(), String> {
-    let output = Command::new("nixos-generate-config")
-        // The flake describes the file systems; the disks may not be partitioned yet.
-        .args(["--show-hardware-config", "--no-filesystems"])
-        .output()
-        .map_err(|err| format!("cannot run nixos-generate-config: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "nixos-generate-config failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+    let output = process::run(
+        Command::new("nixos-generate-config")
+            // The flake describes the file systems; the disks may not be partitioned yet.
+            .args(["--show-hardware-config", "--no-filesystems"]),
+    )?;
     std::fs::write(dir.join("hardware.nix"), output.stdout)
         .map_err(|err| format!("cannot write hardware.nix: {err}"))
 }
@@ -79,11 +73,17 @@ fn module(dir: &Path, host: &str) -> Check {
     }
 }
 
+/// The directory `nxf init` founds the flake in: the one given, or the checkout
+/// nxf would use.
+pub fn directory(dir: Option<&Path>) -> Result<PathBuf, String> {
+    match dir {
+        Some(dir) => std::path::absolute(dir).map_err(|err| format!("{}: {err}", dir.display())),
+        None => Ok(flake::location().dir),
+    }
+}
+
 pub fn run(options: &Options) -> Result<(), String> {
-    let dir = match &options.dir {
-        Some(dir) => std::path::absolute(dir).map_err(|err| format!("{}: {err}", dir.display()))?,
-        None => flake::location().dir,
-    };
+    let dir = directory(options.dir.as_deref())?;
     // Checked before the first write: a failure must leave nothing behind.
     if let Some(files) = options.files.as_ref().filter(|files| !files.is_dir()) {
         return Err(format!("{} is not a directory", files.display()));
@@ -104,8 +104,12 @@ pub fn run(options: &Options) -> Result<(), String> {
     output::start("Founding the machine flake");
     output::fact("Directory", &dir.to_string_lossy());
     let template = absolute(&options.template);
-    flake::unpack(&dir, &template)
-        .map_err(|err| format!("cannot unpack the template {template}:\n{err}"))?;
+    flake::unpack(&dir, &template).map_err(|err| {
+        format!(
+            "cannot unpack the template {template}:\n{}",
+            process::cause_first(&err)
+        )
+    })?;
     output::fact("Template", &template);
     if options.hardware {
         hardware(&dir)?;
@@ -113,15 +117,13 @@ pub fn run(options: &Options) -> Result<(), String> {
     }
     if let Some(files) = &options.files {
         // The machine's own values: laid over the template, never read by nxf.
-        let copied = Command::new("cp")
-            .args(["--recursive", "--no-target-directory"])
-            .arg(files)
-            .arg(&dir)
-            .status()
-            .map_err(|err| format!("cannot run cp: {err}"))?;
-        if !copied.success() {
-            return Err(format!("cannot copy {} into the flake", files.display()));
-        }
+        process::run(
+            Command::new("cp")
+                .args(["--recursive", "--no-target-directory"])
+                .arg(files)
+                .arg(&dir),
+        )
+        .map_err(|err| format!("cannot copy {} into the flake\n{err}", files.display()))?;
         output::fact("Files", &files.to_string_lossy());
     }
     let module_file = dir.join(MODULE_FILE);
@@ -160,7 +162,7 @@ pub fn run(options: &Options) -> Result<(), String> {
             checks.push(module(&dir, &configuration));
         }
     }
-    doctor::print(&checks, 2);
+    doctor::print(&checks);
     // The flake is founded whatever the checks say; they say what is left to do.
     output::success("Machine flake founded");
     match doctor::verdict(&checks) {

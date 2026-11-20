@@ -110,7 +110,7 @@ fn status() {
     set.runs_checkout("node-1", system);
     std::fs::write(
         set.updater("node-1").join("update.json"),
-        json!({"time": nxf::hold::now() - 7200, "results": []}).to_string(),
+        json!({"time": nxf::time::now() - 7200, "results": []}).to_string(),
     )
     .unwrap();
     std::fs::write(
@@ -216,7 +216,7 @@ fn hold_and_release() {
         .all(|hold| hold["reason"] == "it's a bad update"));
     let until = holds[0]["until"].as_u64().unwrap();
     assert!(holds.iter().all(|hold| hold["until"] == until));
-    assert!(until > nxf::hold::now() + 259_000);
+    assert!(until > nxf::time::now() + 259_000);
     // The machine itself is not held: the command ran elsewhere.
     assert!(!set.fx.updater.join("hold.json").exists());
 
@@ -358,19 +358,6 @@ fn invalid_requests() {
     assert_ne!(task.code, 0);
     assert_lacks(&task.stdout, "Building");
     assert!(set.calls().is_empty());
-}
-
-/// Words are quoted in forms that sh, fish and Nushell read alike.
-#[test]
-fn quoting() {
-    use nxf::fleet::quoted;
-    assert_eq!(quoted("status"), "status");
-    assert_eq!(quoted("@1790000000"), "@1790000000");
-    assert_eq!(quoted("release week"), "'release week'");
-    assert_eq!(quoted(""), "''");
-    assert_eq!(quoted("it's bad"), "\"it's bad\"");
-    assert_eq!(quoted("say \"no\" & $HOME"), "'say \"no\" & $HOME'");
-    assert_eq!(quoted("it's $HOME"), "'it'\\''s $HOME'");
 }
 
 impl Machines {

@@ -371,7 +371,9 @@ have no meaning to nxf. All nxf needs from the result is a flake with a
 configuration under `nixosConfigurations`; see [One configuration](#one-configuration).
 
 1. The directory is `NXF_FLAKE` or `/etc/nixos` unless one is given. It must
-   be empty or not exist; init never writes into existing content.
+   be empty or not exist; init never writes into existing content. When it is
+   the directory nxf would use, and the group may write it, the files are
+   writable by the group; for another directory they are not.
 2. The template is unpacked.
 3. With `--hardware`, `hardware.nix` is written by `nixos-generate-config`,
    without file systems: the flake describes those. Use it on the machine
@@ -546,7 +548,7 @@ the one before has ended without a failure.
 hosts.toml · 3 machines
 
   ✓ node-1    inputs updated, switched
-  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | Command exited with status 1. | Some changes may already be active.
+  ✗ node-2    switch failed: Upgrade stopped: activation did not finish successfully | warning: the following units failed: k3s.service | nh exited with status 1. | Some changes may already be active.
   · node-3    not started
 
 ✗ Upgrade failed on 1 of 3 machines
@@ -813,9 +815,11 @@ sudo asks them for no password.
 The module hands over only what nxf changes: the directory, `flake.lock`, the
 `.git` repository, which it sets to `core.sharedRepository = group`, and the
 state. Other files, such as `secrets/`, keep their owner and mode. nxf creates
-its files writable by the group while the checkout is, and the module makes
-Git trust the checkout for every user: Git refuses one that another user
-owns, which is the case for root and for the other members of the group.
+its files writable by the group while the checkout is, for the commands that
+work on it: the tasks, `auto-update`, `status`, `doctor`, `version --system`
+and `init` of the directory nxf would use. The module makes Git trust the checkout for
+every user: Git refuses one that another user owns, which is the case for root
+and for the other members of the group.
 
 A flake that `nxf init` or `nxf install` founds belongs to whoever ran it,
 usually root, because the user `nxf` exists only once the configuration is

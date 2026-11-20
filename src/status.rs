@@ -3,11 +3,12 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
-use crate::nixos::Remembered;
 use crate::output::{self, Mark, Style};
+use crate::state::Remembered;
 use crate::text::plain;
-use crate::{flake, git, hold, nixos};
+use crate::{flake, git, hold, nixos, process, state, time};
 
 /// A size in the largest binary unit that keeps it above one.
 fn human(bytes: u64) -> String {
@@ -23,19 +24,6 @@ fn human(bytes: u64) -> String {
     } else {
         format!("{size:.2} {}", units[unit])
     }
-}
-
-/// How long ago a time was, for people.
-pub fn age(time: u64) -> String {
-    let seconds = hold::now().saturating_sub(time);
-    let (count, unit) = match seconds {
-        0..=59 => return "just now".to_string(),
-        60..=3599 => (seconds / 60, "minute"),
-        3600..=86399 => (seconds / 3600, "hour"),
-        _ => (seconds / 86400, "day"),
-    };
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{count} {unit}{plural} ago")
 }
 
 /// A task result as a row: its state, its name with what happened, and
@@ -89,7 +77,7 @@ pub fn result_rows(results: &[Value]) -> Vec<ResultRow> {
                 // A long name keeps its distance from what follows.
                 text: format!(
                     "{name:<width$}{said}",
-                    width = output::LABEL.max(name.chars().count() + 2)
+                    width = output::widened([name.as_str()])
                 )
                 .trim_end()
                 .to_string(),
@@ -104,19 +92,52 @@ pub fn print_rows(rows: &[ResultRow]) {
     for row in rows {
         output::row(row.mark, &row.text);
         for more in &row.more {
-            output::line(&output::dim(&format!(
-                "{:width$}{more}",
-                "",
-                width = 4 + output::LABEL
-            )));
+            output::beneath(more);
         }
     }
+}
+
+/// The task results the updater saved last, with their time.
+fn saved_update() -> Result<Option<Value>, String> {
+    let file = state::update_file(&state::updater_dir());
+    if !file.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|err| format!("cannot read {}: {err}", file.display()))?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| format!("cannot parse {}: {err}", file.display()))
+}
+
+/// The latest automatic update: the saved task results, and the service's
+/// failure if it ended after them, as when it was killed before saving. The id
+/// changes whenever either does. None when there is nothing to report.
+fn update_result() -> Result<Option<Value>, String> {
+    let update = saved_update()?;
+    let saved_at = update
+        .as_ref()
+        .and_then(|update| update.get("time"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let failure = nixos::service_failure()
+        .filter(|failure| failure.get("time").and_then(Value::as_u64).unwrap_or(0) > saved_at);
+    if update.is_none() && failure.is_none() {
+        return Ok(None);
+    }
+    let mut result = json!({"update": update, "failure": failure});
+    let id = Sha256::digest(result.to_string().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    result["id"] = Value::String(id);
+    Ok(Some(result))
 }
 
 /// Prints the latest unread summary, then acknowledges this exact snapshot for
 /// the invoking user. The updater's result is shared and is never modified.
 fn update_summary() {
-    let snapshot = match nixos::update_result() {
+    let snapshot = match update_result() {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return,
         Err(err) => {
@@ -128,14 +149,14 @@ fn update_summary() {
         }
     };
     let id = snapshot["id"].as_str().unwrap_or_default();
-    let marker = nixos::state_dir().join("update-read");
+    let marker = state::read_marker();
     let seen = std::fs::read_to_string(&marker).unwrap_or_default();
     if seen.trim() == id {
         return;
     }
 
     let update = &snapshot["update"];
-    let when = update.get("time").and_then(Value::as_u64).map(age);
+    let when = update.get("time").and_then(Value::as_u64).map(time::age);
     output::section("Last automatic update", &when.unwrap_or_default());
     if !update.is_null() {
         let results = update.get("results").and_then(Value::as_array);
@@ -169,14 +190,7 @@ fn update_summary() {
 }
 
 fn mark_read(marker: &Path, id: &str) -> Result<(), String> {
-    let dir = marker.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    let temporary = dir.join(format!("update-read.{}.tmp", std::process::id()));
-    let written = std::fs::write(&temporary, id).and_then(|()| std::fs::rename(&temporary, marker));
-    written.map_err(|err| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("{}: {err}", marker.display())
-    })
+    process::write_atomic(marker, id).map_err(|err| format!("{}: {err}", marker.display()))
 }
 
 /// The flake commit that built a system, if one is remembered. Several commits
@@ -197,7 +211,7 @@ pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Op
 /// The flake commit of the running system.
 pub fn running_commit() -> Result<String, String> {
     let dir = flake::checkout()?;
-    system_commit(&dir, &nixos::running(), &nixos::remembered())
+    system_commit(&dir, &nixos::running(), &state::remembered())
         .ok_or_else(|| "The running system was not built by nxf or the updater.".to_string())
 }
 
@@ -218,7 +232,7 @@ pub fn compare() -> Result<Comparison, String> {
     let dir = flake::checkout()?;
     let lock = flake::lock(&dir)?;
     let running = nixos::running();
-    let remembered = nixos::remembered();
+    let remembered = state::remembered();
     let tree = git::clean_tree(&dir);
     let built = tree.as_ref().and_then(|tree| {
         remembered
@@ -260,26 +274,21 @@ pub struct Options {
 /// is supporting text.
 fn input_table(lock: &Value, inputs: &[String], other: Option<&Value>) {
     let rows = flake::input_rows(lock, inputs, other);
-    let names = rows
-        .iter()
-        .map(|row| row.name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL);
+    let names = output::widened(rows.iter().map(|row| row.name.as_str()));
     let revs = rows
         .iter()
         .map(|row| row.rev.chars().count())
         .max()
         .unwrap_or(0);
     for row in rows {
-        let mut text = format!("{:<names$}{:<revs$}", row.name, row.rev);
+        let mut text = format!("{:<revs$}", row.rev);
         if let Some(change) = &row.change {
             text.push_str(&format!("  {}", output::styled(change, Style::Yellow)));
         }
         if !row.url.is_empty() {
             text.push_str(&format!("  {}", output::dim(&row.url)));
         }
-        output::effect(text.trim_end());
+        output::fact_in(names, &row.name, text.trim_end());
     }
 }
 
@@ -328,8 +337,8 @@ pub fn report(options: &Options) -> Result<(), String> {
             "revision": status.running_commit,
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
-            "bad": status.tree.as_deref().and_then(nixos::bad),
-            "lastUpdate": nixos::update_result()
+            "bad": status.tree.as_deref().and_then(state::bad),
+            "lastUpdate": update_result()
                 .ok()
                 .flatten()
                 .map(|result| result["update"].clone()),
@@ -363,7 +372,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             plain(&hold.describe())
         ));
     }
-    if let Some(reason) = status.tree.as_deref().and_then(nixos::bad) {
+    if let Some(reason) = status.tree.as_deref().and_then(state::bad) {
         output::attention(&format!(
             "The checkout failed its health check and is not activated automatically: {}",
             plain(&reason)
@@ -383,14 +392,14 @@ pub fn report(options: &Options) -> Result<(), String> {
                 input_table(lock, &options.inputs, Some(&status.lock));
             }
             _ => {
-                let revision = std::process::Command::new("nixos-version")
-                    .arg("--configuration-revision")
-                    .output()
-                    .ok()
-                    .filter(|output| output.status.success())
-                    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-                    .filter(|revision| !revision.is_empty())
-                    .unwrap_or_else(|| "unknown".to_string());
+                let revision = process::capture(
+                    std::process::Command::new("nixos-version").arg("--configuration-revision"),
+                )
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|revision| !revision.is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
                 output::fact(
                     "Flake",
                     "unknown; the system was not built by nxf or the updater",

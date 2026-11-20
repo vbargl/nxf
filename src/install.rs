@@ -3,16 +3,12 @@
 //! the machine's /etc/nixos.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use serde_json::json;
 
 use crate::output::{self, Mark};
-use crate::{flake, git, hold, nixos};
-
-/// The mark of a machine that nxf installed. `nxf rollout` leaves such a
-/// machine alone.
-pub const MARKER: &str = "var/lib/nxf/installed.json";
+use crate::{env, flake, git, nixos, process, state, time};
 
 pub struct Options {
     pub dir: PathBuf,
@@ -21,15 +17,9 @@ pub struct Options {
     pub reboot: bool,
 }
 
-fn var(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
 /// Where the new system is mounted. NXF_INSTALL_ROOT stands in for it in tests.
 fn target() -> PathBuf {
-    var("NXF_INSTALL_ROOT").unwrap_or_else(|| PathBuf::from("/mnt"))
+    env::path(env::INSTALL_ROOT, "/mnt")
 }
 
 /// Whether the root of the mounts that /proc/mounts lists is in memory. The
@@ -46,8 +36,8 @@ pub fn root_in_memory(mounts: &str) -> bool {
 /// Whether this system runs from memory, as a NixOS installer does. A system
 /// that runs from a disk would be erased under itself. NXF_INSTALLER (yes or
 /// no) stands in for the answer in tests.
-pub fn installer() -> bool {
-    if let Ok(answer) = std::env::var("NXF_INSTALLER") {
+fn installer() -> bool {
+    if let Some(answer) = env::text(env::INSTALLER) {
         return answer == "yes";
     }
     std::fs::read_to_string("/proc/mounts").is_ok_and(|mounts| root_in_memory(&mounts))
@@ -58,38 +48,28 @@ pub fn installer() -> bool {
 /// memory. NXF_UPDATER_STATE and NXF_SYSTEM stand in for the two places.
 fn managed() -> bool {
     use std::os::unix::fs::PermissionsExt;
-    let record = Path::new(MARKER).file_name().unwrap_or_default();
-    nixos::updater_dir().join(record).exists()
+    state::updater_dir().join(state::INSTALLED).exists()
         || std::fs::metadata(nixos::running().join("sw/bin/nxf"))
             .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
-}
-
-fn run(command: &mut Command, what: &str) -> Result<(), String> {
-    output::stream(command, false, &[]).map_err(|err| format!("{what} failed\n{err}"))
 }
 
 /// The script of the configuration's disko layout that erases, formats and
 /// mounts the disks. NXF_DISKO stands in for it in tests.
 fn disko(dir: &Path, configuration: &str) -> Result<PathBuf, String> {
-    if let Some(script) = var("NXF_DISKO") {
+    if let Some(script) = env::var(env::DISKO) {
         return Ok(script);
     }
-    let built = Command::new("nix")
-        .args(["build", "--no-link", "--print-out-paths"])
-        .arg(format!(
-            "{}#nixosConfigurations.\"{configuration}\".config.system.build.diskoScript",
-            dir.display()
-        ))
-        .stdin(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|err| format!("cannot run nix: {err}"))?;
-    if !built.status.success() {
-        return Err(format!(
-            "The configuration has no disk layout to apply\n{}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.",
-            String::from_utf8_lossy(&built.stderr).trim()
-        ));
-    }
+    let built = process::run(
+        Command::new("nix")
+            .args(["build", "--no-link", "--print-out-paths"])
+            .arg(format!(
+                "{}#nixosConfigurations.\"{configuration}\".config.system.build.diskoScript",
+                dir.display()
+            )),
+    )
+    .map_err(|err| {
+        format!("The configuration has no disk layout to apply\n{}\nImport the disko module and describe the disks, or mount the target yourself and add --mounted.", process::cause_first(&err))
+    })?;
     Ok(PathBuf::from(
         String::from_utf8_lossy(&built.stdout).trim().to_string(),
     ))
@@ -99,20 +79,21 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent).map_err(|err| format!("{}: {err}", parent.display()))?;
     }
-    let status = Command::new("cp")
-        .args(["--archive", "--no-target-directory"])
-        .arg(from)
-        .arg(to)
-        .status()
-        .map_err(|err| format!("cannot run cp: {err}"))?;
-    if !status.success() {
-        return Err(format!(
-            "cannot copy {} to {}",
+    process::run(
+        Command::new("cp")
+            .args(["--archive", "--no-target-directory"])
+            .arg(from)
+            .arg(to),
+    )
+    .map(drop)
+    .map_err(|err| {
+        format!(
+            "cannot copy {} to {}\n{}",
             from.display(),
-            to.display()
-        ));
-    }
-    Ok(())
+            to.display(),
+            process::cause_first(&err)
+        )
+    })
 }
 
 /// Gives the machine its SSH host key now, so that the key can be told to
@@ -122,18 +103,11 @@ fn host_key(root: &Path) -> Result<String, String> {
     let public = key.with_extension("pub");
     if !public.exists() {
         std::fs::create_dir_all(root.join("etc/ssh")).map_err(|err| err.to_string())?;
-        let made = Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"])
-            .arg(&key)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|err| format!("cannot run ssh-keygen: {err}"))?;
-        if !made.status.success() {
-            return Err(format!(
-                "ssh-keygen failed: {}",
-                String::from_utf8_lossy(&made.stderr).trim()
-            ));
-        }
+        process::run(
+            Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", "", "-f"])
+                .arg(&key),
+        )?;
     }
     let line = std::fs::read_to_string(&public)
         .map_err(|err| format!("cannot read {}: {err}", public.display()))?;
@@ -144,13 +118,16 @@ fn host_key(root: &Path) -> Result<String, String> {
     }
 }
 
+/// How many links lead from the profile of the system to its store path.
+const PROFILE_LINKS: usize = 4;
+
 /// The store path of the installed system, as the new machine will see it.
 /// The profile links are followed by hand: they point into the new system's
 /// own /nix/store, which is not this one.
 fn installed_system(root: &Path) -> Option<PathBuf> {
     let profiles = root.join("nix/var/nix/profiles");
     let mut link = profiles.join("system");
-    for _ in 0..4 {
+    for _ in 0..PROFILE_LINKS {
         let to = std::fs::read_link(&link).ok()?;
         if to.is_absolute() {
             // Under a stand-in root, the link may name the path with the root.
@@ -161,11 +138,11 @@ fn installed_system(root: &Path) -> Option<PathBuf> {
     None
 }
 
-pub fn run_install(options: &Options) -> Result<(), String> {
+pub fn run(options: &Options) -> Result<(), String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
     let root = target();
-    let stands_in = var("NXF_INSTALL_ROOT").is_some();
+    let stands_in = env::var(env::INSTALL_ROOT).is_some();
     if !dir.join("flake.nix").exists() {
         return Err(format!(
             "{} has no flake.nix\nFound a machine flake first: nxf init <dir> --template <flake>#<name>",
@@ -204,7 +181,7 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     if !options.mounted {
         output::start("Partitioning the disks");
         let script = disko(&dir, &configuration)?;
-        run(&mut Command::new(&script), "Partitioning the disks")?;
+        output::stream(&mut Command::new(&script), false, &[])?;
         output::row(Mark::Done, "Erased, formatted and mounted");
         output::sub("Layout", &format!("nixosConfigurations.{configuration}"));
     }
@@ -228,13 +205,15 @@ pub fn run_install(options: &Options) -> Result<(), String> {
         .arg("--flake")
         .arg(format!("{}#{configuration}", home.display()))
         .args(["--no-root-passwd", "--no-channel-copy"]);
-    run(&mut install, "nixos-install")?;
+    output::stream(&mut install, false, &[])?;
     let system = installed_system(&root);
+    // The state of the updater, as the new machine will have it.
+    let updater = root.join(state::UPDATER.trim_start_matches('/'));
     output::row(Mark::Done, "Installed");
     output::sub("Flake", "/etc/nixos");
     if let Some(inside) = &system {
         output::sub("System", &inside.to_string_lossy());
-        let records = root.join("var/lib/nxf/systems");
+        let records = updater.join(state::SYSTEMS);
         std::fs::create_dir_all(&records).map_err(|err| err.to_string())?;
         let record = records.join(&tree);
         let _ = std::fs::remove_file(&record);
@@ -243,13 +222,13 @@ pub fn run_install(options: &Options) -> Result<(), String> {
 
     output::start("Preparing the first start");
     let key = host_key(&root)?;
-    let marker = root.join(MARKER);
+    let marker = updater.join(state::INSTALLED);
     std::fs::create_dir_all(marker.parent().unwrap_or(&root)).map_err(|err| err.to_string())?;
     std::fs::write(
         &marker,
         format!(
             "{:#}\n",
-            json!({"time": hold::now(), "tree": tree, "configuration": configuration})
+            json!({"time": time::now(), "tree": tree, "configuration": configuration})
         ),
     )
     .map_err(|err| format!("cannot write {}: {err}", marker.display()))?;
@@ -259,7 +238,10 @@ pub fn run_install(options: &Options) -> Result<(), String> {
     output::fact("Host key", &key);
     if options.reboot {
         output::effect("Restarting into the new system.");
-        let _ = Command::new(nixos::systemctl()).arg("reboot").status();
+        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
+            output::attention("The machine was not restarted; restart it by hand.");
+            err.lines().for_each(output::detail);
+        }
     } else {
         output::effect("Restart the machine to start it.");
     }

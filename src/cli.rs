@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, flake, fleet, hold, hosts, init, install, nixos, output, rollout, status,
-    tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, rollout,
+    state, status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -189,7 +189,12 @@ const COMMANDS: &[&str] = &[
 fn task_list() -> String {
     let mut list = String::from("Tasks:\n");
     for task in tasks::defined() {
-        list.push_str(&format!("  {:<9}{}\n", task.name, task.description));
+        list.push_str(&format!(
+            "  {:<width$}{}\n",
+            task.name,
+            task.description,
+            width = output::LABEL
+        ));
     }
     list
 }
@@ -197,6 +202,7 @@ fn task_list() -> String {
 /// An error in the shape of every failure: the cause as the one outcome,
 /// with what helps to resolve it beneath.
 fn fail(error: &str) -> ExitCode {
+    let error = process::cause_first(error);
     let mut lines = error.lines();
     output::failure(lines.next().unwrap_or("Failed"));
     for line in lines {
@@ -250,10 +256,6 @@ fn run_tasks(args: RunArgs) -> ExitCode {
     }
 }
 
-fn words(words: &[&str]) -> Vec<String> {
-    words.iter().map(|word| word.to_string()).collect()
-}
-
 fn run_command(command: Cmd) -> Result<bool, String> {
     match command {
         Cmd::Status {
@@ -270,7 +272,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
                             .to_string(),
                     );
                 }
-                Ok(fleet::status(&file, &hosts::load(&file)?, json))
+                fleet::status(&file, json)
             }
             None => status::report(&status::Options {
                 checkedout,
@@ -281,39 +283,23 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             .map(|()| true),
         },
         Cmd::Doctor { machines } => match machines.config {
-            Some(file) => Ok(fleet::each(
-                &file,
-                &hosts::load(&file)?,
-                &words(&["doctor"]),
-                "Checks passed",
-                "Checks failed",
-            )),
+            Some(file) => fleet::each(&file, &["doctor"], "Checks passed", "Checks failed"),
             None => doctor::report().map(|()| true),
         },
-        Cmd::Version { system, machines } => {
-            let args = if system {
-                words(&["version", "--system"])
-            } else {
-                words(&["version"])
-            };
-            match machines.config {
-                Some(file) => Ok(fleet::each(
-                    &file,
-                    &hosts::load(&file)?,
-                    &args,
-                    "Answered",
-                    "No answer",
-                )),
-                None if system => {
-                    output::line(&status::running_commit()?);
-                    Ok(true)
-                }
-                None => {
-                    output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
-                    Ok(true)
-                }
+        Cmd::Version { system, machines } => match machines.config {
+            Some(file) if system => {
+                fleet::each(&file, &["version", "--system"], "Answered", "No answer")
             }
-        }
+            Some(file) => fleet::each(&file, &["version"], "Answered", "No answer"),
+            None if system => {
+                output::line(&status::running_commit()?);
+                Ok(true)
+            }
+            None => {
+                output::line(&format!("nxf {}", env!("CARGO_PKG_VERSION")));
+                Ok(true)
+            }
+        },
         Cmd::Init {
             dir,
             template,
@@ -330,7 +316,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             dir,
             mounted,
             reboot,
-        } => install::run_install(&install::Options {
+        } => install::run(&install::Options {
             dir,
             mounted,
             reboot,
@@ -380,27 +366,9 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             duration,
             machines,
         } => {
-            let until = match (until, duration) {
-                (Some(until), _) => Some(hold::time(&until)?),
-                (None, Some(duration)) => Some(hold::now() + hold::duration(&duration)?),
-                (None, None) => None,
-            };
-            if until.is_some_and(|until| until <= hold::now()) {
-                return Err("The hold would end in the past.".to_string());
-            }
+            let until = hold::end(until, duration)?;
             if let Some(file) = machines.config {
-                // The end is one point in time, whatever each machine's clock zone is.
-                let mut args = vec!["hold".to_string(), "--reason".to_string(), reason];
-                if let Some(until) = until {
-                    args.extend(["--until".to_string(), format!("@{until}")]);
-                }
-                return Ok(fleet::each(
-                    &file,
-                    &hosts::load(&file)?,
-                    &args,
-                    "Automatic updates are held",
-                    "Not held",
-                ));
+                return fleet::hold(&file, &reason, until);
             }
             let hold = hold::set(&reason, until)?;
             output::line(&format!("Automatic updates are held: {}", hold.describe()));
@@ -408,13 +376,12 @@ fn run_command(command: Cmd) -> Result<bool, String> {
         }
         Cmd::Release { machines } => {
             if let Some(file) = machines.config {
-                return Ok(fleet::each(
+                return fleet::each(
                     &file,
-                    &hosts::load(&file)?,
-                    &words(&["release"]),
+                    &["release"],
                     "Automatic updates continue",
                     "Not released",
-                ));
+                );
             }
             output::line(if hold::clear()? {
                 "Automatic updates continue."
@@ -423,30 +390,45 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             });
             Ok(true)
         }
-        Cmd::AutoUpdate { state } => auto_update::run(&state.unwrap_or_else(nixos::updater_dir)),
+        Cmd::AutoUpdate { state } => auto_update::run(&state.unwrap_or_else(state::updater_dir)),
     }
 }
 
-/// nxf works with flakes, whether or not the machine enables them for people.
-fn enable_flakes() {
-    let extra = "extra-experimental-features = nix-command flakes";
-    let config = match std::env::var("NIX_CONFIG") {
-        Ok(config) if !config.is_empty() => format!("{config}\n{extra}"),
-        _ => extra.to_string(),
-    };
-    std::env::set_var("NIX_CONFIG", config);
+impl Cmd {
+    /// Whether the command works on the checkout of this machine's flake,
+    /// which the group of the machine may share.
+    fn on_checkout(&self) -> bool {
+        match self {
+            Cmd::Status { machines, .. } | Cmd::Doctor { machines } => machines.config.is_none(),
+            Cmd::Version { system, machines } => *system && machines.config.is_none(),
+            Cmd::Init { dir, .. } => {
+                init::directory(dir.as_deref()).is_ok_and(|dir| dir == flake::location().dir)
+            }
+            Cmd::AutoUpdate { .. } => true,
+            Cmd::Install { .. } | Cmd::Rollout { .. } | Cmd::Hold { .. } | Cmd::Release { .. } => {
+                false
+            }
+        }
+    }
+}
+
+/// Shares what a run makes in the checkout of the machine flake, when the group may write it.
+fn share_checkout() {
+    state::share_with_group(&flake::location().dir);
 }
 
 pub fn main() -> ExitCode {
-    enable_flakes();
-    nixos::share_with_group(&flake::location().dir);
+    env::enable_flakes();
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.
     let first = std::env::args().nth(1).unwrap_or_default();
     let wants_command = COMMANDS.contains(&first.as_str()) || first == "-h" || first == "--help";
     if !wants_command {
         return match TaskCli::try_parse() {
-            Ok(cli) => run_tasks(cli.run),
+            Ok(cli) => {
+                share_checkout();
+                run_tasks(cli.run)
+            }
             Err(error) => refuse(error),
         };
     }
@@ -460,11 +442,19 @@ pub fn main() -> ExitCode {
         Err(error) => error.exit(),
     };
     match cli.command {
-        Some(command) => match run_command(command) {
-            Ok(true) => ExitCode::SUCCESS,
-            Ok(false) => ExitCode::FAILURE,
-            Err(error) => fail(&error),
-        },
-        None => run_tasks(cli.run),
+        Some(command) => {
+            if command.on_checkout() {
+                share_checkout();
+            }
+            match run_command(command) {
+                Ok(true) => ExitCode::SUCCESS,
+                Ok(false) => ExitCode::FAILURE,
+                Err(error) => fail(&error),
+            }
+        }
+        None => {
+            share_checkout();
+            run_tasks(cli.run)
+        }
     }
 }

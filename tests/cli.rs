@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{assert_contains, fixture, outcomes, pair, write_script};
+use common::{assert_contains, fixture, outcomes, pair};
 
 /// Version prints the tool version.
 #[test]
@@ -22,10 +22,9 @@ fn help() {
     result.ok();
     assert_contains(&result.stdout, "Usage:");
     assert_contains(&result.stdout, "Tasks:");
-    assert!(result
-        .stdout
-        .lines()
-        .any(|line| line.starts_with("  switch") && line.contains(" Activate")));
+    // The names stand in the column of the labels.
+    assert_contains(&result.stdout, "\n  switch    Activate the configuration");
+    assert_contains(&result.stdout, "\n  upgrade   Update each input");
     assert_contains(&result.stdout, "auto-update");
 }
 
@@ -67,31 +66,6 @@ fn commands_reject_tasks() {
         assert_contains(&result.stderr, cause);
     }
     assert!(fx.nh_calls().is_empty());
-}
-
-/// nxf enables flakes for the tools it runs, after the Nix settings that its
-/// caller gave it.
-#[test]
-fn nix_config() {
-    let mut fx = fixture().with("NIX_CONFIG", "warn-dirty = false");
-    let seen = fx.dir.join("nix-config");
-    // Status asks the stand-in for systemctl, which notes the setting it got.
-    write_script(
-        &fx.systemctl,
-        &format!(
-            "#!/bin/sh\nprintf '%s' \"$NIX_CONFIG\" > '{}'\n",
-            seen.display()
-        ),
-    );
-    let flakes = "extra-experimental-features = nix-command flakes";
-    fx.run(&["status"]).ok();
-    assert_eq!(
-        std::fs::read_to_string(&seen).unwrap(),
-        format!("warn-dirty = false\n{flakes}")
-    );
-    fx.unset("NIX_CONFIG");
-    fx.run(&["status"]).ok();
-    assert_eq!(std::fs::read_to_string(&seen).unwrap(), flakes);
 }
 
 /// `auto-update --state` saves the results in the directory it names, not
@@ -160,4 +134,86 @@ fn refusals_have_the_shape_of_failures() {
     help.ok();
     assert!(help.stdout.contains("Usage: nxf status"), "{}", help.stdout);
     assert_eq!(help.stderr, "");
+}
+
+/// What a command makes is writable by the group when the group may write the
+/// checkout, and the command works on that checkout: the update does, and so
+/// does `init` of the directory nxf would use. A hold, which only writes the
+/// state of the updater, `release`, and `init` of another directory do not.
+#[test]
+fn group_sharing() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let mut fx = fixture();
+    std::fs::set_permissions(&fx.checkout, std::fs::Permissions::from_mode(0o2775)).unwrap();
+    let run = |fx: &common::Fixture, args: &[&str]| {
+        let mut command = fx.command(args);
+        // The mask of the caller decides what nxf does not.
+        unsafe {
+            command.pre_exec(|| {
+                libc::umask(0o022);
+                Ok(())
+            })
+        };
+        assert!(command.output().unwrap().status.success());
+    };
+    let group_writes =
+        |file: &std::path::Path| std::fs::metadata(file).unwrap().permissions().mode() & 0o020 != 0;
+    run(&fx, &["hold", "--reason", "quiet"]);
+    assert!(!group_writes(&fx.updater.join("hold.json")));
+    run(&fx, &["auto-update"]);
+    assert!(group_writes(&fx.updater.join("update.json")));
+
+    // A template that needs nothing from the network.
+    let template = fx.dir.join("template");
+    std::fs::create_dir_all(template.join("machine")).unwrap();
+    std::fs::write(
+        template.join("flake.nix"),
+        "{ outputs = _: { templates.machine.path = ./machine; }; }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        template.join("machine/flake.nix"),
+        "{ outputs = _: { nixosConfigurations.default = { options.services = { }; }; }; }\n",
+    )
+    .unwrap();
+    let reference = format!("{}#machine", template.display());
+    let base = fx.dir.clone();
+    let empty = |name: &str| {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o2775)).unwrap();
+        dir
+    };
+    // The directory nxf would use, named or not.
+    let own = empty("own");
+    fx.set("NXF_FLAKE", &own);
+    run(&fx, &["init", "--template", &reference]);
+    assert!(group_writes(&own.join("nxf.nix")));
+    let named = empty("named");
+    fx.set("NXF_FLAKE", &named);
+    run(
+        &fx,
+        &["init", named.to_str().unwrap(), "--template", &reference],
+    );
+    assert!(group_writes(&named.join("nxf.nix")));
+    // Another directory than the one nxf would use.
+    let other = empty("other");
+    run(
+        &fx,
+        &["init", other.to_str().unwrap(), "--template", &reference],
+    );
+    assert!(!group_writes(&other.join("nxf.nix")));
+
+    // `release` on machines does not share either: what it starts has the mask of the caller.
+    let log = fx.dir.join("mask.log");
+    common::write_script(
+        &fx.dir.join("bin/ssh"),
+        &format!("#!/bin/sh\numask >> '{}'\n", log.display()),
+    );
+    let hosts = fx.dir.join("hosts.toml");
+    std::fs::write(&hosts, "[hosts.node.ssh]\naddress = \"node.test\"\n").unwrap();
+    fx.set("NXF_FLAKE", fx.checkout.clone());
+    run(&fx, &["release", "--config", hosts.to_str().unwrap()]);
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "0022\n");
 }

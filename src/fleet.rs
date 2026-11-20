@@ -1,41 +1,33 @@
 //! Commands against the machines of a hosts file. nxf runs itself on each
-//! machine over ssh and reports one row for each; it knows a list of SSH
-//! destinations and nothing about what the machines form together. The
-//! upgrade is the one of these that changes machines, and it goes in waves.
+//! machine over ssh and reports one row for each; it knows SSH destinations
+//! and nothing more. The upgrade goes in waves: the first machine alone, then
+//! a batch at a time.
 
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::hosts::Host;
+use crate::env;
+use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
-use crate::text::plain;
-use crate::{hold, status};
+use crate::ssh::{self, Link, Trust};
+use crate::text::{last_line, plain};
+use crate::{process, time};
 
 /// What a machine answered. No code means that ssh did not end within the limit.
-pub struct Reply {
-    pub host: Host,
-    pub code: Option<i32>,
-    pub limit: Duration,
-    pub stdout: String,
-    pub stderr: String,
+struct Reply {
+    host: Host,
+    code: Option<i32>,
+    limit: Duration,
+    stdout: String,
+    stderr: String,
 }
 
 impl Reply {
-    fn last(text: &str) -> Option<String> {
-        plain(text)
-            .lines()
-            .map(str::trim)
-            .rfind(|line| !line.is_empty())
-            .map(str::to_string)
-    }
-
     /// Why the machine gave no usable answer, if it did not.
     fn error(&self) -> Option<String> {
-        let said = || Self::last(&self.stderr).or_else(|| Self::last(&self.stdout));
+        let said = || last_line(&plain(&self.stderr)).or_else(|| last_line(&plain(&self.stdout)));
         match self.code {
             Some(0) => None,
             // ssh itself exits with 255 when it cannot connect.
@@ -53,55 +45,16 @@ impl Reply {
     }
 }
 
-/// Quotes a word for the remote login shell, which is not always POSIX: a
-/// plain word stays bare, single quotes hold anything without a single quote,
-/// and double quotes hold a single quote when nothing in the word is special
-/// inside them. These three forms mean the same to sh, fish and Nushell.
-pub fn quoted(word: &str) -> String {
-    let bare = !word.is_empty()
-        && word
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || "-_./:@=+,".contains(ch));
-    if bare {
-        word.to_string()
-    } else if !word.contains('\'') {
-        format!("'{word}'")
-    } else if !word.contains(['"', '$', '`', '\\', '!']) {
-        format!("\"{word}\"")
-    } else {
-        // Only a POSIX shell reads this form.
-        format!("'{}'", word.replace('\'', "'\\''"))
-    }
-}
-
-fn seconds(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
 fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
-    let program = std::env::var_os("NXF_SSH")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "ssh".into());
     let remote = std::iter::once("nxf".to_string())
-        .chain(args.iter().map(|arg| quoted(arg)))
+        .chain(args.iter().map(|arg| ssh::quoted(arg)))
         .collect::<Vec<_>>()
         .join(" ");
-    let mut ssh = Command::new(program);
-    ssh.args(["-o", "BatchMode=yes"]).args([
-        "-o",
-        &format!("ConnectTimeout={}", seconds("NXF_SSH_CONNECT_TIMEOUT", 10)),
-    ]);
-    if let Some(port) = host.port {
-        ssh.args(["-p", &port.to_string()]);
-    }
-    ssh.arg(host.destination())
-        .arg(remote)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let link = Link {
+        host: host.clone(),
+        trust: Trust::Keys,
+    };
+    let mut ssh = link.command(&remote);
     let reply = |code, stdout, stderr| Reply {
         host: host.clone(),
         code,
@@ -109,45 +62,21 @@ fn ask(host: &Host, args: &[String], timeout: Duration) -> Reply {
         stdout,
         stderr,
     };
-    let mut child = match ssh.spawn() {
-        Ok(child) => child,
-        Err(err) => return reply(Some(255), String::new(), format!("cannot run ssh: {err}")),
-    };
-    // Each pipe is read on its own thread, so that a full pipe cannot stall the machine.
-    let collect = |pipe: Option<Box<dyn Read + Send>>| {
-        std::thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut text);
-            }
-            String::from_utf8_lossy(&text).into_owned()
-        })
-    };
-    let stdout = collect(child.stdout.take().map(|pipe| Box::new(pipe) as _));
-    let stderr = collect(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-    let deadline = Instant::now() + timeout;
-    let code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status.code().unwrap_or(255)),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-    reply(
-        code,
-        stdout.join().unwrap_or_default(),
-        stderr.join().unwrap_or_default(),
-    )
+    match process::run_within(&mut ssh, Instant::now() + timeout, false) {
+        // A signal ends ssh without a code of its own.
+        Ok(done) => reply(
+            done.status.map(|status| status.code().unwrap_or(255)),
+            done.stdout,
+            done.stderr,
+        ),
+        Err(err) => reply(Some(255), String::new(), err),
+    }
 }
 
 /// Runs nxf with the arguments on every host at once; replies come back in
 /// the order of the hosts.
-pub fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
-    let timeout = Duration::from_secs(seconds("NXF_SSH_TIMEOUT", 120));
+fn run(hosts: &[Host], args: &[String]) -> Vec<Reply> {
+    let timeout = env::seconds(env::SSH_TIMEOUT, 120);
     run_for(hosts, args, timeout)
 }
 
@@ -173,23 +102,14 @@ fn run_for(hosts: &[Host], args: &[String], timeout: Duration) -> Vec<Reply> {
     })
 }
 
-fn machines(count: usize) -> String {
-    if count == 1 {
-        "1 machine".to_string()
-    } else {
-        format!("{count} machines")
-    }
-}
-
 fn header(file: &Path, hosts: &[Host]) -> usize {
-    output::context(&format!("{} · {}", file.display(), machines(hosts.len())));
+    output::context(&format!(
+        "{} · {}",
+        file.display(),
+        output::machines(hosts.len())
+    ));
     output::line("");
-    hosts
-        .iter()
-        .map(|host| host.name.chars().count() + 2)
-        .max()
-        .unwrap_or(0)
-        .max(output::LABEL)
+    output::widened(hosts.iter().map(|host| host.name.as_str()))
 }
 
 /// What needs attention on a machine, from its `status --json`.
@@ -200,7 +120,7 @@ fn attention(status: &Value) -> Vec<String> {
     }
     if let Some(reason) = status["hold"]["reason"].as_str() {
         notes.push(match status["hold"]["until"].as_u64() {
-            Some(until) => format!("held: {reason} (until {})", hold::shown(until)),
+            Some(until) => format!("held: {reason} (until {})", time::shown(until)),
             None => format!("held: {reason}"),
         });
     }
@@ -225,7 +145,8 @@ fn attention(status: &Value) -> Vec<String> {
 }
 
 /// The state of every machine: revision, last update, and what needs attention.
-pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
+pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
+    let hosts = &hosts::load(file)?;
     let replies = run(hosts, &["status".to_string(), "--json".to_string()]);
     let answers: Vec<(&Reply, Result<Value, String>)> = replies
         .iter()
@@ -251,7 +172,7 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
             })
             .collect();
         output::line(&serde_json::to_string_pretty(&all).unwrap_or_default());
-        return silent == 0;
+        return Ok(silent == 0);
     }
 
     let width = header(file, hosts);
@@ -261,13 +182,11 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
         match answer {
             Err(error) => output::row(Mark::Failed, &format!("{name:<width$}{error}")),
             Ok(status) => {
-                let revision: String = status["revision"]
+                let revision = status["revision"]
                     .as_str()
-                    .map_or("unknown".to_string(), |revision| {
-                        revision.chars().take(12).collect()
-                    });
+                    .map_or("unknown".to_string(), output::revision);
                 let updated = match status["lastUpdate"]["time"].as_u64() {
-                    Some(time) => format!("updated {}", status::age(time)),
+                    Some(time) => format!("updated {}", time::age(time)),
                     None => "no automatic update yet".to_string(),
                 };
                 let notes = attention(status);
@@ -277,7 +196,11 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
                     attentive += 1;
                     Mark::Attention
                 };
-                let mut text = format!("{name:<width$}{revision:<12}  {}", output::dim(&updated));
+                let mut text = format!(
+                    "{name:<width$}{revision:<shown$}  {}",
+                    output::dim(&updated),
+                    shown = output::REVISION
+                );
                 if !notes.is_empty() {
                     text.push_str(&format!(
                         "  {}",
@@ -290,25 +213,31 @@ pub fn status(file: &Path, hosts: &[Host], as_json: bool) -> bool {
     }
     let total = hosts.len();
     if silent > 0 {
-        output::failure(&format!("{silent} of {} gave no status", machines(total)));
+        output::failure(&format!(
+            "{silent} of {} gave no status",
+            output::machines(total)
+        ));
         if attentive > 0 {
-            output::effect_err(&format!("{} need attention.", machines(attentive)));
+            output::effect_err(&format!("{} need attention.", output::machines(attentive)));
         }
     } else if attentive > 0 {
         output::caution(&format!(
             "{attentive} of {} need attention",
-            machines(total)
+            output::machines(total)
         ));
     } else {
-        output::success(&format!("{} up to date", machines(total)));
+        output::success(&format!("{} up to date", output::machines(total)));
     }
-    silent == 0
+    Ok(silent == 0)
 }
 
-/// Runs one command on every machine and reports what each said last.
-/// `done` names the outcome when all succeed, such as "Held".
-pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &str) -> bool {
-    let replies = run(hosts, args);
+/// Runs one command on every machine of the hosts file and reports what each
+/// said last. `done` names the outcome when all succeed, and `failed` the
+/// failure of some.
+pub fn each(file: &Path, args: &[&str], done: &str, failed: &str) -> Result<bool, String> {
+    let hosts = &hosts::load(file)?;
+    let args: Vec<String> = args.iter().map(|arg| arg.to_string()).collect();
+    let replies = run(hosts, &args);
     let width = header(file, hosts);
     let mut failures = 0;
     for reply in &replies {
@@ -319,18 +248,32 @@ pub fn each(file: &Path, hosts: &[Host], args: &[String], done: &str, failed: &s
                 output::row(Mark::Failed, &format!("{name:<width$}{error}"));
             }
             None => {
-                let said = Reply::last(&reply.stdout).unwrap_or_default();
+                let said = last_line(&plain(&reply.stdout)).unwrap_or_default();
                 output::row(Mark::Done, &format!("{name:<width$}{said}"));
             }
         }
     }
     let total = hosts.len();
     if failures > 0 {
-        output::failure(&format!("{failed} on {failures} of {}", machines(total)));
+        output::failure(&format!(
+            "{failed} on {failures} of {}",
+            output::machines(total)
+        ));
     } else {
-        output::success(&format!("{done} on {}", machines(total)));
+        output::success(&format!("{done} on {}", output::machines(total)));
     }
-    failures == 0
+    Ok(failures == 0)
+}
+
+/// Holds automatic updates back on every machine.
+pub fn hold(file: &Path, reason: &str, until: Option<u64>) -> Result<bool, String> {
+    // The end is one point in time, whatever each machine's clock zone is.
+    let until = until.map(|until| format!("@{until}"));
+    let mut args = vec!["hold", "--reason", reason];
+    if let Some(until) = &until {
+        args.extend(["--until", until]);
+    }
+    each(file, &args, "Automatic updates are held", "Not held")
 }
 
 /// The waves of an upgrade, as ranges of the hosts: the first machine alone,
@@ -412,7 +355,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
 pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> bool {
     let mut args = vec!["--json".to_string(), "upgrade".to_string()];
     args.extend(inputs.iter().cloned());
-    let timeout = Duration::from_secs(seconds("NXF_UPGRADE_TIMEOUT", 3 * 3600));
+    let timeout = env::seconds(env::UPGRADE_TIMEOUT, 3 * 3600);
     let width = header(file, hosts);
     let mut failed = Vec::new();
     let mut reached = hosts.len();
@@ -451,13 +394,13 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
     }
     let total = hosts.len();
     if failed.is_empty() {
-        output::success(&format!("{} upgraded", machines(total)));
+        output::success(&format!("{} upgraded", output::machines(total)));
         return true;
     }
     output::failure(&format!(
         "Upgrade failed on {} of {}",
         failed.len(),
-        machines(total)
+        output::machines(total)
     ));
     if !untouched.is_empty() {
         output::effect_err(&format!(

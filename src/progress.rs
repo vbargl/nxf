@@ -6,6 +6,8 @@ use serde_json::Value;
 use crate::text::{strip_ansi, strip_controls};
 
 const BUILDS: i64 = 104;
+// BUILD and PROGRESS are both 105: they come from different enums of Nix, the
+// type of an activity and the type of a result, so each is read for its kind.
 const BUILD: i64 = 105;
 const BUILD_LOG_LINE: i64 = 101;
 const POST_BUILD_LOG_LINE: i64 = 107;

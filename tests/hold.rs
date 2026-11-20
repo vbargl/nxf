@@ -18,6 +18,32 @@ fn durations() {
     }
 }
 
+/// The end of a hold is a time, or a duration from now, and lies in the future.
+#[test]
+fn end() {
+    let text = |text: &str| Some(text.to_string());
+    assert_eq!(hold::end(None, None), Ok(None));
+    let end = hold::end(None, text("3d")).unwrap().unwrap();
+    assert!(end > nxf::time::now() + 259_000 && end <= nxf::time::now() + 259_200);
+    assert_eq!(
+        hold::end(text("2999-01-31 18:00 UTC"), None),
+        Ok(Some(32_474_800_800))
+    );
+    // A time wins over a duration; the options exclude each other for the command.
+    assert_eq!(
+        hold::end(text("2999-01-31 00:00 UTC"), text("1m")),
+        Ok(Some(32_474_736_000))
+    );
+    let past = Err("The hold would end in the past.".to_string());
+    assert_eq!(hold::end(text("2001-01-31"), None), past);
+    assert!(hold::end(text("not a time"), None)
+        .unwrap_err()
+        .starts_with("Invalid time"));
+    assert!(hold::end(None, text("3x"))
+        .unwrap_err()
+        .starts_with("Invalid duration"));
+}
+
 /// A hold stops the automatic update, is shown by status, and ends on release.
 #[test]
 fn until_released() {
@@ -70,7 +96,7 @@ fn expiry() {
 
     // The same hold, ended a minute ago.
     let ended =
-        serde_json::json!({"reason": "release week", "since": 1, "until": hold::now() - 60});
+        serde_json::json!({"reason": "release week", "since": 1, "until": nxf::time::now() - 60});
     std::fs::write(fx.updater.join("hold.json"), ended.to_string()).unwrap();
     assert_lacks(&fx.run(&["status"]).stdout, "held");
     fx.run(&["auto-update"]).ok();
