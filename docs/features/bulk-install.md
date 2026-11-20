@@ -122,6 +122,9 @@ runs kexec, disko, `nixos-install` or a restart.
 - I9: `tests/rollout.rs::template_source_is_stored` covers only that the
   source in the Nix store holds the changed content, not that a machine gets
   it.
+- I11: `tests/rollout.rs::not_rolled_out` covers that the unreachable
+  machine is counted and not named under `Not installed`, beside a machine
+  whose installation fails, not beside one that is installed.
 - I13: `tests/rollout.rs::managed_from_memory` covers what the probe answers
   on such a machine, not the row. I1 covers the row of a managed machine.
 - I14: `tests/rollout.rs::installs_only_as_root`, with two refused machines,
@@ -136,7 +139,7 @@ runs kexec, disko, `nixos-install` or a restart.
   `tests/rollout.rs::copy_trusts_as_the_link` the SSH options that
   `nix copy` gets.
 
-No automated test covers I5, I10, I11 and I12, or the copy of I9. I4, I6 and
+No automated test covers I5, I10 and I12, or the copy of I9. I4, I6 and
 I8 are covered only as far as said above: what a machine holds after an
 installation needs real machines with kexec, disko, `nixos-install` and a
 restart.

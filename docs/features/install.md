@@ -86,15 +86,15 @@ real `nixos-install` or reads `/proc/mounts`.
 
 | ID | Covered by | Not covered |
 | --- | --- | --- |
-| N1 | `tests/install.rs::installs` | The disko script of a real configuration, the real `nixos-install`, and the reading of `/proc/mounts` |
+| N1 | `tests/install.rs::partitions_and_records` | The disko script of a real configuration, the real `nixos-install`, and the reading of `/proc/mounts` |
 | N2 | `tests/install.rs::mounted` | |
 | N3, N4, N5, N6 | `tests/install.rs::refuses`. It asserts that the exit status is not 0, not which one | For N3, the reading of `/proc/mounts` |
-| N7 | `tests/install.rs::failed_install`. It asserts that the exit status is not 0, not which one | |
-| N8 | | No automated test covers it |
+| N7 | `tests/install.rs::failure_records_nothing`. It asserts that the exit status is not 0, not which one | |
+| N8 | `tests/install.rs::refuses_unmounted_and_unlocked`. It asserts that the exit status is not 0, not which one | |
 | N9 | | No automated test covers it; with `NXF_INSTALL_ROOT` set, install does not require root |
 | N10 | | No automated test covers it; `NXF_DISKO` replaces the build of the layout |
-| N11 | | No automated test covers it |
-| N12 | | No automated test covers it |
+| N11 | `tests/install.rs::refuses_unmounted_and_unlocked`, with `NXF_INSTALL_ROOT` in the place of `/mnt`. It asserts that the exit status is not 0, not which one | |
+| N12 | `tests/install.rs::reboot`, with a mock `systemctl` that notes its call | A real restart |
 | N13 | `tests/install.rs::refuses_a_managed_system`. It asserts that the exit status is not 0, not which one, and not the line beneath the outcome | The same with `--mounted` |
 
 The installation of real machines through `nxf rollout`, which runs

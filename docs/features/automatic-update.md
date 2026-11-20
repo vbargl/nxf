@@ -107,20 +107,20 @@ the units and checks that a health check script holds `set -e`.
 | A1 | `tests/auto_update.rs::updates_and_switches` | |
 | A2 | `tests/auto_update.rs::unchanged_and_running` | |
 | A3 | `tests/auto_update.rs::switches_to_committed_checkout` | |
-| A4 | `tests/hold.rs::hold_and_release` | |
+| A4 | `tests/hold.rs::until_released` | |
 | A5 | `tests/hold.rs::expiry` | |
 | A6, A7 | `tests/auto_update.rs::uncommitted_changes` | |
 | A8 | `tests/hooks.rs::refusing_check`; `tests/hooks.rs::hanging_check` for a hook that does not end | |
 | A9 | `tests/auto_update.rs::off_is_left_alone`; `tests/auto_update.rs::all_off` for every input | |
-| A10 | `tests/auto_update.rs::flagged_failure_goes_on`; `tests/hooks.rs::flagged_runs_no_hook` | |
-| A11 | `tests/auto_update.rs::reported_failure_goes_on` for an input that cannot be fetched; `tests/auto_update.rs::failed_build_is_restored` for one that does not build; `tests/hooks.rs::failure_hook` | |
-| A12 | `tests/health.rs::failed_switch`; `tests/hooks.rs::failed_task_runs_the_hook` | |
+| A10 | `tests/auto_update.rs::flagged_failure_goes_on`; `tests/hooks.rs::flagged_runs_none` | |
+| A11 | `tests/auto_update.rs::reported_failure_goes_on` for an input that cannot be fetched; `tests/auto_update.rs::failed_build_is_restored` for one that does not build; `tests/hooks.rs::failure_sees_results` | |
+| A12 | `tests/health.rs::failed_switch`; `tests/hooks.rs::failed_task_runs_failure` | |
 | A13 | `tests/health.rs::healthy`; `tests/health.rs::passes_later` | |
 | A14 | `tests/health.rs::no_checks` | |
 | A15 | `tests/health.rs::unhealthy_returns_and_marks`; `tests/health.rs::hanging_check` for `timed out`; `tests/health.rs::own_words_are_not_the_deadline` for a check that prints `timed out` itself; `tests/health.rs::times_of_the_new_configuration` for the times | |
 | A16, A17 | `tests/health.rs::unhealthy_returns_and_marks` | |
 | A18 | | No automated test covers it |
-| A19 | `tests/hooks.rs::failing_hook`, after a reported input | A failure hook that fails after a failed task |
+| A19 | `tests/hooks.rs::failure_of_its_own`, after a reported input | A failure hook that fails after a failed task |
 | A20 | `tests/status.rs::unread_update`; `tests/status.rs::update_read_per_user`; `tests/status.rs::latest_update`; `tests/status.rs::update_details` | |
 | A21 | `tests/status.rs::json`; `tests/status.rs::json_monitoring` for `lastUpdate` | |
 | A22 | `tests/status.rs::update_unit_result` | |
