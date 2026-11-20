@@ -6,7 +6,7 @@ time.
 ## Brief
 
 `nxf rollout --config <file>` installs the machines that nxf does not manage
-yet. Once they are managed, whoever looks after several machines wants to
+yet ([Bulk Install](bulk-install.md)). Once they are managed, whoever looks after several machines wants to
 upgrade them now, without waiting for each timer or logging in to each one,
 and wants a bad update to stop at the first machine that shows it.
 
