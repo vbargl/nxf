@@ -393,4 +393,28 @@ layout, the nxf module pinned to that commit and an `identity.nix` that
 
 The run is not repeatable in CI.
 
+I1, I4 to I7 and I26 were run by hand again with nxf 0.15.0, built with
+`nix build github:vbargl/nxf/32f193aa20af41828187c22971629108036a46d7` (the
+head of the branch of pull request #13 before this record), against one Incus
+Ubuntu 24.04 VM with SSH as root, the same kind of template pinned to that
+commit, a throwaway key behind an `ssh` wrapper, and scratch `HOME` and
+`TMPDIR`. Both runs were `nxf rollout --config hosts.toml --template
+path:<template> --files <dir> --known-hosts <file> --yes --json`:
+
+- Run 1 installed the machine in 2 minutes and 37 seconds. Standard output
+  held only the JSON object, with `ok` true and the machine `installed`, with
+  its `revision` and its `hostKey`. Standard error held the plan, the phases
+  and the lines of the remote installation, which were written while it ran
+  (I26, I5). The machine had its own `identity.nix` and `MARKER` in
+  `/etc/nixos`, nxf 0.15.0, and a `status --json` that named the revision of
+  the run (I4, I6). The Ubuntu key in the `--known-hosts` file was replaced,
+  the line of another machine was kept, the `known_hosts` file of the scratch
+  `HOME` was not changed, and `TMPDIR` was empty afterwards (I7).
+- Run 2 only probed the machine. Standard output was the object with `ok` true
+  and the machine `managed`; standard error was the row `installed by nxf` and
+  the outcome `1 machine installed by nxf`; the `--known-hosts` file was not
+  changed (I1).
+
+The run is not repeatable in CI.
+
 See the [operating documentation](../../README.md#from-another-computer).
