@@ -517,7 +517,7 @@ fn upgrade_json() {
     let set = machines();
     let ok = set.upgrade(&["--json"]);
     ok.ok();
-    assert_contains(&ok.stderr, "\n  ✓ node-1    inputs updated, switched\n");
+    assert_contains(&ok.stderr, "\n  ✓ node-1    no input changed, switched\n");
     let printed: Value = serde_json::from_str(&ok.stdout).unwrap();
     assert_eq!(printed["ok"], true);
     assert_eq!(
