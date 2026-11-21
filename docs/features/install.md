@@ -39,11 +39,13 @@ this, in this order:
 
 With `--json` it prints its phases and the lines of the tools on standard
 error while it runs, as it prints them on standard output without `--json`.
-At its end it prints one JSON object on standard output, which holds nothing else: `hostKey`, `system` (the store path of the
-installed system, or null) and `revision` (the commit of the installed flake,
-or null). A refusal or a failure prints the object `{"error": "<cause>",
-"details": ["…"]}` instead, and the text of the failure stays on standard
-error. `nxf rollout` reads the host key from this object.
+At its end it prints one JSON object on one line on standard output, which
+holds nothing else: `hostKey`, `system` (the store path of the installed
+system, or null) and `revision` (the commit of the installed flake, or null).
+A refusal or a failure prints the object `{"error": "<cause>", "details":
+["…"]}` instead, and the text of the failure stays on standard error.
+`nxf rollout` reads the host key from the last line of what the machine
+printed on standard output.
 
 Boundaries:
 

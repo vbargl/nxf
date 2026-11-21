@@ -607,8 +607,9 @@ exec '{}/machines/ssh' "$@"
 }
 
 /// With --json rollout prints the machines and the outcome as one JSON object
-/// on standard output and nothing else there; the text is on standard error. An installed machine has its revision and
-/// host key, a managed one only its state.
+/// on standard output and nothing else there; the text is on standard error.
+/// An installed machine has its revision and host key, a managed one only its
+/// state.
 #[test]
 fn json() {
     let (fx, hosts) = installers(&["node-1", "node-2"]);
