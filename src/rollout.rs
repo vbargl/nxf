@@ -15,6 +15,7 @@ use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::process;
+use crate::results::{Installation, Refusal};
 use crate::ssh::{self, quoted, Link, Trust};
 use crate::state;
 use crate::text::{last_line, plain};
@@ -127,6 +128,24 @@ fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
         return Ok(said);
     }
     Err(format!("{what} failed\n{}", process::tail(&said)))
+}
+
+/// Runs `nxf install --json` on the machine and reads what it printed. Its
+/// refusal is the cause of a failure.
+fn installation(link: &Link, remote: &str) -> Result<Installation, String> {
+    let (ok, stdout, stderr) = link.capture(remote, "");
+    if ok {
+        return Installation::from_json(&stdout)
+            .ok_or_else(|| "The installation did not report the host key".to_string());
+    }
+    let said: Vec<String> = match Refusal::from_json(&stdout) {
+        Some(refusal) => [refusal.error].into_iter().chain(refusal.details).collect(),
+        None => process::tail(&plain(&format!("{stdout}\n{stderr}")))
+            .lines()
+            .map(str::to_string)
+            .collect(),
+    };
+    Err(format!("The installation failed\n{}", said.join("\n")))
 }
 
 fn probe(link: &Link) -> Probe {
@@ -355,17 +374,7 @@ fn install(
     output::row(Mark::Done, "Founded on the machine");
 
     output::start("Installing");
-    let said = stream(
-        &link,
-        &format!("{nxf} install {MACHINE_DIR}"),
-        "The installation",
-    )?;
-    let key = said
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("Host key"))
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-        .ok_or("The installation did not report the host key")?;
+    let key = installation(&link, &format!("{nxf} install {MACHINE_DIR} --json"))?.host_key;
     output::row(Mark::Done, "Installed");
 
     output::start("Starting the system");

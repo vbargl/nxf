@@ -1,6 +1,6 @@
 //! Tests for src/results.rs: the JSON shapes nxf writes and reads.
 
-use nxf::results::{outcomes_json, Kind, Outcome, Refusal, Saved};
+use nxf::results::{outcomes_json, Installation, Kind, Outcome, Refusal, Saved};
 use serde_json::{json, Value};
 
 /// Each word of an outcome is the one the README documents, and reads back.
@@ -92,4 +92,24 @@ fn refusal_shape() {
     assert_eq!(Refusal::from_json("[]"), None);
     assert_eq!(Refusal::from_json("Welcome to the machine"), None);
     assert_eq!(Refusal::from_json(r#"{"error": "x"}"#), None);
+}
+
+/// The installation is the host key, the system and the revision; one
+/// without a host key is none.
+#[test]
+fn installation_shape() {
+    let installation = Installation {
+        host_key: "ssh-ed25519 AAAA".to_string(),
+        system: Some("/nix/store/abc-nixos-system".to_string()),
+        revision: None,
+    };
+    let text = installation.to_json();
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value,
+        json!({"hostKey": "ssh-ed25519 AAAA", "system": "/nix/store/abc-nixos-system", "revision": null})
+    );
+    assert_eq!(Installation::from_json(&text), Some(installation));
+    assert_eq!(Installation::from_json(r#"{"hostKey": ""}"#), None);
+    assert_eq!(Installation::from_json("Host key  ssh-ed25519 AAAA"), None);
 }

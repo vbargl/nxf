@@ -115,6 +115,9 @@ enum Cmd {
         /// Restart into the new system when it is installed.
         #[arg(long)]
         reboot: bool,
+        /// Print the host key, the system and the revision as JSON, for scripts.
+        #[arg(long)]
+        json: bool,
     },
     /// Install every machine of a hosts file that nxf has not installed, or with --upgrade upgrade them in waves.
     Rollout {
@@ -326,10 +329,12 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             dir,
             mounted,
             reboot,
+            json,
         } => install::run(&install::Options {
             dir,
             mounted,
             reboot,
+            json,
         })
         .map(|()| true),
         Cmd::Rollout {

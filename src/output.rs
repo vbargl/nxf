@@ -76,6 +76,11 @@ pub fn release() -> Captured {
     screen().captured.take().unwrap_or_default()
 }
 
+/// Stops keeping output, and prints what was kept for standard error.
+pub fn release_stderr() {
+    release().stderr.lines().for_each(line_err);
+}
+
 fn capturing() -> bool {
     screen().captured.is_some()
 }

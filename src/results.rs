@@ -1,5 +1,5 @@
 //! What nxf says to programs with `--json`, and reads back from other nxf
-//! programs: the outcome of a task and a refusal. Each shape has one writer and one reader.
+//! programs: the outcome of a task, a refusal and the installation of a machine. Each shape has one writer and one reader.
 
 use serde_json::{json, Value};
 
@@ -167,6 +167,37 @@ impl Refusal {
         Some(Refusal {
             error: value.get("error")?.as_str()?.to_string(),
             details: strings(value.get("details")?)?,
+        })
+    }
+}
+
+/// What `nxf install --json` prints, and rollout reads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Installation {
+    pub host_key: String,
+    /// The store path of the system, as the new machine sees it.
+    pub system: Option<String>,
+    /// The commit of the flake that was installed.
+    pub revision: Option<String>,
+}
+
+impl Installation {
+    pub fn to_json(&self) -> String {
+        let installed = json!({
+            "hostKey": self.host_key,
+            "system": self.system,
+            "revision": self.revision,
+        });
+        serde_json::to_string_pretty(&installed).unwrap_or_default()
+    }
+
+    pub fn from_json(text: &str) -> Option<Installation> {
+        let value: Value = serde_json::from_str(text).ok()?;
+        let text = |name: &str| value.get(name)?.as_str().map(str::to_string);
+        Some(Installation {
+            host_key: text("hostKey").filter(|key| !key.is_empty())?,
+            system: text("system"),
+            revision: text("revision"),
         })
     }
 }

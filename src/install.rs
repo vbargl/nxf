@@ -8,6 +8,7 @@ use std::process::Command;
 use serde_json::json;
 
 use crate::output::{self, Mark};
+use crate::results::Installation;
 use crate::{env, flake, git, nixos, process, state, time};
 
 pub struct Options {
@@ -15,6 +16,8 @@ pub struct Options {
     /// Skip partitioning: the target is already mounted.
     pub mounted: bool,
     pub reboot: bool,
+    /// Print the result as JSON and nothing else on standard output.
+    pub json: bool,
 }
 
 /// Where the new system is mounted. NXF_INSTALL_ROOT stands in for it in tests.
@@ -139,6 +142,40 @@ fn installed_system(root: &Path) -> Option<PathBuf> {
 }
 
 pub fn run(options: &Options) -> Result<(), String> {
+    if options.json {
+        output::capture();
+    }
+    let installed = install(options);
+    if options.json {
+        output::release_stderr();
+    }
+    let installed = installed?;
+    if options.json {
+        output::line(&installed.to_json());
+    } else {
+        output::success("NixOS installed");
+        output::fact("Host key", &installed.host_key);
+    }
+    if options.reboot {
+        if !options.json {
+            output::effect("Restarting into the new system.");
+        }
+        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
+            if options.json {
+                output::warning("The machine was not restarted; restart it by hand.");
+                err.lines().for_each(output::note_err);
+            } else {
+                output::attention("The machine was not restarted; restart it by hand.");
+                err.lines().for_each(output::detail);
+            }
+        }
+    } else if !options.json {
+        output::effect("Restart the machine to start it.");
+    }
+    Ok(())
+}
+
+fn install(options: &Options) -> Result<Installation, String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
     let root = target();
@@ -234,16 +271,9 @@ pub fn run(options: &Options) -> Result<(), String> {
     .map_err(|err| format!("cannot write {}: {err}", marker.display()))?;
     output::row(Mark::Done, "Host key made, installation recorded");
 
-    output::success("NixOS installed");
-    output::fact("Host key", &key);
-    if options.reboot {
-        output::effect("Restarting into the new system.");
-        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
-            output::attention("The machine was not restarted; restart it by hand.");
-            err.lines().for_each(output::detail);
-        }
-    } else {
-        output::effect("Restart the machine to start it.");
-    }
-    Ok(())
+    Ok(Installation {
+        host_key: key,
+        system: system.map(|inside| inside.to_string_lossy().into_owned()),
+        revision: git::commit_of(&dir, &[tree]),
+    })
 }
