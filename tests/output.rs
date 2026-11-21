@@ -292,18 +292,20 @@ fn tail_lines() {
     );
 }
 
+/// The peak resident size of this process so far, in kB.
+fn peak() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|kilobytes| kilobytes.trim().trim_end_matches("kB").trim().parse().ok())
+        .unwrap()
+}
+
 /// What a failing tool said before its last lines does not stay in memory: a
 /// tool with 40 MB of output grows the process by a few.
 #[test]
 fn stream_memory() {
-    let peak = || -> u64 {
-        std::fs::read_to_string("/proc/self/status")
-            .unwrap()
-            .lines()
-            .find_map(|line| line.strip_prefix("VmHWM:"))
-            .and_then(|kilobytes| kilobytes.trim().trim_end_matches("kB").trim().parse().ok())
-            .unwrap()
-    };
     let before = peak();
     let mut loud = Command::new("sh");
     loud.args([
@@ -321,14 +323,6 @@ fn stream_memory() {
 /// does not make the process hold its output: the peak grows by a few MB.
 #[test]
 fn stream_unbroken_memory() {
-    let peak = || -> u64 {
-        std::fs::read_to_string("/proc/self/status")
-            .unwrap()
-            .lines()
-            .find_map(|line| line.strip_prefix("VmHWM:"))
-            .and_then(|kilobytes| kilobytes.trim().trim_end_matches("kB").trim().parse().ok())
-            .unwrap()
-    };
     for (script, last) in [
         ("head -c 100000000 /dev/zero | tr '\\0' x", "xxxx"),
         (
@@ -346,6 +340,19 @@ fn stream_unbroken_memory() {
         let growth = peak().saturating_sub(before);
         assert!(growth < 16 * 1024, "{script}: the peak grew by {growth} kB");
     }
+}
+
+/// An event of the tool that is longer than a piece is dropped from the tail,
+/// whole: no fragment of its JSON is shown beside the lines around it.
+#[test]
+fn long_event() {
+    let mut tool = Command::new("sh");
+    tool.args([
+        "-c",
+        "echo before >&2; printf '@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"%s\"}\\n' \"$(head -c 200000 /dev/zero | tr '\\0' x)\" >&2; echo after >&2; exit 1",
+    ]);
+    let error = output::stream(&mut tool, true, &[]).unwrap_err();
+    assert_eq!(error, "sh exited with status 1.\nbefore\nafter");
 }
 
 /// A label column is as wide as the labels, and two more than the longest

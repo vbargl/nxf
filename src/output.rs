@@ -509,7 +509,8 @@ impl Monitor {
     }
 }
 
-/// The most of a line that is held at once: a longer one is read in pieces.
+/// The most of a line that is held at once: a longer one is read in pieces,
+/// and an event of the tool that long is dropped, not decoded.
 const PIECE: u64 = 64 * 1024;
 
 /// The last lines a failing tool said, decoded: the lines of an error, and
@@ -557,13 +558,22 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
     let mut tail = Tail::default();
     let mut reader = BufReader::new(reader);
     let mut buffer = Vec::new();
+    // Inside a line that was cut at `PIECE`, and inside an event that was cut.
+    let (mut midline, mut dropping) = (false, false);
     loop {
         buffer.clear();
         match (&mut reader).take(PIECE).read_until(b'\n', &mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
+        let ended = buffer.ends_with(b"\n");
+        if dropping {
+            (dropping, midline) = (!ended, !ended);
+            continue;
+        }
         let text = String::from_utf8_lossy(&buffer);
+        dropping = !ended && !midline && text.starts_with("@nix ");
+        midline = !ended;
         for part in text.trim_end_matches('\n').split('\r') {
             let event = progress::event(part);
             tail.push(part, event.as_ref());
