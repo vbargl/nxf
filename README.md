@@ -149,8 +149,9 @@ runs as root, nh is told not to elevate. dix makes the package summary.
 ## Scripts
 
 Scripts drive nxf through JSON instead of reading its terminal output. With
-`--json`, standard output holds JSON and nothing else; the text for people,
-where there is any, stays on standard error.
+`--json`, standard output holds JSON and nothing else. The text for people
+stays on standard error: for `install` and `rollout`, all of what they print
+without `--json`, as it comes, so a long run stays observable.
 
 - `nxf --json <task>...` prints nothing while the tasks run, then a list with
   one record per task that ran: `task`, `inputs`, `outcome` and `details`. The
@@ -183,11 +184,11 @@ where there is any, stays on standard error.
   version of nxf saved in another shape.
 - `nxf install <dir> --json` prints
   `{"hostKey": "ssh-ed25519 AAAA…", "system": "/nix/store/…", "revision": "<commit>"}`
-  when the installation ended, and nothing while it runs. `system` and
+  when the installation ended. `system` and
   `revision` are null when they are not known. `rollout` reads this to get the
   host key of a machine.
 - `nxf rollout --config <file> --json` prints one object, for an installation
-  and for `--upgrade` alike, and nothing while it runs: `ok` (the exit status
+  and for `--upgrade` alike, at the end: `ok` (the exit status
   is 0), `counts` (how many machines are in each state) and `machines`, one
   entry for each machine in the order of the hosts file. An entry has `name`
   and `state`: `managed`, `installed`, `upgraded`, `failed` or `not started`.
@@ -486,8 +487,8 @@ nxf install /tmp/machine
    `/var/lib/nxf/installed.json` and which system the flake built.
 
 `--reboot` restarts into the new system. `--json` prints the host key, the
-system and the revision as JSON, and nothing else, for scripts; see
-[Scripts](#scripts). Install needs root: another user
+system and the revision as JSON on standard output, and the text of the steps
+on standard error, for scripts; see [Scripts](#scripts). Install needs root: another user
 gets `Installing needs root`. It refuses outside an installer (a system that
 runs from a disk), on a system that nxf manages (one it installed, or one
 whose system has nxf, also when it runs from memory), with uncommitted

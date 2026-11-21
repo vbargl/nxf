@@ -185,6 +185,10 @@ change them here first.
   printed in that shape too and exits with status 2. Help that is asked for
   is printed as clap prints it. With `--json` the same cause and facts are
   also the one object `{"error", "details"}` on standard output.
+- A command with `--json` that shows progress keeps standard output for its
+  one JSON document (`output::data`) and sends the rest, as it comes, to
+  standard error (`output::divert`). A test holds a tool back and asserts its
+  line before releasing it.
 
 ## Tests
 

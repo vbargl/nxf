@@ -21,8 +21,8 @@ default. A machine that takes longer is a failed row,
 `timed out after <N> seconds; the upgrade may still run on the machine`
 (`1 second` when the limit is 1): ending ssh does not end the task there.
 
-With `--json` rollout prints no text on standard output. It prints one JSON
-object at the end: `ok`, `counts` of the machines in each state, and one
+With `--json` rollout prints the rows and the outcome on standard error, and
+nothing but one JSON object on standard output, at the end: `ok`, `counts` of the machines in each state, and one
 entry for each machine with its `state` (`upgraded`, `failed` or
 `not started`) and, for a failed one, its `error` and `details`. The README
 section [Scripts](../../README.md#scripts) has the shape.
@@ -105,8 +105,8 @@ checkout, so only the first one finds the new revision.
   of the third machine, or the outcome.
 - U12: `tests/fleet.rs::upgrade_json`. It asserts the counts, the order, the
   state of each machine, `error` of the failed one and the text of the outcome
-  on standard error; not that no row is on standard output beyond the JSON
-  parsing as one object.
+  on standard error, with a row; that standard output parses as one JSON
+  object asserts that nothing else is on it.
 - `tests/fleet.rs::waves` covers the order of the waves, and
   `tests/hosts.rs::toml` that machines come in the order of their names. No
   test has two names whose byte order differs from their numeric order.

@@ -48,9 +48,10 @@ fails.
 `nxf install` on a machine is run with `--json`, and rollout reads the host
 key of the machine from the object it prints. A failed installation is the
 refusal object that it prints on standard output, and its cause and lines
-are the row of the machine; the machine shows no live line while the
-installation runs. With `--json` rollout prints no text on standard output and
-asks nothing: it prints one JSON object at the end, with `ok`, `counts` of the
+are the row of the machine. The standard error of the remote installation is
+shown as it comes, also with `--json`. With `--json` rollout prints the text on
+standard error, asks nothing, and prints on standard output only one JSON
+object, at the end, with `ok`, `counts` of the
 machines in each state and one entry for each machine, in the order of the
 hosts file. A machine is `managed`, `installed`, `failed` or `not started`,
 with its `error` and `details` when something went wrong, and with its
@@ -131,7 +132,7 @@ Boundaries:
 | I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | No machine is asked; the outcome is `cannot read <file>: <cause>`, with `rollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.` beneath it; the exit status is 1 |
 | I24: Every name of the directory is taken | A machine to install, and the directories `<temporary directory>/nxf-rollout.<pid>.0` to `<temporary directory>/nxf-rollout.<pid>.99` exist, made by a `sh` that then starts rollout with `exec`, so that `<pid>` is the process id of rollout | `rollout --yes` runs | No machine is asked; none of the directories is removed; the outcome is `<temporary directory>/nxf-rollout.<pid>.0 to <temporary directory>/nxf-rollout.<pid>.99 are all there already`, with `rollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.` beneath it; the exit status is 1 |
 | I25: The temporary directory is not there | A machine to install, and `TMPDIR` names a directory that does not exist | `rollout --yes` runs | No machine is asked; the outcome is `cannot create <TMPDIR>/nxf-rollout.<pid>.0: No such file or directory (os error 2)`, with `rollout keeps the keys of a run there. TMPDIR names the directory it is made in.` beneath it; the exit status is 1 |
-| I26: JSON | Two machines, a NixOS installer and a managed one | `rollout --yes --json` runs | Standard output is one JSON object: `ok` is true; `counts` has 1 `installed` and 1 `managed`; the installed machine has its `revision` and its `hostKey`, which is the key that `nxf install --json` printed on the machine; the managed machine has only its name and state; standard error is empty; the exit status is 0; the remote command is `nxf install /tmp/nxf-machine --json` |
+| I26: JSON | Two machines, a NixOS installer and a managed one | `rollout --yes --json` runs | Standard output is one JSON object: `ok` is true; `counts` has 1 `installed` and 1 `managed`; the installed machine has its `revision` and its `hostKey`, which is the key that `nxf install --json` printed on the machine; the managed machine has only its name and state; the text of the run, with `1 machine installed`, is on standard error, and the line a machine printed on its standard error while it installed is there before the machine ends; the exit status is 0; the remote command is `nxf install /tmp/nxf-machine --json` |
 | I27: JSON never asks | A managed machine, an Ubuntu machine, a NixOS installer and an unreachable machine, and no `--yes` | `rollout --json` runs | No machine is changed and nothing is asked; `ok` is false; the Ubuntu machine and the installer are `not started`, each with its row text as `error`; the unreachable machine is `failed` with `unreachable:` and the last line ssh printed as `error`; the text of the outcome is on standard error; the exit status is 1 |
 | I28: JSON refusal | `--json` and a `--files` that is not a directory | `rollout --yes --json` runs | No machine is asked; standard output is the object `{"error", "details"}` with `<dir> is not a directory`; the exit status is 1 |
 | I29: The installation is refused on the machine | A machine to install whose `nxf install --json` prints a refusal object on standard output, exits with status 1, and prints other text on standard error | `rollout --yes` runs | The `✗` row of the machine is `The installation failed`, with the `error` of the object and its `details` beneath it, and not the text on standard error; it is named under `Not installed`; the exit status is 1 |
@@ -233,7 +234,10 @@ not run.
   `: No such file or directory (os error 2)` with the line beneath it, not the
   `<pid>.0` between them. No run by hand covers it.
 - I26: `tests/rollout.rs::json`, with a played installation. It asserts the
-  whole object. `tests/rollout.rs::reads_the_installation` covers the remote
+  whole object and the outcome on standard error.
+  `tests/rollout.rs::json_is_live` holds the remote back and asserts its line
+  on standard error before it is released.
+  `tests/rollout.rs::reads_the_installation` covers the remote
   command and that the key written to `--known-hosts` is the one the object
   holds.
 - I27: `tests/rollout.rs::json_does_not_ask`. It asserts the states, the

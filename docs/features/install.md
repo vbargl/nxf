@@ -37,8 +37,9 @@ this, in this order:
 6. It prints the outcome `NixOS installed` with the host key. With `--reboot`
    it then runs `systemctl reboot`.
 
-With `--json` it prints nothing while it runs. At its end it prints one JSON
-object on standard output: `hostKey`, `system` (the store path of the
+With `--json` it prints its phases and the lines of the tools on standard
+error while it runs, as it prints them on standard output without `--json`.
+At its end it prints one JSON object on standard output, which holds nothing else: `hostKey`, `system` (the store path of the
 installed system, or null) and `revision` (the commit of the installed flake,
 or null). A refusal or a failure prints the object `{"error": "<cause>",
 "details": ["…"]}` instead, and the text of the failure stays on standard
@@ -86,7 +87,7 @@ Boundaries:
 | N12: Restart | The conditions of N1 | `nxf install <dir> --reboot` runs | After the outcome of N1 the last line is `Restarting into the new system.` instead of `Restart the machine to start it.`, and `systemctl reboot` runs |
 | N13: A system that nxf manages | The system runs from memory and has `/var/lib/nxf/installed.json`, or an executable `/run/current-system/sw/bin/nxf` | `nxf install <dir>` runs | Nothing is partitioned and `nixos-install` is not called; the outcome is `nxf manages this system, and installing erases disks` with `Start the machine from a NixOS installer to install it again.`; the exit status is 1 |
 | N14: A directory with nothing mounted | `/mnt` is a directory and nothing is mounted on it | `nxf install <dir> --mounted` runs | Nothing refuses: `/mnt/etc/nixos` holds the flake, `nixos-install` runs with `--root /mnt`, and the outcome is `NixOS installed` |
-| N15: JSON | The conditions of N1 | `nxf install <dir> --json` runs | Standard output is one JSON object with `hostKey`, which is the key of `/mnt/etc/ssh/ssh_host_ed25519_key.pub`, `system`, which is the store path of the installed system, and `revision`, which is the commit of `<dir>`; standard error is empty; the exit status is 0 |
+| N15: JSON | The conditions of N1 | `nxf install <dir> --json` runs | Standard output is one JSON object with `hostKey`, which is the key of `/mnt/etc/ssh/ssh_host_ed25519_key.pub`, `system`, which is the store path of the installed system, and `revision`, which is the commit of `<dir>`; standard error holds the phases, `NixOS installed` and the host key; the exit status is 0 |
 | N16: A refusal under JSON | The conditions of N3 or N7 | `nxf install <dir> --json` runs | Standard output is one JSON object: `error` is the outcome and `details` the lines beneath it, with the exit line of `nixos-install` last for N7; standard error has the text of the failure; the exit status is 1 |
 
 ## Existing verification
@@ -113,7 +114,7 @@ real `nixos-install` or reads the `/proc/mounts` of the machine.
 | N11 | `tests/install.rs::refuses_unmounted_and_unlocked`, with `NXF_INSTALL_ROOT` in the place of `/mnt` | Which exit status: the test asserts that it is not 0 |
 | N12 | `tests/install.rs::reboot`, with a `systemctl` that notes its call; `tests/install.rs::reboots_through_the_stand_in` for the restart through `NXF_SYSTEMCTL` and not through the `systemctl` of `PATH` | A real restart |
 | N13 | `tests/install.rs::refuses_a_managed_system` | Which exit status: the test asserts that it is not 0. The line beneath the outcome. The same with `--mounted` |
-| N15 | `tests/install.rs::json` | The `system` of an installation whose profile is not found, which is null |
+| N15 | `tests/install.rs::json`; `tests/install.rs::json_is_live` holds `nixos-install` back and asserts its line on standard error before it is released | The `system` of an installation whose profile is not found, which is null |
 | N16 | `tests/install.rs::json_refusal`, for N3 and N7 | The other refusals |
 | N14 | `tests/install.rs::mounted`: its stand-in for `/mnt` is a directory with nothing mounted on it | What `/mnt/etc/nixos` holds, the arguments of `nixos-install` and the outcome: the test asserts the exit status 0, one call of `nixos-install` and the `Host key` line. That the system lands in memory |
 
