@@ -14,9 +14,8 @@ const FAILURE: &str = "failure";
 /// A fixture with a new revision of input a to update to, and a directory
 /// for the hooks.
 fn updating() -> Fixture {
-    let mut fx = fixture()
-        .with("NXF_TEST_BUILD", &fake_systems().one)
-        .with("NXF_HOOK_TIMEOUT", "2");
+    // A hook has the default time: only a test of a hook that hangs shortens it.
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
     let hooks = fx.dir.join("hooks");
     std::fs::create_dir_all(&hooks).unwrap();
     fx.set("NXF_HOOKS_DIR", hooks);
