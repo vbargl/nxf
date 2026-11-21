@@ -415,6 +415,23 @@ fn dirty() {
     assert_contains(result.stdout.lines().next().unwrap(), &fx.env["NXF_SYSTEM"]);
 }
 
+/// The checkout's tree is read once, and not again to find the commit of the
+/// running system.
+#[test]
+fn reads_tree_once() {
+    let system = &fake_systems().one;
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", system)
+        .with("NXF_SYSTEM", system);
+    fx.record_build(system);
+    let git = common::spy(&fx, "git");
+    fx.run(&["status"]).ok();
+    let calls = common::calls(&git);
+    let count = |part: &str| calls.iter().filter(|call| call.contains(part)).count();
+    assert_eq!(count("rev-parse HEAD^{tree}"), 1, "{calls:?}");
+    assert_eq!(count("diff --quiet"), 1, "{calls:?}");
+}
+
 /// A running system that no build record names cannot be compared: status
 /// says so, shows the revision NixOS knows, and `version --system` fails.
 #[test]

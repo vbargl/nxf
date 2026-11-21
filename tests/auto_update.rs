@@ -59,6 +59,25 @@ fn evaluates_once() {
     );
 }
 
+/// The history is not read to see what the checkout changed: a run that has
+/// nothing to do names no commit.
+#[test]
+fn reads_no_history() {
+    let system = &fake_systems().one;
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", system)
+        .with("NXF_SYSTEM", system);
+    fx.record_build(system);
+    let git = common::spy(&fx, "git");
+    fx.run(&["auto-update"]).ok();
+    assert!(fx.nh_calls().is_empty());
+    let calls = common::calls(&git);
+    assert!(
+        !calls.iter().any(|call| call.contains(" log ")),
+        "{calls:?}"
+    );
+}
+
 /// The identity of the module's default, a name and an empty e-mail, commits
 /// the lockfile.
 #[test]

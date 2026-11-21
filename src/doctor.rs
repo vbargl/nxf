@@ -234,7 +234,8 @@ fn running(dir: Option<&Path>) -> Check {
             "skipped until the checkout checks pass".to_string(),
         );
     };
-    match system_commit(dir, &nixos::running(), &state::remembered()) {
+    let tree = git::clean_tree(dir);
+    match system_commit(dir, tree.as_ref(), &nixos::running(), &state::remembered()) {
         Some(commit) => check(
             Level::Ok,
             "running",

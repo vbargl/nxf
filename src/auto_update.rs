@@ -8,7 +8,7 @@ use crate::health::{self, Health};
 use crate::results::{Kind, Outcome, Saved};
 use crate::state::Tree;
 use crate::tasks::{self, Unattended, SWITCH, UPDATE};
-use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
+use crate::{flake, git, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -62,9 +62,9 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         ));
         return Ok(());
     }
+    let dir = flake::checkout()?;
     // A lockfile left by an interrupted run is not work in progress; update restores it.
-    let foreign = status::compare()?
-        .changes
+    let foreign = git::changed_files(&dir)
         .iter()
         .any(|file| file != "flake.lock");
     if foreign {
@@ -80,7 +80,6 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         return Ok(());
     }
     // What is committed says how each input is treated.
-    let dir = flake::checkout()?;
     let configuration = flake::configuration(&dir)?;
     let strategies = strategy::read(&dir, &configuration)?;
     let setup = Unattended {
