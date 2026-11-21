@@ -9,7 +9,7 @@ use crate::output::Mark;
 use crate::results::{Kind, Outcome};
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
-use crate::{cli, flake, git, nixos, output, process, state};
+use crate::{flake, git, nixos, output, process, state};
 
 /// Runs a task with the inputs it takes. The outcomes it has besides its own,
 /// such as one for an input of the automatic update, are added to the last argument.
@@ -206,8 +206,8 @@ pub struct Plan {
 
 /// Turns the given words into the tasks to run, in definition order, after
 /// expanding shortcuts. Words naming one of the given inputs go to the tasks
-/// that take inputs.
-pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
+/// that take inputs. `commands` are named in the error of an unknown word.
+pub fn plan(given: &[String], inputs: &[String], commands: &[String]) -> Result<Plan, String> {
     let defined = defined();
     let names: Vec<&str> = defined.iter().map(|entry| entry.name).collect();
     let named: Vec<&String> = given
@@ -229,7 +229,7 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
             "Inputs",
             inputs.join(", "),
             "Commands",
-            cli::commands().join(", "),
+            commands.join(", "),
         ));
     }
     let wanted: Vec<&str> = defined
@@ -651,25 +651,30 @@ fn diagnostics(stderr: &str) -> Vec<String> {
 
 /// Runs the given tasks in order and returns one outcome per task that ran.
 /// A failure stops later tasks. Quiet runs print nothing.
-pub fn run(given: &[String], quiet: bool) -> Result<Vec<Outcome>, String> {
-    run_with(given, quiet, None)
+pub fn run(given: &[String], quiet: bool, commands: &[String]) -> Result<Vec<Outcome>, String> {
+    run_with(given, quiet, None, commands)
 }
 
 /// Runs the tasks for the automatic update, quietly and with its strategies:
 /// an input that is off is not updated, and every other input whose update
 /// fails adds an outcome of its own, `flagged` or `reported`, while the update
 /// goes on.
-pub fn run_unattended(given: &[String], strategies: &Strategies) -> Result<Vec<Outcome>, String> {
-    run_with(given, true, Some(strategies))
+pub fn run_unattended(
+    given: &[String],
+    strategies: &Strategies,
+    commands: &[String],
+) -> Result<Vec<Outcome>, String> {
+    run_with(given, true, Some(strategies), commands)
 }
 
 fn run_with(
     given: &[String],
     quiet: bool,
     strategies: Option<&Strategies>,
+    commands: &[String],
 ) -> Result<Vec<Outcome>, String> {
     let dir = flake::checkout()?;
-    let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?))?;
+    let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?), commands)?;
     let chosen: Vec<&Task> = plan.tasks.iter().filter_map(|name| task(name)).collect();
     let configuration = flake::configuration(&dir)?;
     let total: usize = chosen.iter().map(|task| task.phases).sum();
@@ -734,9 +739,9 @@ fn run_with(
 }
 
 /// The tasks a run would perform, each with its inputs.
-pub fn dry_run(given: &[String]) -> Result<Vec<String>, String> {
+pub fn dry_run(given: &[String], commands: &[String]) -> Result<Vec<String>, String> {
     let dir = flake::checkout()?;
-    let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?))?;
+    let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?), commands)?;
     Ok(plan
         .tasks
         .iter()

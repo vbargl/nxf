@@ -83,7 +83,8 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     let dir = flake::checkout()?;
     let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
-    results.extend(tasks::run_unattended(&words(&["update"]), &strategies)?);
+    // Only tasks are given, so no word is unknown and no command is named.
+    results.extend(tasks::run_unattended(&words(&["update"]), &strategies, &[])?);
     if results.iter().any(Outcome::failed) {
         return Ok(());
     }
@@ -102,7 +103,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         ));
         return Ok(());
     }
-    let switched = tasks::run(&words(&["switch"]), true)?;
+    let switched = tasks::run(&words(&["switch"]), true, &[])?;
     let activated = !switched.iter().any(Outcome::failed);
     results.extend(switched);
     if activated {

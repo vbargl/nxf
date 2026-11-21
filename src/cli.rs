@@ -245,7 +245,7 @@ fn run_tasks(args: RunArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.dry_run {
-        return match tasks::dry_run(&args.words) {
+        return match tasks::dry_run(&args.words, &commands()) {
             Ok(lines) => {
                 lines.iter().for_each(|line| output::line(line));
                 ExitCode::SUCCESS
@@ -253,7 +253,7 @@ fn run_tasks(args: RunArgs) -> ExitCode {
             Err(error) => fail(&error, args.json),
         };
     }
-    match tasks::run(&args.words, args.json) {
+    match tasks::run(&args.words, args.json, &commands()) {
         Ok(outcomes) => {
             if args.json {
                 output::data(&results::outcomes_json(&outcomes));

@@ -11,7 +11,11 @@ use nxf::tasks;
 use serde_json::{json, Value};
 
 fn plan(given: &[&str]) -> Result<tasks::Plan, String> {
-    tasks::plan(&names(given), &names(&["a", "b"]))
+    tasks::plan(
+        &names(given),
+        &names(&["a", "b"]),
+        &names(&["status", "doctor"]),
+    )
 }
 
 /// A module-provisioned directory receives records; per-user state stays separate.
@@ -289,6 +293,11 @@ fn plan_unknown() {
     assert_contains(
         &plan(&["update", "status"]).unwrap_err(),
         "Unknown task or input: status",
+    );
+    // The commands are those the caller names.
+    assert_contains(
+        &plan(&["status"]).unwrap_err(),
+        "\nCommands  status, doctor",
     );
 }
 
