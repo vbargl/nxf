@@ -552,6 +552,32 @@ fn upgrade_json() {
     assert_eq!(printed["machines"][2]["state"], "not started");
 }
 
+/// A machine whose nxf is older than the outcomes this nxf reads prints a
+/// list of another shape: its row says so, and fails, whether its status is
+/// 0 or not, instead of showing the last line of the list.
+#[test]
+fn older_nxf() {
+    let set = machines();
+    let older = r#"echo '[{"task": "update", "inputs": [], "outcome": "failed", "detail": "x"}]'"#;
+    let release = concat!(
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        ".",
+        env!("CARGO_PKG_VERSION_MINOR")
+    );
+    for body in [older.to_string(), format!("{older}; exit 1")] {
+        set.answers("node-1", &body);
+        let result = set.upgrade(&[]);
+        assert_eq!(result.code, 1);
+        assert_contains(
+            &result.stdout,
+            &format!(
+                "\n  ✗ node-1    unreadable answer: nxf on the machine is older than {release}\n"
+            ),
+        );
+        assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    }
+}
+
 /// An upgrade that ends with a failure status and names no failed task
 /// fails with what the machine said last, and starts no other machine.
 #[test]
@@ -559,7 +585,7 @@ fn upgrade_failure_status() {
     let set = machines();
     set.answers(
         "node-1",
-        r#"echo '[{"task": "update", "inputs": [], "outcome": "unchanged", "detail": ""}]'; echo 'the session was closed' >&2; exit 4"#,
+        r#"echo '[{"task": "update", "inputs": [], "outcome": "unchanged", "details": []}]'; echo 'the session was closed' >&2; exit 4"#,
     );
     let result = set.upgrade(&[]);
     assert_eq!(result.code, 1);

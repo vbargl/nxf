@@ -304,20 +304,34 @@ pub fn waves(count: usize, batch: usize) -> Vec<std::ops::Range<usize>> {
     waves
 }
 
+/// The release that writes the outcomes as nxf reads them.
+const RELEASE: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
+
 /// What the upgrade did on one machine, from the outcomes its `--json` printed.
 fn upgraded(reply: &Reply) -> Result<String, String> {
     if let (None, Some(error)) = (reply.code, reply.error()) {
         // Ending ssh here does not end the task there.
         return Err(format!("{error}; the upgrade may still run on the machine"));
     }
-    let outcomes: Option<Vec<Outcome>> = match reply.code {
+    let list = match reply.code {
         Some(255) | None => None,
-        Some(_) => serde_json::from_str::<Value>(&reply.stdout)
-            .ok()
-            .and_then(|list| list.as_array()?.iter().map(Outcome::from_json).collect()),
+        Some(_) => serde_json::from_str::<Value>(&reply.stdout).ok(),
     };
-    // Without outcomes nxf refused before any task ran, and its refusal is the cause.
+    let outcomes: Option<Vec<Outcome>> = list
+        .as_ref()
+        .and_then(|list| list.as_array()?.iter().map(Outcome::from_json).collect());
     let Some(outcomes) = outcomes else {
+        // A list of another shape is what an older nxf prints; its state is unknown.
+        if list.is_some_and(|list| list.is_array()) {
+            return Err(format!(
+                "unreadable answer: nxf on the machine is older than {RELEASE}"
+            ));
+        }
+        // Otherwise nxf refused before any task ran, and its refusal is the cause.
         return Err(reply
             .error()
             .unwrap_or_else(|| "unreadable answer".to_string()));
