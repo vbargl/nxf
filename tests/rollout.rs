@@ -553,6 +553,28 @@ fn reads_the_installation() {
     );
 }
 
+/// Text that the machine prints on standard output before the document of
+/// its installation does not fail the machine: the last line is the document.
+#[test]
+fn text_before_the_installation() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let ssh = fx.dir.join("machines/ssh-greeting");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+[[ ${{*: -1}} != *'bin/nxf install '* ]] || echo 'Welcome to node-1'
+exec '{}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    result.ok();
+    assert_contains(&result.stdout, "\n✓ 1 machine installed\n");
+}
+
 /// The remote installation fails with its refusal on standard output: the
 /// row of the machine is the step and the cause, with the lines beneath.
 #[test]
@@ -726,6 +748,7 @@ fn json_refusal() {
         printed["error"],
         format!("{} is not a directory", missing.display())
     );
+    assert_eq!(ssh_log(&fx), "");
 }
 
 /// The key of the system that was there before is replaced by the new one.

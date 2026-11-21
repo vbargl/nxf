@@ -5,6 +5,7 @@
 use serde_json::{json, Map, Value};
 
 use crate::process;
+use crate::text::last_line;
 
 /// The word of an outcome, as the README documents it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,15 +157,15 @@ impl Refusal {
         }
     }
 
+    /// On one line.
     pub fn to_json(&self) -> String {
-        let refusal = json!({"error": self.error, "details": self.details});
-        serde_json::to_string_pretty(&refusal).unwrap_or_default()
+        json!({"error": self.error, "details": self.details}).to_string()
     }
 
-    /// None for any other text, such as the standard output of a machine
-    /// that is not nxf, or the list of outcomes.
+    /// From the last line of what a program printed, where the object is
+    /// kept on one line. None for any other text, such as the list of outcomes.
     pub fn from_json(text: &str) -> Option<Refusal> {
-        let value: Value = serde_json::from_str(text).ok()?;
+        let value: Value = serde_json::from_str(&last_line(text)?).ok()?;
         Some(Refusal {
             error: value.get("error")?.as_str()?.to_string(),
             details: strings(value.get("details")?)?,
@@ -285,17 +286,20 @@ pub struct Installation {
 }
 
 impl Installation {
+    /// On one line.
     pub fn to_json(&self) -> String {
         let installed = json!({
             "hostKey": self.host_key,
             "system": self.system,
             "revision": self.revision,
         });
-        serde_json::to_string_pretty(&installed).unwrap_or_default()
+        installed.to_string()
     }
 
+    /// From the last line of what a program printed, where the object is kept
+    /// on one line, so that text printed before it does not matter.
     pub fn from_json(text: &str) -> Option<Installation> {
-        let value: Value = serde_json::from_str(text).ok()?;
+        let value: Value = serde_json::from_str(&last_line(text)?).ok()?;
         let text = |name: &str| value.get(name)?.as_str().map(str::to_string);
         Some(Installation {
             host_key: text("hostKey").filter(|key| !key.is_empty())?,

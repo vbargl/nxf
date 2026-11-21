@@ -90,7 +90,12 @@ fn refusal_shape() {
         value,
         json!({"error": "the build said no", "details": ["and more", "nh exited with status 3."]})
     );
-    assert_eq!(Refusal::from_json(&text), Some(refusal));
+    assert_eq!(Refusal::from_json(&text), Some(refusal.clone()));
+    assert!(!text.contains('\n'));
+    assert_eq!(
+        Refusal::from_json(&format!("Welcome\n{text}\n")),
+        Some(refusal)
+    );
     assert_eq!(Refusal::from_json("[]"), None);
     assert_eq!(Refusal::from_json("Welcome to the machine"), None);
     assert_eq!(Refusal::from_json(r#"{"error": "x"}"#), None);
@@ -148,7 +153,13 @@ fn installation_shape() {
         value,
         json!({"hostKey": "ssh-ed25519 AAAA", "system": "/nix/store/abc-nixos-system", "revision": null})
     );
-    assert_eq!(Installation::from_json(&text), Some(installation));
+    assert_eq!(Installation::from_json(&text), Some(installation.clone()));
+    // On one line, so that text printed before it does not matter.
+    assert!(!text.contains('\n'));
+    assert_eq!(
+        Installation::from_json(&format!("Welcome\n{text}\n")),
+        Some(installation)
+    );
     assert_eq!(Installation::from_json(r#"{"hostKey": ""}"#), None);
     assert_eq!(Installation::from_json("Host key  ssh-ed25519 AAAA"), None);
 }
