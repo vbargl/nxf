@@ -297,7 +297,7 @@ fn attention() {
     let set = machines();
     set.answers(
         "node-2",
-        r#"echo '{"revision": "0123456789abcdef", "rebootRequired": true, "hold": {"reason": "freeze", "until": 4102444800}, "bad": "units", "lastUpdate": {"time": 1, "results": [{"outcome": "failed"}]}, "changes": ["flake.nix"], "matches": false}'"#,
+        r#"echo '{"revision": "0123456789abcdef", "rebootRequired": true, "hold": {"reason": "freeze", "until": 4102444800}, "bad": "units", "lastUpdate": {"time": 1, "results": [{"task": "update", "inputs": [], "outcome": "failed", "details": []}]}, "changes": ["flake.nix"], "matches": false}'"#,
     );
     let result = set.run(&["status"]);
     result.ok();

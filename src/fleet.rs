@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
-use crate::results::{self, Kind, Machine, Outcome, Refusal, State};
+use crate::results::{self, Kind, Machine, Outcome, Refusal, Saved, State};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
 use crate::{process, time};
@@ -134,13 +134,8 @@ fn attention(status: &Value) -> Vec<String> {
     if !status["bad"].is_null() {
         notes.push("failed its health check".to_string());
     }
-    let failed = status["lastUpdate"]["results"]
-        .as_array()
-        .is_some_and(|results| {
-            results
-                .iter()
-                .any(|result| result["outcome"] == Kind::Failed.as_str())
-        });
+    let failed = Saved::from_json(&status["lastUpdate"])
+        .is_some_and(|saved| saved.results.iter().any(Outcome::failed));
     if failed {
         notes.push("last update failed".to_string());
     }
