@@ -392,4 +392,30 @@ layout, the nxf module pinned to that commit and an `identity.nix` that
 
 The run is not repeatable in CI.
 
+I1 and I5 to I7 were run by hand again with nxf 0.15.1, built with
+`nix build github:vbargl/nxf/d51dd596b53913f778b6e931dd012dcc3baf0600`,
+against one Incus Ubuntu 24.04 VM with SSH as root. The template had a disko
+layout and the nxf module pinned to that commit, and `--files` held a
+`host.nix` for the machine. The key pair was a throwaway one behind an `ssh`
+wrapper on `PATH`, and `HOME` and `TMPDIR` were scratch directories. Both runs
+were `nxf rollout --config hosts.toml --template path:<template>#machine
+--files <dir> --known-hosts <file> --yes`:
+
+- Run 1 installed the machine in 3 minutes. The plan row was `Ubuntu 24.04.5
+  LTS; it will be erased`. The rows of the phases were `Started from memory`,
+  `Founded on the machine`, `Installed` and `Started, and its host key is the
+  one it was given`. The outcome was `1 machine installed`, with the revision
+  `939aa52c5f6b` (I5). `/etc/nixos` on the machine held the `host.nix` of its
+  own, `/etc/machine-marker` had its text, the installation record was there,
+  nxf was 0.15.1, and its `status --json` named the revision of the run, with
+  `matches` true (I6). The Ubuntu key in the `--known-hosts` file was replaced
+  by the key the machine answers with, and the line of another machine was
+  kept. The `known_hosts` file of the scratch `HOME` was not changed, and
+  `TMPDIR` was empty afterwards (I7).
+- Run 2 only probed the machine. Its row was `installed by nxf`, the outcome
+  was `1 machine installed by nxf`, and the `--known-hosts` file was not
+  changed (I1).
+
+The run is not repeatable in CI.
+
 See the [operating documentation](../../README.md#from-another-computer).
