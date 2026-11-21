@@ -355,4 +355,38 @@ template with a disko layout and the nxf module, pinned to that commit:
 
 The run is not repeatable in CI.
 
+I1, I4 to I7 and I26 were run by hand with nxf 0.15.0, built with
+`nix build github:vbargl/nxf/05049e3442454f37dfa3f8f4178f38c4e67d1153` (the
+head of the branch of pull request #13 before this record), against one Incus
+Ubuntu 24.04 VM (4 CPU, 6 GiB) with SSH as root. The template had a disko
+layout, the nxf module pinned to that commit and an `identity.nix` that
+`--files` replaced. The key pair was a throwaway one behind an `ssh` wrapper on
+`PATH`, and `HOME` and `TMPDIR` were scratch directories. The command was
+`nxf rollout --config hosts.toml --template path:<template> --files <dir>
+--known-hosts <file> --yes`:
+
+- The plan row was `Ubuntu 24.04.5 LTS; it will be erased`. The rows of the
+  phases were `Started from memory`, `Founded on the machine`, `Installed`
+  and `Started, and its host key is the one it was given`. The outcome was
+  `1 machine installed` with the revision `611b09e725a7` (I5). The remote
+  command was `nxf install /tmp/nxf-machine --json`, and the host key in the
+  outcome was the one the machine answered with (I26). The run took 2 minutes
+  and 40 seconds.
+- The machine had the `identity.nix` and the `MARKER` file of its own in
+  `/etc/nixos`, `hardware.nix`, the installation record, nxf 0.15.0, and its
+  `nxf status --json` named the revision of the run (I4, I6).
+- The Ubuntu key in the `--known-hosts` file was replaced by the key the
+  machine answers with, and the line of another machine was kept. The
+  `known_hosts` file of the scratch `HOME` was not changed, and the scratch
+  `TMPDIR` was empty afterwards (I7).
+- The same command again only probed the machine: its row was
+  `installed by nxf`, the outcome was `1 machine installed by nxf`, and the
+  `--known-hosts` file was not changed (I1).
+- `rollout --json` without `--yes`, run for the second time, printed the
+  object with `ok` true, one `managed` machine and an empty standard error
+  (I26, for a managed machine). `status --json --config` printed the
+  `status --json` of the machine under its name.
+
+The run is not repeatable in CI.
+
 See the [operating documentation](../../README.md#from-another-computer).
