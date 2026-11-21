@@ -3,7 +3,7 @@
 //! that takes inputs receives the flake inputs named among the tasks. A
 //! shortcut names a set of tasks, which run in their own places of that order.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
 use crate::results::{Kind, Outcome};
@@ -659,28 +659,42 @@ pub fn run(given: &[String], quiet: bool, commands: &[String]) -> Result<Vec<Out
     run_with(given, quiet, None, commands)
 }
 
+/// What the automatic update settles once for all its tasks.
+pub struct Unattended {
+    pub dir: PathBuf,
+    /// The configuration of the flake that is built.
+    pub configuration: String,
+    pub strategies: Strategies,
+}
+
 /// Runs the tasks for the automatic update, quietly and with its strategies:
 /// an input that is off is not updated, and every other input whose update
 /// fails adds an outcome of its own, `flagged` or `reported`, while the update
 /// goes on.
 pub fn run_unattended(
     given: &[String],
-    strategies: &Strategies,
+    setup: &Unattended,
     commands: &[String],
 ) -> Result<Vec<Outcome>, String> {
-    run_with(given, true, Some(strategies), commands)
+    run_with(given, true, Some(setup), commands)
 }
 
 fn run_with(
     given: &[String],
     quiet: bool,
-    strategies: Option<&Strategies>,
+    setup: Option<&Unattended>,
     commands: &[String],
 ) -> Result<Vec<Outcome>, String> {
-    let dir = flake::checkout()?;
+    let dir = match setup {
+        Some(setup) => setup.dir.clone(),
+        None => flake::checkout()?,
+    };
     let plan = plan(given, &flake::root_inputs(&flake::lock(&dir)?), commands)?;
     let chosen: Vec<&Task> = plan.tasks.iter().filter_map(|name| task(name)).collect();
-    let configuration = flake::configuration(&dir)?;
+    let configuration = match setup {
+        Some(setup) => setup.configuration.clone(),
+        None => flake::configuration(&dir)?,
+    };
     let total: usize = chosen.iter().map(|task| task.phases).sum();
     let mut offset = 0;
     let mut update_commit = String::new();
@@ -699,7 +713,7 @@ fn run_with(
             last: index + 1 == chosen.len(),
             upgrade: given.iter().any(|word| word == "upgrade"),
             update_commit: &update_commit,
-            strategies,
+            strategies: setup.map(|setup| &setup.strategies),
         };
         let mut noted = Vec::new();
         output::phases(offset, total);

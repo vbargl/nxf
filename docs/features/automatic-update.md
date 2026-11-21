@@ -69,6 +69,7 @@ Boundaries:
 - A skipped run, a flagged input and a reported input do not fail the run.
 - A bad revision stays in the repository. The mark belongs to the tree of
   the checkout, and nxf does not remove it.
+- A run finds the configuration once, and the update and the switch use it.
 - Only the latest results are kept: each run replaces `update.json`.
 - `nxf status` is the only way the results reach people. nxf sends no
   notification.

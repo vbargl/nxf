@@ -36,6 +36,29 @@ fn updates_and_switches() {
     assert_contains(&result.stdout, "  ✓ update\n  ✓ switch\n");
 }
 
+/// The configuration is found once for the whole run, whatever tasks it runs:
+/// one evaluation names it, and one reads its update settings.
+#[test]
+fn evaluates_once() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    fx.bump(&["a"]);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!(fx.nh_actions(), ["build", "build", "switch"]);
+    let evaluations: Vec<String> = common::calls(&nix)
+        .into_iter()
+        .filter(|call| call.starts_with("eval "))
+        .collect();
+    assert_eq!(evaluations.len(), 2, "{evaluations:?}");
+    assert_eq!(
+        evaluations
+            .iter()
+            .filter(|call| call.contains("builtins.attrNames"))
+            .count(),
+        1
+    );
+}
+
 /// The identity of the module's default, a name and an empty e-mail, commits
 /// the lockfile.
 #[test]
