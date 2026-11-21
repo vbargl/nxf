@@ -150,3 +150,45 @@ fn stale_mark_keeps_again() {
     assert!(mark.exists());
     assert!(!mark.with_file_name("0000").exists());
 }
+
+/// A mark that lists two sources stands for the tree only while every one of
+/// them is a root, and is in the store.
+#[test]
+fn partial_mark_keeps_again() {
+    let fx = common::fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    let archives = || {
+        common::calls(&nix)
+            .iter()
+            .filter(|call| call.starts_with("flake archive"))
+            .count()
+    };
+    // Inputs with the same content are one source, so they are made to differ.
+    fx.bump(&["a"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+    assert_eq!(archives(), 1);
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 1);
+
+    // One of the two roots is gone.
+    let roots = fx.state.join("nxf/sources");
+    let mut names: Vec<_> = std::fs::read_dir(&roots)
+        .unwrap()
+        .map(|root| root.unwrap().path())
+        .collect();
+    names.sort();
+    std::fs::remove_file(&names[0]).unwrap();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 2);
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+
+    // A source that the mark lists, and a root leads to, is no longer there.
+    let mark = fx.state.join("nxf/kept").join(fx.tree());
+    let gone = "/nix/store/00000000000000000000000000000000-gone";
+    std::fs::write(&mark, gone).unwrap();
+    std::os::unix::fs::symlink(gone, roots.join("input-9")).unwrap();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 3);
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+}
