@@ -344,7 +344,7 @@ pub fn report(options: &Options) -> Result<(), String> {
                 .and_then(|latest| latest.update)
                 .map(|update| update.to_json()),
         });
-        output::line(&serde_json::to_string_pretty(&comparison).unwrap_or_default());
+        output::data(&serde_json::to_string_pretty(&comparison).unwrap_or_default());
         return Ok(());
     }
 

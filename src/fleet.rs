@@ -178,7 +178,7 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
                 (reply.host.name.clone(), value)
             })
             .collect();
-        output::line(&serde_json::to_string_pretty(&all).unwrap_or_default());
+        output::data(&serde_json::to_string_pretty(&all).unwrap_or_default());
         return Ok(silent == 0);
     }
 
