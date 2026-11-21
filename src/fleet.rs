@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
+use crate::results::{Kind, Outcome};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
 use crate::{process, time};
@@ -129,7 +130,11 @@ fn attention(status: &Value) -> Vec<String> {
     }
     let failed = status["lastUpdate"]["results"]
         .as_array()
-        .is_some_and(|results| results.iter().any(|result| result["outcome"] == "failed"));
+        .is_some_and(|results| {
+            results
+                .iter()
+                .any(|result| result["outcome"] == Kind::Failed.as_str())
+        });
     if failed {
         notes.push("last update failed".to_string());
     }
@@ -299,12 +304,11 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
         // Ending ssh here does not end the task there.
         return Err(format!("{error}; the upgrade may still run on the machine"));
     }
-    let outcomes = match reply.code {
+    let outcomes: Option<Vec<Outcome>> = match reply.code {
         Some(255) | None => None,
-        Some(_) => match serde_json::from_str::<Value>(&reply.stdout) {
-            Ok(Value::Array(outcomes)) => Some(outcomes),
-            _ => None,
-        },
+        Some(_) => serde_json::from_str::<Value>(&reply.stdout)
+            .ok()
+            .and_then(|list| list.as_array()?.iter().map(Outcome::from_json).collect()),
     };
     let Some(outcomes) = outcomes else {
         // nxf refused before any task ran: its outcome line is the cause,
@@ -320,19 +324,14 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
             .or_else(|| reply.error())
             .unwrap_or_else(|| "unreadable answer".to_string()));
     };
-    if let Some(failed) = outcomes
-        .iter()
-        .find(|outcome| outcome["outcome"] == "failed")
-    {
-        let task = failed["task"].as_str().unwrap_or("upgrade");
-        // The detail is the task's own failure, whose mark the row repeats.
-        let detail = failed["detail"]
-            .as_str()
-            .map(|detail| detail.trim_start_matches(['✗', ' ']))
-            .filter(|detail| !detail.is_empty());
-        return Err(match detail {
-            Some(detail) => format!("{task} failed: {detail}"),
-            None => format!("{task} failed"),
+    if let Some(failed) = outcomes.iter().find(|outcome| outcome.failed()) {
+        // The details are the task's own failure, whose mark the row repeats.
+        let details = failed.details.join(" | ");
+        let detail = details.trim_start_matches(['✗', ' ']);
+        return Err(if detail.is_empty() {
+            format!("{} failed", failed.task)
+        } else {
+            format!("{} failed: {detail}", failed.task)
         });
     }
     if reply.code != Some(0) {
@@ -342,7 +341,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
     }
     let updated = outcomes
         .iter()
-        .any(|outcome| outcome["task"] == "update" && outcome["outcome"] == "done");
+        .any(|outcome| outcome.task == "update" && outcome.kind == Kind::Done);
     Ok(if updated {
         "inputs updated, switched".to_string()
     } else {

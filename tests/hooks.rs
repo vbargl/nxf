@@ -95,7 +95,7 @@ fn refusing_check() {
     assert!(!mark.exists());
     assert_eq!(
         results(&fx),
-        json!([{"task": "update", "inputs": [], "outcome": "skipped", "detail": "rollout is paused"}])
+        json!([{"task": "update", "inputs": [], "outcome": "skipped", "details": ["rollout is paused"]}])
     );
     assert_contains(
         &fx.run(&["status"]).stdout,
@@ -110,7 +110,7 @@ fn hanging_check() {
     hook(&fx, CHECK, "sleep 30");
     fx.run(&["auto-update"]).ok();
     assert!(fx.nh_calls().is_empty());
-    assert_eq!(results(&fx)[0]["detail"], "timed out");
+    assert_eq!(common::details(&results(&fx)[0]), ["timed out"]);
 }
 
 /// A hand-run update asks no hook.
@@ -180,6 +180,6 @@ fn failure_of_its_own() {
     let results = results(&fx);
     assert_eq!(results[2]["task"], "hook");
     assert_eq!(results[2]["outcome"], "failed");
-    assert_eq!(results[2]["detail"], "cannot pause");
+    assert_eq!(common::details(&results[2]), ["cannot pause"]);
     assert_contains(&fx.run(&["status"]).stdout, "  ✗ hook      cannot pause");
 }

@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::{
-    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, rollout,
-    state, status, tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, results,
+    rollout, state, status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -244,9 +244,9 @@ fn run_tasks(args: RunArgs) -> ExitCode {
     match tasks::run(&args.words, args.json) {
         Ok(outcomes) => {
             if args.json {
-                output::line(&tasks::to_json(&outcomes));
+                output::line(&results::outcomes_json(&outcomes));
             }
-            if outcomes.iter().any(tasks::Outcome::failed) {
+            if outcomes.iter().any(results::Outcome::failed) {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS

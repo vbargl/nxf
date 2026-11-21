@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    append, assert_contains, assert_lacks, commit, configurations, events, fake_systems, fixture,
-    hostname, names, write_script,
+    append, assert_contains, assert_detail, assert_lacks, commit, configurations, events,
+    fake_systems, fixture, hostname, names, write_script,
 };
 use nxf::output::{Style, RESET};
 use nxf::tasks;
@@ -749,8 +749,8 @@ fn json() {
     assert_eq!(
         results,
         json!([
-            {"task": "update", "inputs": ["a"], "outcome": "unchanged", "detail": ""},
-            {"task": "build", "inputs": [], "outcome": "done", "detail": ""},
+            {"task": "update", "inputs": ["a"], "outcome": "unchanged", "details": []},
+            {"task": "build", "inputs": [], "outcome": "done", "details": []},
         ])
     );
     fx.bump(&["a"]);
@@ -762,10 +762,7 @@ fn json() {
     let results = results.as_array().unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["outcome"], "failed");
-    assert_contains(
-        results[0]["detail"].as_str().unwrap(),
-        "Input update failed",
-    );
+    assert_detail(&results[0], "Input update failed");
     assert_eq!(fx.locked("a"), old);
 }
 

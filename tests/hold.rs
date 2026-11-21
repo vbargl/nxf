@@ -59,9 +59,9 @@ fn until_released() {
     assert_eq!(fx.locked("a"), before);
     let result = &saved(&fx)["results"][0];
     assert_eq!(result["outcome"], "skipped");
-    assert_contains(
-        result["detail"].as_str().unwrap(),
-        "held: waiting for the vendor fix",
+    assert_eq!(
+        common::details(result),
+        ["held: waiting for the vendor fix (until released)"]
     );
 
     let status = fx.run(&["status"]);

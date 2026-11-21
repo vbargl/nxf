@@ -537,6 +537,26 @@ pub fn outcomes(report: &serde_json::Value) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The details of a result: what the task said, one entry for each line.
+pub fn details(result: &serde_json::Value) -> Vec<String> {
+    result["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Asserts that some detail of a result holds the text.
+#[track_caller]
+pub fn assert_detail(result: &serde_json::Value, part: &str) {
+    let lines = details(result);
+    assert!(
+        lines.iter().any(|line| line.contains(part)),
+        "expected <{part}> in {lines:?}"
+    );
+}
+
 pub fn pair(task: &str, outcome: &str) -> (String, String) {
     (task.to_string(), outcome.to_string())
 }

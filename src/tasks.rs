@@ -5,19 +5,47 @@
 
 use std::path::Path;
 
-use serde_json::{json, Value};
-
 use crate::output::Mark;
+use crate::results::{Kind, Outcome};
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
 use crate::{flake, git, nixos, output, process, state};
 
+/// Runs a task with the inputs it takes. The outcomes it has besides its own,
+/// such as one for an input of the automatic update, are added to the last argument.
+type Runner = fn(&Run, &[String], &mut Vec<Outcome>) -> Result<(), Stop>;
+
+/// What a task is, does and says. A new task is one entry of `TASKS`.
 struct Task {
     pub name: &'static str,
     pub description: &'static str,
     pub takes_inputs: bool,
     /// Phase headings the task prints: one for the build, one for activation.
     phases: usize,
+    /// Whether the task changes the lockfile. When it leaves it as it was,
+    /// its outcome is `unchanged`.
+    locks: bool,
+    run: Runner,
+}
+
+/// What the tasks that build the configuration say differently.
+struct Build {
+    /// What follows the build, if anything.
+    activation: Option<Activation>,
+    /// The outcome of a run that ends with the task.
+    outcome: &'static str,
+    /// The same when the built system is the running one, if it differs.
+    outcome_unchanged: Option<&'static str>,
+    /// What the run says beneath the outcome.
+    effect: &'static str,
+}
+
+struct Activation {
+    heading: &'static str,
+    failure: &'static str,
+    row: &'static str,
+    /// Whether it changes the running system. If it fails, some changes may be active.
+    live: bool,
 }
 
 struct Shortcut {
@@ -32,30 +60,95 @@ const TASKS: &[Task] = &[
         description: "Update all inputs, or only the named ones, one at a time. Each update is built, then committed; one that does not build is restored.",
         takes_inputs: true,
         phases: 1,
+        locks: true,
+        run: update,
     },
     Task {
         name: "build",
         description: "Build the configuration and show what would change.",
         takes_inputs: false,
         phases: 1,
+        locks: false,
+        run: |run, _, _| {
+            system(
+                run,
+                &Build {
+                    activation: None,
+                    outcome: "Configuration built",
+                    outcome_unchanged: Some("Configuration built; system unchanged"),
+                    effect: "Ready to use. The running system was not switched.",
+                },
+            )
+        },
     },
     Task {
         name: "test",
         description: "Activate the configuration until the next reboot.",
         takes_inputs: false,
         phases: 2,
+        locks: false,
+        run: |run, _, _| {
+            system(
+                run,
+                &Build {
+                    activation: Some(Activation {
+                        heading: "Activating configuration",
+                        failure: "Activation did not finish successfully",
+                        row: "Activated until reboot, boot default not changed",
+                        live: true,
+                    }),
+                    outcome: "Configuration active until reboot",
+                    outcome_unchanged: None,
+                    effect: "The boot default was not changed.",
+                },
+            )
+        },
     },
     Task {
         name: "boot",
         description: "Make the configuration the boot default.",
         takes_inputs: false,
         phases: 2,
+        locks: false,
+        run: |run, _, _| {
+            system(
+                run,
+                &Build {
+                    activation: Some(Activation {
+                        heading: "Configuring next boot",
+                        failure: "Could not configure the next boot",
+                        row: "Boot default configured",
+                        live: false,
+                    }),
+                    outcome: "Next boot configured",
+                    outcome_unchanged: None,
+                    effect: "The current system continues running.",
+                },
+            )
+        },
     },
     Task {
         name: "switch",
         description: "Activate the configuration and make it the boot default.",
         takes_inputs: false,
         phases: 2,
+        locks: false,
+        run: |run, _, _| {
+            system(
+                run,
+                &Build {
+                    activation: Some(Activation {
+                        heading: "Activating configuration",
+                        failure: "Activation did not finish successfully",
+                        row: "Activated, boot default updated",
+                        live: true,
+                    }),
+                    outcome: "Configuration activated",
+                    outcome_unchanged: None,
+                    effect: "Active now and configured for the next boot.",
+                },
+            )
+        },
     },
 ];
 
@@ -177,6 +270,8 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
 
 /// What a task needs to know about the run it is part of.
 struct Run<'a> {
+    /// The name of the task that runs.
+    task: &'static str,
     dir: &'a Path,
     /// The configuration of the flake that is built.
     configuration: &'a str,
@@ -207,16 +302,19 @@ impl From<String> for Stop {
     }
 }
 
-#[derive(Default)]
-struct Stopped {
-    activation: bool,
-    boot: bool,
-    build: bool,
+/// Where a run stopped, which says what the failure left behind.
+enum Stopped {
+    Update,
+    Build,
+    /// `live`: the activation changes the running system.
+    Activation {
+        live: bool,
+    },
 }
 
 /// Reports a failure: the cause first, what it means for the run in muted
 /// text, then the command to retry. It does not promise an activation rollback.
-fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped) -> Stop {
+fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, at: Stopped) -> Stop {
     let title = if run.upgrade {
         format!("Upgrade stopped: {}", title.to_lowercase())
     } else {
@@ -243,19 +341,20 @@ fn stopped(run: &Run, title: &str, causes: &[String], retry: &str, kind: Stopped
             run.update_commit
         ));
     }
-    if kind.activation {
-        output::effect_err(if kind.boot {
-            "The running system was not switched; verify boot entries before rebooting."
-        } else {
-            "Some changes may already be active."
-        });
-    } else if kind.build {
-        output::note_err("Activation was not started. Later tasks were not run.");
-    } else {
-        output::note_err("The lockfile was restored for these inputs. Later tasks were not run.");
+    match at {
+        Stopped::Activation { live: true } => {
+            output::effect_err("Some changes may already be active.")
+        }
+        Stopped::Activation { live: false } => output::effect_err(
+            "The running system was not switched; verify boot entries before rebooting.",
+        ),
+        Stopped::Build => output::note_err("Activation was not started. Later tasks were not run."),
+        Stopped::Update => output::note_err(
+            "The lockfile was restored for these inputs. Later tasks were not run.",
+        ),
     }
     output::line_err("");
-    output::effect_err(if kind.activation {
+    output::effect_err(if matches!(at, Stopped::Activation { .. }) {
         "Inspect the diagnostics before retrying:"
     } else {
         "Retry after fixing the error:"
@@ -349,14 +448,14 @@ fn keep_inputs(dir: &Path) {
     }
 }
 
-/// What a failed input update said, on one line.
-fn said(error: &str) -> String {
+/// What a failed input update said, one entry for each line.
+fn said(error: &str) -> Vec<String> {
     strip_ansi(error)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join(" | ")
+        .map(str::to_string)
+        .collect()
 }
 
 fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), Stop> {
@@ -399,20 +498,16 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
     let mut failed: Vec<&InputResult> = Vec::new();
     for result in results.iter().filter(|result| result.mark == Mark::Failed) {
         // To the automatic update a failed input is a record, not a failure of the run.
-        let outcome = match run.strategy(&result.name) {
-            Some(Strategy::Flag) => "flagged",
-            Some(Strategy::Report) => "reported",
-            Some(Strategy::Off) | None => {
-                failed.push(result);
-                continue;
-            }
+        let Some(kind) = run.strategy(&result.name).and_then(Strategy::outcome) else {
+            failed.push(result);
+            continue;
         };
-        noted.push(Outcome {
-            task: "update".to_string(),
-            inputs: vec![result.name.clone()],
-            outcome: outcome.to_string(),
-            detail: said(result.error.as_deref().unwrap_or_default()),
-        });
+        noted.push(Outcome::new(
+            run.task,
+            vec![result.name.clone()],
+            kind,
+            said(result.error.as_deref().unwrap_or_default()),
+        ));
     }
     if !failed.is_empty() {
         let causes: Vec<String> = failed
@@ -439,7 +534,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
             "Input update failed",
             &causes,
             &format!("nxf update {}", names.join(" ")),
-            Stopped::default(),
+            Stopped::Update,
         ));
     }
     if run.last {
@@ -461,22 +556,19 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
 
 /// nh evaluates the flake once. Activation then uses that exact store path,
 /// keeping nh's validation, elevation and specialisation handling.
-fn system(run: &Run, action: &str) -> Result<(), Stop> {
+fn system(run: &Run, build: &Build) -> Result<(), Stop> {
     let dir = run.dir;
     let tree = git::clean_tree(dir);
     let running = nixos::running();
     output::start("Building configuration");
-    let retry = format!("nxf {action}");
+    let retry = format!("nxf {}", run.task);
     let built = nixos::build(dir, run.configuration).map_err(|err| {
         stopped(
             run,
             "Configuration build failed",
             &[err],
             &retry,
-            Stopped {
-                build: true,
-                ..Stopped::default()
-            },
+            Stopped::Build,
         )
     })?;
     match tree.filter(|before| git::clean_tree(dir).as_ref() == Some(before)) {
@@ -506,96 +598,45 @@ fn system(run: &Run, action: &str) -> Result<(), Stop> {
             Err(err) => output::sub("Packages", &format!("summary unavailable: {err}")),
         }
     }
-    if action != "build" {
-        output::start(if action == "boot" {
-            "Configuring next boot"
-        } else {
-            "Activating configuration"
-        });
-        nixos::activate(action, &built).map_err(|err| {
+    if let Some(activation) = &build.activation {
+        output::start(activation.heading);
+        nixos::activate(run.task, &built).map_err(|err| {
             stopped(
                 run,
-                if action == "boot" {
-                    "Could not configure the next boot"
-                } else {
-                    "Activation did not finish successfully"
-                },
+                activation.failure,
                 &[err],
                 &retry,
-                Stopped {
-                    activation: true,
-                    boot: action == "boot",
-                    ..Stopped::default()
+                Stopped::Activation {
+                    live: activation.live,
                 },
             )
         })?;
-        output::row(
-            Mark::Done,
-            match action {
-                "test" => "Activated until reboot, boot default not changed",
-                "boot" => "Boot default configured",
-                _ => "Activated, boot default updated",
-            },
-        );
+        output::row(Mark::Done, activation.row);
     }
     if run.last {
         output::success(if run.upgrade {
             "Upgrade applied"
+        } else if unchanged {
+            build.outcome_unchanged.unwrap_or(build.outcome)
         } else {
-            match action {
-                "build" if unchanged => "Configuration built; system unchanged",
-                "build" => "Configuration built",
-                "test" => "Configuration active until reboot",
-                "boot" => "Next boot configured",
-                _ => "Configuration activated",
-            }
+            build.outcome
         });
-        output::effect(match action {
-            "build" => "Ready to use. The running system was not switched.",
-            "test" => "The boot default was not changed.",
-            "boot" => "The current system continues running.",
-            _ => "Active now and configured for the next boot.",
-        });
-        if matches!(action, "test" | "switch") && unchanged {
+        output::effect(build.effect);
+        if unchanged
+            && build
+                .activation
+                .as_ref()
+                .is_some_and(|activation| activation.live)
+        {
             output::note("The system path is unchanged; activation was still performed.");
         }
     }
     Ok(())
 }
 
-/// The result of one task, as `--json` and the automatic updater report it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Outcome {
-    pub task: String,
-    pub inputs: Vec<String>,
-    /// `done`, `unchanged`, `failed`, or the updater's `skipped`, `flagged` and `reported`.
-    pub outcome: String,
-    pub detail: String,
-}
-
-impl Outcome {
-    pub fn failed(&self) -> bool {
-        self.outcome == "failed"
-    }
-
-    /// An input the automatic update could not update, and is to report.
-    pub fn reported(&self) -> bool {
-        self.outcome == "reported"
-    }
-
-    pub fn to_json(&self) -> Value {
-        json!({
-            "task": self.task,
-            "inputs": self.inputs,
-            "outcome": self.outcome,
-            "detail": self.detail,
-        })
-    }
-}
-
 /// What a failed task said, without its styling and recovery hint. It reads
 /// the texts that `stopped` prints, and stops at the first of its hints.
-fn diagnostics(stderr: &str) -> String {
+fn diagnostics(stderr: &str) -> Vec<String> {
     strip_ansi(stderr)
         .lines()
         .map(str::trim)
@@ -603,8 +644,8 @@ fn diagnostics(stderr: &str) -> String {
         .take_while(|line| {
             !line.starts_with("Retry after fixing") && !line.starts_with("Inspect the diagnostics")
         })
-        .collect::<Vec<_>>()
-        .join(" | ")
+        .map(str::to_string)
+        .collect()
 }
 
 /// Runs the given tasks in order and returns one outcome per task that ran.
@@ -642,6 +683,7 @@ fn run_with(
         let inputs: &[String] = if task.takes_inputs { &plan.inputs } else { &[] };
         let before = flake::lock(&dir)?;
         let context = Run {
+            task: task.name,
             dir: &dir,
             configuration: &configuration,
             last: index + 1 == chosen.len(),
@@ -654,10 +696,7 @@ fn run_with(
         if quiet {
             output::capture();
         }
-        let result = match task.name {
-            "update" => update(&context, inputs, &mut noted),
-            action => system(&context, action),
-        };
+        let result = (task.run)(&context, inputs, &mut noted);
         if let Err(Stop::Error(error)) = &result {
             output::failure("Task failed");
             output::effect_err(error);
@@ -668,28 +707,24 @@ fn run_with(
             output::Captured::default()
         };
         let changed = flake::lock(&dir).map_or(true, |lock| lock != before);
-        outcomes.push(Outcome {
-            task: task.name.to_string(),
-            inputs: inputs.to_vec(),
-            outcome: if result.is_err() {
-                "failed"
-            } else if task.name == "update" && !changed {
-                "unchanged"
-            } else {
-                "done"
-            }
-            .to_string(),
-            detail: if result.is_err() {
-                diagnostics(&captured.stderr)
-            } else {
-                String::new()
-            },
-        });
+        let kind = if result.is_err() {
+            Kind::Failed
+        } else if task.locks && !changed {
+            Kind::Unchanged
+        } else {
+            Kind::Done
+        };
+        let details = if result.is_err() {
+            diagnostics(&captured.stderr)
+        } else {
+            Vec::new()
+        };
+        outcomes.push(Outcome::new(task.name, inputs.to_vec(), kind, details));
         outcomes.extend(noted);
         if result.is_err() {
             break;
         }
-        if task.name == "update" && changed {
+        if task.locks && changed {
             update_commit = git::commit_line(&dir, "HEAD");
         }
         offset += task.phases;
@@ -713,9 +748,4 @@ pub fn dry_run(given: &[String]) -> Result<Vec<String>, String> {
             words.join(" ")
         })
         .collect())
-}
-
-pub fn to_json(outcomes: &[Outcome]) -> String {
-    let list: Vec<Value> = outcomes.iter().map(Outcome::to_json).collect();
-    serde_json::to_string_pretty(&list).unwrap_or_default()
 }
