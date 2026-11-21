@@ -74,13 +74,13 @@ change them here first.
 | `src/rollout.rs` | Installing the machines of a hosts file that nxf does not manage |
 | `src/status.rs` | The status report, the running system's flake commit and the updater's latest result |
 | `src/doctor.rs` | The doctor's checks |
-| `src/output.rs` | Terminal styles, rows, label columns, phase headings, outcomes and streaming diagnostics |
+| `src/output.rs` | Terminal styles, rows, label columns, phase headings, outcomes, streaming diagnostics, the one document of a run (`data`) and the diversion of its text to standard error (`divert`) |
 | `src/progress.rs` | Nix activity decoding, derivation counts and active package names |
 | `src/git.rs` | Git helpers |
 | `src/flake.rs` | Flake helpers: the checkout, updating inputs, reading the lockfile |
 | `src/nixos.rs` | NixOS helpers: nh, dix, the running system, package changes, sizes, the update service |
 | `src/env.rs` | The environment: the name of each variable nxf reads, and the readers of its values |
-| `src/process.rs` | Child processes: running them, with a deadline, the one shape of their failures, and the atomic write of a file |
+| `src/process.rs` | Child processes: running them, with a deadline, reading their output and error together or apart, the one shape of their failures, and the atomic write of a file |
 | `src/ssh.rs` | Reaching a machine over ssh: the options, the trust of its host key, the quoting of the remote command |
 | `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots, the places of the hold and of the updater's results |
 | `src/time.rs` | The clock, a time as `date` reads and writes it, and how long ago a time was |
@@ -150,16 +150,21 @@ change them here first.
   runs.
 - Tasks are the entries of `TASKS` in `src/tasks.rs` and run in that order,
   each at most once. Place a new task where it belongs in the order. An entry
-  holds what the task is, does and says, so a new task is one entry and no
-  code matches on the name of a task.
+  holds what the task is, does and says, so a new task is one entry. No code
+  matches on the name of a task, except `auto-update`, which decides which
+  comes next, and the readers of results, which use `tasks::UPDATE` and
+  `tasks::SWITCH`.
 - A set of tasks given one name is an entry of `SHORTCUTS`, not a task calling
   other tasks: that keeps each task in its own place of the order.
 - Scripts get results from `--json`, never from terminal output, and so do
   the programs of nxf that run each other: `rollout` reads `install --json`,
   and the commands with `--config` read `--json` of the machines. A word of a
-  result is a value of an enum, and a shape of JSON has one writer and one
-  reader in `src/results.rs`. Every task reports through `--json` without code
-  of its own; keep it that way.
+  result is a value of an enum. The shapes that `src/results.rs` owns, which
+  are the outcomes of tasks, a refusal, the machines of a rollout and an
+  installation, have one writer and one reader there. The document of
+  `status --json` is written by `src/status.rs`, and `fleet.rs` and
+  `rollout.rs` read the fields they need from it. Every task reports through
+  `--json` without code of its own; keep it that way.
 - `auto-update` decides which task comes next from the task results, and
   verifies the switch it made: the health checks, the mark of a bad
   revision and the return to the previous system. Everything else is a task.

@@ -149,9 +149,11 @@ runs as root, nh is told not to elevate. dix makes the package summary.
 ## Scripts
 
 Scripts drive nxf through JSON instead of reading its terminal output. With
-`--json`, standard output holds JSON and nothing else. The text for people
-stays on standard error: for `install` and `rollout`, all of what they print
-without `--json`, as it comes, so a long run stays observable.
+`--json`, standard output holds the JSON document of the run and nothing
+else; `--dry-run` prints its plan as plain lines. The text for people stays on
+standard error. A task prints nothing until it ends. Only `install` and
+`rollout` print all of their text there as it comes, so that a long run stays
+observable.
 
 - `nxf --json <task>...` prints nothing while the tasks run, then a list with
   one record per task that ran: `task`, `inputs`, `outcome` and `details`. The
@@ -184,7 +186,7 @@ without `--json`, as it comes, so a long run stays observable.
   version of nxf saved in another shape.
 - `nxf install <dir> --json` prints
   `{"hostKey": "ssh-ed25519 AAAA…", "system": "/nix/store/…", "revision": "<commit>"}`
-  when the installation ended. `system` and
+  on one line when the installation ended. `system` and
   `revision` are null when they are not known. `rollout` reads this to get the
   host key of a machine.
 - `nxf rollout --config <file> --json` prints one object, for an installation
