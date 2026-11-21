@@ -831,10 +831,9 @@ input's origin only when it is not. So whenever nxf has built a committed
 flake, it copies the locked inputs into the store and keeps them there, as
 GC roots in `sources` of its own state. Those roots protect the shared store
 for every user and are not moved or shared. Locked inputs that are kept this
-way need no fetch access for the next user. The file `kept/<tree>` in that
-state lists the sources kept for a tree. A build of that tree skips the copy
-while every listed source is still the target of a root. A file whose roots
-are gone does not skip it. Additional sources fetched at
+way need no fetch access for the next user. A mark in `kept` of that state
+lets a build of the same tree skip the copy; its rule is in
+[Shared Builds](docs/features/shared-builds.md). Additional sources fetched at
 evaluation time outside `flake.lock` may still need network access or
 credentials, even when build records are shared. Nix's fetcher cache remains
 per-user.
