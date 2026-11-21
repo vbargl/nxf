@@ -5,6 +5,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
+use crate::results::{Outcome, Refusal};
 use crate::{
     auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, results,
     rollout, state, status, tasks,
@@ -196,19 +197,24 @@ fn task_list() -> String {
 
 /// An error in the shape of every failure: the cause as the one outcome,
 /// with what helps to resolve it beneath.
-fn fail(error: &str) -> ExitCode {
+/// With `json` the cause and the lines beneath it are also the one JSON
+/// object on standard output.
+fn fail(error: &str, json: bool) -> ExitCode {
     let error = process::cause_first(error);
     let mut lines = error.lines();
     output::failure(lines.next().unwrap_or("Failed"));
     for line in lines {
         output::effect_err(line);
     }
+    if json {
+        output::line(&Refusal::from_text(&error).to_json());
+    }
     ExitCode::FAILURE
 }
 
 /// What clap refused, in the same shape and with clap's exit status of a
 /// wrong call. Help that was asked for is printed as it is.
-fn refuse(error: clap::Error) -> ExitCode {
+fn refuse(error: clap::Error, json: bool) -> ExitCode {
     if !error.use_stderr() {
         let _ = error.print();
         return ExitCode::SUCCESS;
@@ -216,12 +222,21 @@ fn refuse(error: clap::Error) -> ExitCode {
     let text = error.render().to_string();
     let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
     let cause = lines.next().unwrap_or("Failed");
-    output::failure(cause.strip_prefix("error: ").unwrap_or(cause));
-    lines.for_each(output::effect_err);
+    let cause = cause.strip_prefix("error: ").unwrap_or(cause);
+    let details: Vec<&str> = lines.collect();
+    output::failure(cause);
+    details.iter().for_each(|line| output::effect_err(line));
+    if json {
+        let refusal = Refusal {
+            error: cause.to_string(),
+            details: details.iter().map(|line| line.to_string()).collect(),
+        };
+        output::line(&refusal.to_json());
+    }
     ExitCode::from(2)
 }
 
-fn run_tasks(args: RunArgs) -> ExitCode {
+fn run_tasks(args: RunArgs, json: bool) -> ExitCode {
     if args.words.is_empty() {
         let mut help = Cli::command().after_help(task_list());
         let _ = help.print_help();
@@ -233,7 +248,7 @@ fn run_tasks(args: RunArgs) -> ExitCode {
                 lines.iter().for_each(|line| output::line(line));
                 ExitCode::SUCCESS
             }
-            Err(error) => fail(&error),
+            Err(error) => fail(&error, json),
         };
     }
     match tasks::run(&args.words, args.json) {
@@ -241,13 +256,13 @@ fn run_tasks(args: RunArgs) -> ExitCode {
             if args.json {
                 output::line(&results::outcomes_json(&outcomes));
             }
-            if outcomes.iter().any(results::Outcome::failed) {
+            if outcomes.iter().any(Outcome::failed) {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
             }
         }
-        Err(error) => fail(&error),
+        Err(error) => fail(&error, json),
     }
 }
 
@@ -417,21 +432,22 @@ pub fn main() -> ExitCode {
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.
     let first = std::env::args().nth(1).unwrap_or_default();
+    let json = std::env::args().any(|arg| arg == "--json");
     let wants_command =
         commands().contains(&first) || ["help", "-h", "--help"].contains(&first.as_str());
     if !wants_command {
         return match TaskCli::try_parse() {
             Ok(cli) => {
                 share_checkout();
-                run_tasks(cli.run)
+                run_tasks(cli.run, json)
             }
-            Err(error) => refuse(error),
+            Err(error) => refuse(error, json),
         };
     }
     let cli = Cli::command().after_help(task_list());
     let matches = match cli.try_get_matches() {
         Ok(matches) => matches,
-        Err(error) => return refuse(error),
+        Err(error) => return refuse(error, json),
     };
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
@@ -445,12 +461,12 @@ pub fn main() -> ExitCode {
             match run_command(command) {
                 Ok(true) => ExitCode::SUCCESS,
                 Ok(false) => ExitCode::FAILURE,
-                Err(error) => fail(&error),
+                Err(error) => fail(&error, json),
             }
         }
         None => {
             share_checkout();
-            run_tasks(cli.run)
+            run_tasks(cli.run, json)
         }
     }
 }

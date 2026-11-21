@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
-use crate::results::{Kind, Outcome};
+use crate::results::{Kind, Outcome, Refusal};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
 use crate::{process, time};
@@ -26,7 +26,8 @@ struct Reply {
 }
 
 impl Reply {
-    /// Why the machine gave no usable answer, if it did not.
+    /// Why the machine gave no usable answer, if it did not. A refusal that
+    /// nxf printed as JSON is the cause, before the last line of text.
     fn error(&self) -> Option<String> {
         let said = || last_line(&plain(&self.stderr)).or_else(|| last_line(&plain(&self.stdout)));
         match self.code {
@@ -36,7 +37,12 @@ impl Reply {
                 "unreachable: {}",
                 said().unwrap_or_else(|| "ssh failed".to_string())
             )),
-            Some(code) => Some(said().unwrap_or_else(|| format!("nxf exited with status {code}"))),
+            Some(code) => Some(
+                Refusal::from_json(&self.stdout)
+                    .map(|refusal| refusal.error)
+                    .or_else(said)
+                    .unwrap_or_else(|| format!("nxf exited with status {code}")),
+            ),
             // The machine may have been reached: it did not finish, which is not unreachable.
             None => Some(match self.limit.as_secs() {
                 1 => "timed out after 1 second".to_string(),
@@ -310,18 +316,10 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
             .ok()
             .and_then(|list| list.as_array()?.iter().map(Outcome::from_json).collect()),
     };
+    // Without outcomes nxf refused before any task ran, and its refusal is the cause.
     let Some(outcomes) = outcomes else {
-        // nxf refused before any task ran: its outcome line is the cause,
-        // and the lines beneath only help to resolve it.
-        let refused = reply.code.filter(|code| *code != 255).and_then(|_| {
-            plain(&reply.stderr)
-                .lines()
-                .find_map(|line| line.trim().strip_prefix('✗').map(str::trim))
-                .filter(|cause| !cause.is_empty())
-                .map(str::to_string)
-        });
-        return Err(refused
-            .or_else(|| reply.error())
+        return Err(reply
+            .error()
             .unwrap_or_else(|| "unreadable answer".to_string()));
     };
     if let Some(failed) = outcomes.iter().find(|outcome| outcome.failed()) {

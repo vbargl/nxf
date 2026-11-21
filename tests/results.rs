@@ -1,6 +1,6 @@
 //! Tests for src/results.rs: the JSON shapes nxf writes and reads.
 
-use nxf::results::{outcomes_json, Kind, Outcome, Saved};
+use nxf::results::{outcomes_json, Kind, Outcome, Refusal, Saved};
 use serde_json::{json, Value};
 
 /// Each word of an outcome is the one the README documents, and reads back.
@@ -73,4 +73,23 @@ fn saved_shape() {
         {"task": "switch", "inputs": [], "outcome": "done", "detail": ""},
     ]});
     assert_eq!(Saved::from_json(&older), None);
+}
+
+/// A refusal is its cause and the lines beneath it, with the cause first and
+/// the indentation gone. Only that shape reads back.
+#[test]
+fn refusal_shape() {
+    let refusal = Refusal::from_text("nh exited with status 3.\nthe build said no\n\n  and more");
+    assert_eq!(refusal.error, "the build said no");
+    assert_eq!(refusal.details, ["and more", "nh exited with status 3."]);
+    let text = refusal.to_json();
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value,
+        json!({"error": "the build said no", "details": ["and more", "nh exited with status 3."]})
+    );
+    assert_eq!(Refusal::from_json(&text), Some(refusal));
+    assert_eq!(Refusal::from_json("[]"), None);
+    assert_eq!(Refusal::from_json("Welcome to the machine"), None);
+    assert_eq!(Refusal::from_json(r#"{"error": "x"}"#), None);
 }

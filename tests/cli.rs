@@ -118,6 +118,41 @@ fn command_list() {
     );
 }
 
+/// What is refused under --json is also one JSON object on standard output:
+/// the cause and the lines beneath it. The text stays on standard error, and
+/// the exit status is that of the refusal.
+#[test]
+fn json_refusals() {
+    let fx = fixture();
+    let refused = |args: &[&str], code: i32| {
+        let result = fx.run(args);
+        assert_eq!(result.code, code, "{args:?}");
+        assert_contains(&result.stderr, "✗ ");
+        serde_json::from_str::<serde_json::Value>(&result.stdout).unwrap()
+    };
+    let unknown = refused(&["--json", "build", "nosuch"], 1);
+    assert_eq!(unknown["error"], "Unknown task or input: nosuch");
+    let beneath: Vec<&str> = unknown["details"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap())
+        .collect();
+    assert!(beneath[0].starts_with("Tasks"), "{beneath:?}");
+    assert!(beneath[1].starts_with("Inputs"), "{beneath:?}");
+    assert!(beneath[2].starts_with("Commands"), "{beneath:?}");
+
+    let parser = refused(&["--json", "build", "--frob"], 2);
+    assert_eq!(parser["error"], "unexpected argument '--frob' found");
+
+    let input = refused(&["status", "--json", "nosuch"], 1);
+    assert!(input["error"]
+        .as_str()
+        .unwrap()
+        .starts_with("Unknown input: nosuch."));
+    assert_eq!(input["details"], serde_json::json!([]));
+}
+
 /// The example in the help shows what the help claims for it: the words
 /// after `update` are inputs to update, and none of them is a task that
 /// would run as well.

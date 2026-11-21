@@ -485,6 +485,30 @@ fn unreadable_answers() {
     assert_contains(&upgrade.stdout, "\n  · node-2    not started\n");
 }
 
+/// What a machine refused is its refusal on standard output, not the last
+/// line of its text: both the status and the upgrade show that cause.
+#[test]
+fn refusal_is_read_from_json() {
+    let set = machines();
+    set.answers(
+        "node-1",
+        r#"echo '{"error": "Unknown task or input: nosuch", "details": []}'; echo 'not the cause' >&2; exit 1"#,
+    );
+    let status = set.run(&["status"]);
+    assert_eq!(status.code, 1);
+    assert_contains(
+        &status.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    let upgrade = set.upgrade(&[]);
+    assert_eq!(upgrade.code, 1);
+    assert_contains(
+        &upgrade.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    assert_lacks(&upgrade.stdout, "not the cause");
+}
+
 /// An upgrade that ends with a failure status and names no failed task
 /// fails with what the machine said last, and starts no other machine.
 #[test]

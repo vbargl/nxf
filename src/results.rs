@@ -1,7 +1,9 @@
 //! What nxf says to programs with `--json`, and reads back from other nxf
-//! programs: the outcome of a task. Each shape has one writer and one reader.
+//! programs: the outcome of a task and a refusal. Each shape has one writer and one reader.
 
 use serde_json::{json, Value};
+
+use crate::process;
 
 /// The word of an outcome, as the README documents it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +131,42 @@ impl Saved {
                 .iter()
                 .map(Outcome::from_json)
                 .collect::<Option<_>>()?,
+        })
+    }
+}
+
+/// Why a run ended before any task, or any machine, was reached: the cause
+/// as the outcome says it, and the lines beneath it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub error: String,
+    pub details: Vec<String>,
+}
+
+impl Refusal {
+    /// From an error as the commands carry it: the cause first, then the lines
+    /// that help to resolve it.
+    pub fn from_text(error: &str) -> Refusal {
+        let error = process::cause_first(error);
+        let mut lines = error.lines().map(str::trim).filter(|line| !line.is_empty());
+        Refusal {
+            error: lines.next().unwrap_or("Failed").to_string(),
+            details: lines.map(str::to_string).collect(),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        let refusal = json!({"error": self.error, "details": self.details});
+        serde_json::to_string_pretty(&refusal).unwrap_or_default()
+    }
+
+    /// None for any other text, such as the standard output of a machine
+    /// that is not nxf, or the list of outcomes.
+    pub fn from_json(text: &str) -> Option<Refusal> {
+        let value: Value = serde_json::from_str(text).ok()?;
+        Some(Refusal {
+            error: value.get("error")?.as_str()?.to_string(),
+            details: strings(value.get("details")?)?,
         })
     }
 }
