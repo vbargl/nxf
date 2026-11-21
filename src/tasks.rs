@@ -24,7 +24,7 @@ struct Task {
     phases: usize,
     /// Whether the task changes the lockfile. When it leaves it as it was,
     /// its outcome is `unchanged`.
-    locks: bool,
+    changes_lockfile: bool,
     run: Runner,
 }
 
@@ -33,9 +33,9 @@ struct Build {
     /// What follows the build, if anything.
     activation: Option<Activation>,
     /// The outcome of a run that ends with the task.
-    outcome: &'static str,
+    closing: &'static str,
     /// The same when the built system is the running one, if it differs.
-    outcome_unchanged: Option<&'static str>,
+    closing_unchanged: Option<&'static str>,
     /// What the run says beneath the outcome.
     effect: &'static str,
 }
@@ -64,7 +64,7 @@ const TASKS: &[Task] = &[
         description: "Update all inputs, or only the named ones, one at a time. Each update is built, then committed; one that does not build is restored.",
         takes_inputs: true,
         phases: 1,
-        locks: true,
+        changes_lockfile: true,
         run: update,
     },
     Task {
@@ -72,14 +72,14 @@ const TASKS: &[Task] = &[
         description: "Build the configuration and show what would change.",
         takes_inputs: false,
         phases: 1,
-        locks: false,
+        changes_lockfile: false,
         run: |run, _, _| {
             system(
                 run,
                 &Build {
                     activation: None,
-                    outcome: "Configuration built",
-                    outcome_unchanged: Some("Configuration built; system unchanged"),
+                    closing: "Configuration built",
+                    closing_unchanged: Some("Configuration built; system unchanged"),
                     effect: "Ready to use. The running system was not switched.",
                 },
             )
@@ -90,7 +90,7 @@ const TASKS: &[Task] = &[
         description: "Activate the configuration until the next reboot.",
         takes_inputs: false,
         phases: 2,
-        locks: false,
+        changes_lockfile: false,
         run: |run, _, _| {
             system(
                 run,
@@ -101,8 +101,8 @@ const TASKS: &[Task] = &[
                         row: "Activated until reboot, boot default not changed",
                         live: true,
                     }),
-                    outcome: "Configuration active until reboot",
-                    outcome_unchanged: None,
+                    closing: "Configuration active until reboot",
+                    closing_unchanged: None,
                     effect: "The boot default was not changed.",
                 },
             )
@@ -113,7 +113,7 @@ const TASKS: &[Task] = &[
         description: "Make the configuration the boot default.",
         takes_inputs: false,
         phases: 2,
-        locks: false,
+        changes_lockfile: false,
         run: |run, _, _| {
             system(
                 run,
@@ -124,8 +124,8 @@ const TASKS: &[Task] = &[
                         row: "Boot default configured",
                         live: false,
                     }),
-                    outcome: "Next boot configured",
-                    outcome_unchanged: None,
+                    closing: "Next boot configured",
+                    closing_unchanged: None,
                     effect: "The current system continues running.",
                 },
             )
@@ -136,7 +136,7 @@ const TASKS: &[Task] = &[
         description: "Activate the configuration and make it the boot default.",
         takes_inputs: false,
         phases: 2,
-        locks: false,
+        changes_lockfile: false,
         run: |run, _, _| {
             system(
                 run,
@@ -147,8 +147,8 @@ const TASKS: &[Task] = &[
                         row: "Activated, boot default updated",
                         live: true,
                     }),
-                    outcome: "Configuration activated",
-                    outcome_unchanged: None,
+                    closing: "Configuration activated",
+                    closing_unchanged: None,
                     effect: "Active now and configured for the next boot.",
                 },
             )
@@ -622,9 +622,9 @@ fn system(run: &Run, build: &Build) -> Result<(), Stop> {
         output::success(if run.upgrade {
             "Upgrade applied"
         } else if unchanged {
-            build.outcome_unchanged.unwrap_or(build.outcome)
+            build.closing_unchanged.unwrap_or(build.closing)
         } else {
-            build.outcome
+            build.closing
         });
         output::effect(build.effect);
         if unchanged
@@ -719,7 +719,7 @@ fn run_with(
         let changed = flake::lock(&dir).map_or(true, |lock| lock != before);
         let kind = if result.is_err() {
             Kind::Failed
-        } else if task.locks && !changed {
+        } else if task.changes_lockfile && !changed {
             Kind::Unchanged
         } else {
             Kind::Done
@@ -734,7 +734,7 @@ fn run_with(
         if result.is_err() {
             break;
         }
-        if task.locks && changed {
+        if task.changes_lockfile && changed {
             update_commit = git::commit_line(&dir, "HEAD");
         }
         offset += task.phases;
