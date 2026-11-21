@@ -82,7 +82,7 @@ change them here first.
 | `src/env.rs` | The environment: the name of each variable nxf reads, and the readers of its values |
 | `src/process.rs` | Child processes: running them, with a deadline, reading their output and error together or apart, the one shape of their failures, and the atomic write of a file |
 | `src/ssh.rs` | Reaching a machine over ssh: the options, the trust of its host key, the quoting of the remote command |
-| `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots, the places of the hold and of the updater's results |
+| `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots and the marks of the trees whose sources are kept, the places of the hold and of the updater's results |
 | `src/time.rs` | The clock, a time as `date` reads and writes it, and how long ago a time was |
 | `src/text.rs` | Escape-sequence removal and clipping to terminal cells |
 | `nix/package.nix` | The package |
@@ -98,6 +98,11 @@ change them here first.
   other. They may use `output.rs` for progress and failure diagnostics, and
   `env.rs`, `process.rs` and `state.rs`, which uses none of the three modules. The
   tasks and the status report wire them together.
+- The output of a streamed tool is never kept whole: `output::stream` keeps
+  the last lines of it, as many as a failure shows, and reads a line longer
+  than 64 KiB in pieces; an event of the tool that long is dropped. A run
+  evaluates its configuration once, and a command reads the history of Git
+  only to show it.
 - Every variable of the environment that nxf reads is named in `env.rs` and read through it.
   Every child process is started through `process.rs`, and every call of ssh
   is made through `ssh.rs`. Only `rollout::upload`, which pipes the output of

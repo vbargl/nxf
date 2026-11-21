@@ -36,6 +36,69 @@ fn updates_and_switches() {
     assert_contains(&result.stdout, "  ✓ update\n  ✓ switch\n");
 }
 
+/// The configuration is found once for the whole run, whatever tasks it runs:
+/// one evaluation names it, and one reads its update settings.
+#[test]
+fn evaluates_once() {
+    let fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    fx.bump(&["a"]);
+    fx.run(&["auto-update"]).ok();
+    assert_eq!(fx.nh_actions(), ["build", "build", "switch"]);
+    let evaluations: Vec<String> = common::calls(&nix)
+        .into_iter()
+        .filter(|call| call.starts_with("eval "))
+        .collect();
+    assert_eq!(evaluations.len(), 2, "{evaluations:?}");
+    assert_eq!(
+        evaluations
+            .iter()
+            .filter(|call| call.contains("builtins.attrNames"))
+            .count(),
+        1
+    );
+}
+
+/// A checkout without its lockfile fails the run before the check hook is
+/// asked: nothing is decided on a flake that cannot be read.
+#[test]
+fn lockfile_is_required() {
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let asked = fx.dir.join("asked");
+    common::write_script(
+        &hooks.join("check"),
+        &format!("#!/bin/sh\ntouch '{}'\n", asked.display()),
+    );
+    fx.set("NXF_HOOKS_DIR", &hooks);
+    std::fs::remove_file(fx.checkout.join("flake.lock")).unwrap();
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stderr, "flake.lock");
+    assert!(!asked.exists());
+    assert!(fx.nh_calls().is_empty());
+}
+
+/// The history is not read to see what the checkout changed: a run that has
+/// nothing to do names no commit.
+#[test]
+fn reads_no_history() {
+    let system = &fake_systems().one;
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", system)
+        .with("NXF_SYSTEM", system);
+    fx.record_build(system);
+    let git = common::spy(&fx, "git");
+    fx.run(&["auto-update"]).ok();
+    assert!(fx.nh_calls().is_empty());
+    let calls = common::calls(&git);
+    assert!(
+        !calls.iter().any(|call| call.contains(" log ")),
+        "{calls:?}"
+    );
+}
+
 /// The identity of the module's default, a name and an empty e-mail, commits
 /// the lockfile.
 #[test]

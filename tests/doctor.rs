@@ -7,6 +7,23 @@ use common::{
     status_of,
 };
 
+/// The tree of the checkout is read once, for the check of its changes and
+/// for the one that names the running commit.
+#[test]
+fn reads_tree_once() {
+    let system = &fake_systems().one;
+    let fx = fixture()
+        .with("NXF_TEST_BUILD", system)
+        .with("NXF_SYSTEM", system);
+    fx.record_build(system);
+    let git = common::spy(&fx, "git");
+    fx.run(&["doctor"]).ok();
+    let calls = common::calls(&git);
+    let count = |part: &str| calls.iter().filter(|call| call.contains(part)).count();
+    assert_eq!(count("rev-parse HEAD^{tree}"), 1, "{calls:?}");
+    assert_eq!(count("diff --quiet"), 1, "{calls:?}");
+}
+
 /// A healthy checkout passes; an unrecorded system only warns.
 #[test]
 fn healthy() {

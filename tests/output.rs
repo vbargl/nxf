@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use common::{assert_contains, assert_lacks, events, fake_systems, fixture, Fixture};
-use nxf::output::{self, CLEARED};
+use nxf::output::{self, Tail, CLEARED};
 use nxf::text::strip_ansi;
 use serde_json::{json, Value};
 use unicode_width::UnicodeWidthStr;
@@ -251,6 +251,108 @@ fn stream_failure_tail() {
                 .join("\n")
         )
     );
+}
+
+/// A failing tool's tail holds the last eight lines it said, however many it
+/// said, so that the memory it takes does not grow with the output.
+#[test]
+fn tail_bound() {
+    let mut tail = Tail::default();
+    for number in 1..=10_000 {
+        tail.push(&format!("line {number}"), None);
+    }
+    assert_eq!(
+        tail.text(),
+        (9_993..=10_000)
+            .map(|number| format!("line {number}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// The tail keeps the last eight lines that are not blank, however the tool
+/// broke its lines: with carriage returns, escape sequences or JSON events.
+#[test]
+fn tail_lines() {
+    let mut tail = Tail::default();
+    for number in 1..=4 {
+        tail.push(&format!("old {number}"), None);
+    }
+    tail.push("\u{1b}[31mred\u{1b}[0m", None);
+    tail.push("", None);
+    tail.push("   ", None);
+    let log = r#"@nix {"action":"result","type":101,"id":1,"fields":["first\rsecond\n\nthird"]}"#;
+    tail.push(log, nxf::progress::event(log).as_ref());
+    let progress = r#"@nix {"action":"start","type":105,"id":1}"#;
+    tail.push(progress, nxf::progress::event(progress).as_ref());
+    tail.push("last", None);
+    assert_eq!(
+        tail.text(),
+        "old 2\nold 3\nold 4\nred\nfirst\nsecond\nthird\nlast"
+    );
+}
+
+/// The peak resident size of this process so far, in kB.
+fn peak() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:"))
+        .and_then(|kilobytes| kilobytes.trim().trim_end_matches("kB").trim().parse().ok())
+        .unwrap()
+}
+
+/// What a failing tool said before its last lines does not stay in memory: a
+/// tool with 40 MB of output grows the process by a few.
+#[test]
+fn stream_memory() {
+    let before = peak();
+    let mut loud = Command::new("sh");
+    loud.args([
+        "-c",
+        "yes 'compiling a file with a warning that repeats itself in a long log' | head -n 500000; echo last >&2; exit 1",
+    ]);
+    let error = output::stream(&mut loud, true, &[]).unwrap_err();
+    assert_contains(&error, "sh exited with status 1.\ncompiling");
+    assert!(error.ends_with("last"), "{error}");
+    let growth = peak().saturating_sub(before);
+    assert!(growth < 16 * 1024, "the peak grew by {growth} kB");
+}
+
+/// A tool that never ends a line, or ends it with carriage returns only,
+/// does not make the process hold its output: the peak grows by a few MB.
+#[test]
+fn stream_unbroken_memory() {
+    for (script, last) in [
+        ("head -c 100000000 /dev/zero | tr '\\0' x", "xxxx"),
+        (
+            "yes 'a line of some length' | head -n 2000000 | tr '\\n' '\\r'",
+            "a line of some length",
+        ),
+    ] {
+        let before = peak();
+        let mut loud = Command::new("sh");
+        loud.args(["-c", &format!("{script}; echo; echo end; exit 1")]);
+        let error = output::stream(&mut loud, true, &[]).unwrap_err();
+        assert!(error.starts_with("sh exited with status 1.\n"), "{error}");
+        assert!(error.ends_with("end"), "{error}");
+        assert_contains(&error, last);
+        let growth = peak().saturating_sub(before);
+        assert!(growth < 16 * 1024, "{script}: the peak grew by {growth} kB");
+    }
+}
+
+/// An event of the tool that is longer than a piece is dropped from the tail,
+/// whole: no fragment of its JSON is shown beside the lines around it.
+#[test]
+fn long_event() {
+    let mut tool = Command::new("sh");
+    tool.args([
+        "-c",
+        "echo before >&2; printf '@nix {\"action\":\"msg\",\"level\":0,\"msg\":\"%s\"}\\n' \"$(head -c 200000 /dev/zero | tr '\\0' x)\" >&2; echo after >&2; exit 1",
+    ]);
+    let error = output::stream(&mut tool, true, &[]).unwrap_err();
+    assert_eq!(error, "sh exited with status 1.\nbefore\nafter");
 }
 
 /// A label column is as wide as the labels, and two more than the longest

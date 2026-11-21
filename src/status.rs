@@ -194,15 +194,23 @@ fn mark_read(marker: &Path, id: &str) -> Result<(), String> {
 }
 
 /// The flake commit that built a system, if one is remembered. Several commits
-/// can build the same system; the checkout's wins, then the newest.
-pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Option<String> {
+/// can build the same system; the checkout's, given by its tree when it is
+/// committed, wins, then the newest.
+pub fn system_commit(
+    dir: &Path,
+    checkout: Option<&Tree>,
+    system: &Path,
+    remembered: &[Remembered],
+) -> Option<String> {
     let trees: Vec<Tree> = remembered
         .iter()
         .filter(|record| record.system == system)
         .map(|record| record.tree.clone())
         .collect();
-    match git::clean_tree(dir) {
-        Some(checkout) if trees.contains(&checkout) => git::commit_of(dir, &[checkout]),
+    match checkout {
+        Some(checkout) if trees.contains(checkout) => {
+            git::commit_of(dir, std::slice::from_ref(checkout))
+        }
         _ if !trees.is_empty() => git::commit_of(dir, &trees),
         _ => None,
     }
@@ -211,7 +219,8 @@ pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Op
 /// The flake commit of the running system.
 pub fn running_commit() -> Result<String, String> {
     let dir = flake::checkout()?;
-    system_commit(&dir, &nixos::running(), &state::remembered())
+    let tree = git::clean_tree(&dir);
+    system_commit(&dir, tree.as_ref(), &nixos::running(), &state::remembered())
         .ok_or_else(|| "The running system was not built by nxf or the updater.".to_string())
 }
 
@@ -221,11 +230,24 @@ pub struct Comparison {
     pub lock: Value,
     pub changes: Vec<String>,
     pub running: PathBuf,
-    pub running_commit: Option<String>,
+    remembered: Vec<Remembered>,
     pub running_trees: Vec<Tree>,
     pub tree: Option<Tree>,
     pub built: Option<PathBuf>,
     pub matches: bool,
+}
+
+impl Comparison {
+    /// The flake commit of the running system. Finding it reads the whole
+    /// history, so it is left to those who show it.
+    pub fn commit(&self) -> Option<String> {
+        system_commit(
+            &self.dir,
+            self.tree.as_ref(),
+            &self.running,
+            &self.remembered,
+        )
+    }
 }
 
 pub fn compare() -> Result<Comparison, String> {
@@ -250,7 +272,7 @@ pub fn compare() -> Result<Comparison, String> {
             .as_ref()
             .is_some_and(|tree| running_trees.contains(tree));
     Ok(Comparison {
-        running_commit: system_commit(&dir, &running, &remembered),
+        remembered,
         changes: git::changed_files(&dir),
         dir,
         lock,
@@ -296,7 +318,8 @@ fn input_table(lock: &Value, inputs: &[String], other: Option<&Value>) {
 pub fn report(options: &Options) -> Result<(), String> {
     let status = compare()?;
     let dir = &status.dir;
-    let running_lock: Option<Value> = match &status.running_commit {
+    let running_commit = status.commit();
+    let running_lock: Option<Value> = match &running_commit {
         Some(commit) => Some(
             serde_json::from_str(&git::show_file(dir, commit, "flake.lock")?)
                 .map_err(|err| format!("cannot parse flake.lock of {commit}: {err}"))?,
@@ -334,7 +357,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             "running": status.running,
             "built": status.built,
             "matches": status.matches,
-            "revision": status.running_commit,
+            "revision": running_commit,
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
             "bad": status.tree.as_ref().and_then(state::bad),
@@ -382,7 +405,7 @@ pub fn report(options: &Options) -> Result<(), String> {
 
     if options.detailed || !options.checkedout {
         output::section("Running", "");
-        match (&status.running_commit, &running_lock) {
+        match (&running_commit, &running_lock) {
             (Some(commit), Some(lock)) => {
                 output::fact("Flake", &git::commit_line(dir, commit));
                 output::fact("Checkout", &dir.to_string_lossy());

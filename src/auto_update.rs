@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use crate::health::{self, Health};
 use crate::results::{Kind, Outcome, Saved};
 use crate::state::Tree;
-use crate::tasks::{self, SWITCH, UPDATE};
-use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
+use crate::tasks::{self, Unattended, SWITCH, UPDATE};
+use crate::{flake, git, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
@@ -62,9 +62,10 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         ));
         return Ok(());
     }
+    let dir = flake::checkout()?;
+    flake::lock(&dir)?;
     // A lockfile left by an interrupted run is not work in progress; update restores it.
-    let foreign = status::compare()?
-        .changes
+    let foreign = git::changed_files(&dir)
         .iter()
         .any(|file| file != "flake.lock");
     if foreign {
@@ -80,11 +81,16 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         return Ok(());
     }
     // What is committed says how each input is treated.
-    let dir = flake::checkout()?;
-    let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
+    let configuration = flake::configuration(&dir)?;
+    let strategies = strategy::read(&dir, &configuration)?;
+    let setup = Unattended {
+        dir,
+        configuration,
+        strategies,
+    };
     // Every input that builds is committed; the others stay as they were.
     // Only tasks are given, so no word is unknown and no command is named.
-    results.extend(tasks::run_unattended(&words(&[UPDATE]), &strategies, &[])?);
+    results.extend(tasks::run_unattended(&words(&[UPDATE]), &setup, &[])?);
     if results.iter().any(Outcome::failed) {
         return Ok(());
     }
@@ -103,7 +109,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         ));
         return Ok(());
     }
-    let switched = tasks::run(&words(&[SWITCH]), true, &[])?;
+    let switched = tasks::run_unattended(&words(&[SWITCH]), &setup, &[])?;
     let activated = !switched.iter().any(Outcome::failed);
     results.extend(switched);
     if activated {

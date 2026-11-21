@@ -489,6 +489,35 @@ pub fn events(records: &[serde_json::Value]) -> String {
         .join("\n")
 }
 
+/// Puts a program in front of the real one on PATH that logs the arguments of
+/// each call, one line a call, and returns that log. A fixture's mock nh runs
+/// `git rev-parse --short`, which counts as a call of the spy on git.
+pub fn spy(fx: &Fixture, program: &str) -> PathBuf {
+    let path = std::env::var("PATH").unwrap();
+    let real = path
+        .split(':')
+        .map(|dir| Path::new(dir).join(program))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| panic!("no {program} on PATH"));
+    let log = fx.dir.join(format!("{program}.calls"));
+    write_script(
+        &fx.dir.join("bin").join(program),
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+            log.display(),
+            real.display()
+        ),
+    );
+    log
+}
+
+/// The calls a spy logged so far.
+pub fn calls(log: &Path) -> Vec<String> {
+    std::fs::read_to_string(log)
+        .map(|text| text.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// Gives the flake in the checkout these configurations, each a name and
 /// the Nix text of its body, and commits: nxf reads what is committed.
 #[track_caller]

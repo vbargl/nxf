@@ -29,6 +29,11 @@ Boundaries:
   stay in per-user state.
 - Source roots, result links, read markers and Nix's fetcher cache keep their
   per-user locations.
+- The sources of a tree are kept once. The mark `kept/<tree>` in the per-user
+  state lists them, and keeping the sources of another tree replaces it. A
+  build of the same tree skips the copy while every listed source is the
+  target of a root and is in the store. A mark whose roots are gone does not
+  skip the copy.
 - A record is a plain symlink and no GC root. It is ignored once its system
   is garbage-collected.
 - A build with uncommitted changes is not recorded.
@@ -86,6 +91,11 @@ worktrees, and the VM test covers the repair of the directory's mode by
 tmpfiles and per-user source roots that survive garbage collection.
 `tests/state.rs::sources_stay_until_replaced` covers that the source roots
 of a build stay until those of the next build replace them.
+`tests/state.rs::sources_kept_once` covers that a build, and the switch of an
+upgrade, keep the sources of a tree once. `tests/state.rs::stale_mark_keeps_again`
+covers that a mark whose roots are gone or lead elsewhere does not skip the
+copy, and `tests/state.rs::partial_mark_keeps_again` that a mark with a root
+missing, or a source gone from the store, does not skip it either.
 
 See the [operating documentation](../../README.md#status) for state paths and
 migration details.

@@ -81,3 +81,114 @@ fn sources_stay_until_replaced() {
     fx.run(&["update"]).ok();
     assert_eq!(kept_sources(&fx), ["4"]);
 }
+
+/// The sources of a tree that is kept are not kept again, by a build or by
+/// the switch of an upgrade, and a new tree keeps its own.
+#[test]
+fn sources_kept_once() {
+    let fx = common::fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    let archives = || {
+        common::calls(&nix)
+            .iter()
+            .filter(|call| call.starts_with("flake archive"))
+            .count()
+    };
+    fx.run(&["build"]).ok();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 1);
+    assert_eq!(kept_sources(&fx), ["1"]);
+
+    // An upgrade keeps the sources of the tree it commits once, not twice.
+    fx.bump(&["a", "b"]);
+    fx.run(&["upgrade"]).ok();
+    assert_eq!(archives(), 2);
+    assert_eq!(kept_sources(&fx), ["2"]);
+    let marks: Vec<_> = std::fs::read_dir(fx.state.join("nxf/kept"))
+        .unwrap()
+        .map(|mark| mark.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(marks, [fx.tree()]);
+}
+
+/// A mark whose roots are gone does not make the build skip: the sources are
+/// kept again, and so are those of a tree whose mark was replaced.
+#[test]
+fn stale_mark_keeps_again() {
+    let fx = common::fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    let archives = || {
+        common::calls(&nix)
+            .iter()
+            .filter(|call| call.starts_with("flake archive"))
+            .count()
+    };
+    fx.run(&["build"]).ok();
+    let mark = fx.state.join("nxf/kept").join(fx.tree());
+    assert!(mark.exists());
+    let roots = fx.state.join("nxf/sources");
+    std::fs::remove_dir_all(&roots).unwrap();
+    assert!(mark.exists());
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 2);
+    assert_eq!(kept_sources(&fx), ["1"]);
+
+    // A root that leads elsewhere is no root of the marked sources.
+    for root in std::fs::read_dir(&roots).unwrap() {
+        let root = root.unwrap().path();
+        std::fs::remove_file(&root).unwrap();
+        std::os::unix::fs::symlink(&fake_systems().one, &root).unwrap();
+    }
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 3);
+    assert_eq!(kept_sources(&fx), ["1"]);
+
+    // The mark of another tree does not stand for this one.
+    std::fs::rename(&mark, mark.with_file_name("0000")).unwrap();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 4);
+    assert!(mark.exists());
+    assert!(!mark.with_file_name("0000").exists());
+}
+
+/// A mark that lists two sources stands for the tree only while every one of
+/// them is a root, and is in the store.
+#[test]
+fn partial_mark_keeps_again() {
+    let fx = common::fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let nix = common::spy(&fx, "nix");
+    let archives = || {
+        common::calls(&nix)
+            .iter()
+            .filter(|call| call.starts_with("flake archive"))
+            .count()
+    };
+    // Inputs with the same content are one source, so they are made to differ.
+    fx.bump(&["a"]);
+    fx.run(&["update"]).ok();
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+    assert_eq!(archives(), 1);
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 1);
+
+    // One of the two roots is gone.
+    let roots = fx.state.join("nxf/sources");
+    let mut names: Vec<_> = std::fs::read_dir(&roots)
+        .unwrap()
+        .map(|root| root.unwrap().path())
+        .collect();
+    names.sort();
+    std::fs::remove_file(&names[0]).unwrap();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 2);
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+
+    // A source that the mark lists, and a root leads to, is no longer there.
+    let mark = fx.state.join("nxf/kept").join(fx.tree());
+    let gone = "/nix/store/00000000000000000000000000000000-gone";
+    std::fs::write(&mark, gone).unwrap();
+    std::os::unix::fs::symlink(gone, roots.join("input-9")).unwrap();
+    fx.run(&["build"]).ok();
+    assert_eq!(archives(), 3);
+    assert_eq!(kept_sources(&fx), ["1", "2"]);
+}

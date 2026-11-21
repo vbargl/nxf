@@ -1,10 +1,15 @@
 //! Text helpers shared by the presentation and the tool wrappers.
 
+use std::borrow::Cow;
+
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 /// Removes terminal escape sequences: CSI, OSC and two-character escapes.
-pub fn strip_ansi(text: &str) -> String {
+pub fn strip_ansi(text: &str) -> Cow<'_, str> {
+    if !text.contains('\u{1b}') {
+        return Cow::Borrowed(text);
+    }
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -39,7 +44,7 @@ pub fn strip_ansi(text: &str) -> String {
             None => {}
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Removes C0 and C1 control characters.
