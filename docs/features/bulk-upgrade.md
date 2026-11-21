@@ -21,6 +21,12 @@ default. A machine that takes longer is a failed row,
 `timed out after <N> seconds; the upgrade may still run on the machine`
 (`1 second` when the limit is 1): ending ssh does not end the task there.
 
+With `--json` rollout prints no text on standard output. It prints one JSON
+object at the end: `ok`, `counts` of the machines in each state, and one
+entry for each machine with its `state` (`upgraded`, `failed` or
+`not started`) and, for a failed one, its `error` and `details`. The README
+section [Scripts](../../README.md#scripts) has the shape.
+
 Boundaries:
 
 - It is the manual task on each machine. Holds, input strategies, the check
@@ -52,11 +58,12 @@ Boundaries:
 | U4: A wave runs to its end | `--batch 2` and the second machine fails | `rollout --upgrade --batch 2` runs | The second and third machines run in one wave, so the third has a `✓` row; the outcome is `Upgrade failed on 1 of 3 machines` without a `Not started` line; the exit status is 1 |
 | U5: Inputs are passed on | Inputs named after `--upgrade` | `rollout --upgrade b` runs | Every machine runs `nxf --json upgrade b` |
 | U6: Mixed options are refused | `--upgrade` with an install option, `--batch 0`, or `--batch` or inputs without `--upgrade` | The command is given | No ssh connection is made. With an install option or `--batch 0` the error names the argument and the exit status is 2. With `--template` and `--batch` or inputs the outcome is `Inputs and --batch belong to the upgrade` and the exit status is 1; without `--template` the error asks for it and the exit status is 2 |
-| U7: An unknown input | An input that the first machine's flake does not have | `rollout --upgrade <input>` runs | The first machine's row is `Unknown task or input: <input>`, without the help beneath it; the other rows are `not started`; the exit status is 1 |
+| U7: An unknown input | An input that the first machine's flake does not have | `rollout --upgrade <input>` runs | The first machine's row is `Unknown task or input: <input>`, the `error` of its refusal as JSON, without the lines beneath it; the other rows are `not started`; the exit status is 1 |
 | U8: A second run after a failed wave | An earlier run upgraded the first machine and failed on the second | `rollout --upgrade` runs again | Every machine is asked again, in the same order and from the first; a machine that finds no new revision and switches has the row `no input changed, switched` |
 | U9: A machine runs past its limit | The first machine's upgrade does not end within `NXF_UPGRADE_TIMEOUT` seconds | `rollout --upgrade` runs | Only the first machine was asked; its row is `timed out after <N> seconds; the upgrade may still run on the machine` (`1 second` when the limit is 1), and no row says `unreachable`; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines`; the exit status is 1 |
-| U10: A machine answers something else than JSON | The first machine prints something other than JSON on `nxf --json upgrade`, and its exit status is not 255 | `rollout --upgrade` runs | Only the first machine was asked; its row is the text after the `✗` of the outcome line it printed on standard error; without one, the row is `unreadable answer` when the exit status is 0. For another exit status the row is the last line printed on standard error, else the last line printed on standard output, else `nxf exited with status <code>`; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines` with `Not started: <names>. Run the rollout again once the failure is fixed.`; the exit status is 1 |
+| U10: A machine answers something else than JSON | The first machine prints something other than JSON on `nxf --json upgrade`, and its exit status is not 255 | `rollout --upgrade` runs | Only the first machine was asked; its row is `unreadable answer` when the exit status is 0. For another exit status the row is the `error` of the object `{"error", "details"}` that it printed on standard output, else the last line printed on standard error, else the last line printed on standard output, else `nxf exited with status <code>`; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines` with `Not started: <names>. Run the rollout again once the failure is fixed.`; the exit status is 1 |
 | U11: A machine fails without a failed task | The first machine prints JSON in which no task failed, such as the outcome `unchanged` for `update`, and its exit status is not 0 and not 255 | `rollout --upgrade` runs | Only the first machine was asked; its row is the last line printed on standard error, else the last line of the JSON on standard output, which is never empty; the other rows are `not started`; the outcome is `Upgrade failed on 1 of 3 machines` with `Not started: <names>. Run the rollout again once the failure is fixed.`; the exit status is 1 |
+| U12: JSON | Three managed machines | `rollout --upgrade --json` runs | Standard output is one JSON object with `ok` true, `counts` with 3 `upgraded`, and the three machines in the order of their names, each `upgraded`; no row and no outcome is printed on standard output; the exit status is 0. When the first machine's switch fails, `ok` is false, its entry is `failed` with `error` `switch failed:` and the cause, the others are `not started`, the text of the outcome is on standard error, and the exit status is 1 |
 
 ## Existing verification
 
@@ -86,13 +93,20 @@ checkout, so only the first one finds the new revision.
   text `Welcome to node-1`. It asserts the exit status 1, the row
   `unreadable answer` and the row `not started` of the second machine. It does
   not assert that only the first machine was asked, the row `not started` of
-  the third machine, the outcome, the row for an exit status other than 0
-  (`nxf exited with status <code>` included), or the row for an outcome line.
+  the third machine, the outcome, or the row for an exit status other than 0
+  (`nxf exited with status <code>` included).
+  `tests/fleet.rs::refusal_is_read_from_json` covers the row that is the
+  `error` of the object on standard output, with another last line on standard
+  error.
 - U11: `tests/fleet.rs::upgrade_failure_status`, with the exit status 4 and
   the line `the session was closed` on standard error. It asserts the exit
   status 1, the row, the row `not started` of the second machine and that
   only the first machine was asked. It does not assert the row `not started`
   of the third machine, or the outcome.
+- U12: `tests/fleet.rs::upgrade_json`. It asserts the counts, the order, the
+  state of each machine, `error` of the failed one and the text of the outcome
+  on standard error; not that no row is on standard output beyond the JSON
+  parsing as one object.
 - `tests/fleet.rs::waves` covers the order of the waves, and
   `tests/hosts.rs::toml` that machines come in the order of their names. No
   test has two names whose byte order differs from their numeric order.
