@@ -1,6 +1,8 @@
 //! Nix internal-json activity events. Numeric types come from Nix's
 //! src/libutil/include/nix/util/logging.hh; unknown events are ignored.
 
+use std::borrow::Cow;
+
 use serde_json::Value;
 
 use crate::text::{strip_ansi, strip_controls};
@@ -254,29 +256,32 @@ pub fn snapshot(state: &State, logs: bool) -> Vec<String> {
     lines
 }
 
-/// What a line of failed tool output says: errors and builder logs are
-/// decoded, the internal-json envelope is never exposed.
-pub fn diagnostic(line: &str) -> String {
-    let Some(event) = event(line) else {
+/// What a line of failed tool output says, given the event on it, if it is
+/// one: errors and builder logs are decoded, the internal-json envelope is
+/// never exposed.
+pub fn diagnostic<'a>(line: &'a str, event: Option<&Value>) -> Cow<'a, str> {
+    let Some(event) = event else {
         return if line.trim().starts_with("@nix ") {
-            String::new()
+            Cow::Borrowed("")
         } else {
-            line.to_string()
+            Cow::Borrowed(line)
         };
     };
     let action = event.get("action").and_then(Value::as_str).unwrap_or("");
     let kind = event.get("type").and_then(Value::as_i64);
     if action == "msg" && event.get("level").and_then(Value::as_i64).unwrap_or(0) <= 1 {
         strip_ansi(event.get("msg").and_then(Value::as_str).unwrap_or(""))
+            .into_owned()
+            .into()
     } else if action == "result" && matches!(kind, Some(BUILD_LOG_LINE) | Some(POST_BUILD_LOG_LINE))
     {
         let field = event.get("fields").and_then(|fields| fields.get(0));
-        match field {
-            Some(Value::String(text)) => strip_ansi(text),
+        Cow::Owned(match field {
+            Some(Value::String(text)) => strip_ansi(text).into_owned(),
             Some(Value::Null) | None => String::new(),
             Some(other) => other.to_string(),
-        }
+        })
     } else {
-        String::new()
+        Cow::Borrowed("")
     }
 }

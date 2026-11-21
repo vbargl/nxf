@@ -6,6 +6,11 @@ use common::names;
 use nxf::progress::{advance, diagnostic, event, initial, snapshot, State};
 use serde_json::{json, Value};
 
+/// What a failed tool's line says.
+fn said(line: &str) -> String {
+    diagnostic(line, event(line).as_ref()).into_owned()
+}
+
 fn after(state: &State, events: &[Value]) -> State {
     events
         .iter()
@@ -129,23 +134,20 @@ fn ignored() {
 #[test]
 fn diagnostics() {
     assert_eq!(
-        diagnostic(r#"@nix {"action":"msg","level":0,"msg":"error: build failed"}"#),
+        said(r#"@nix {"action":"msg","level":0,"msg":"error: build failed"}"#),
         "error: build failed"
     );
     assert_eq!(
-        diagnostic(r#"@nix {"action":"result","type":101,"id":1,"fields":["missing header"]}"#),
+        said(r#"@nix {"action":"result","type":101,"id":1,"fields":["missing header"]}"#),
         "missing header"
     );
+    assert_eq!(said(r#"@nix {"action":"start","type":105,"id":1}"#), "");
+    assert_eq!(said("@nix malformed"), "");
     assert_eq!(
-        diagnostic(r#"@nix {"action":"start","type":105,"id":1}"#),
+        said(r#"@nix {"action":"msg","level":6,"msg":"debug internals"}"#),
         ""
     );
-    assert_eq!(diagnostic("@nix malformed"), "");
-    assert_eq!(
-        diagnostic(r#"@nix {"action":"msg","level":6,"msg":"debug internals"}"#),
-        ""
-    );
-    assert_eq!(diagnostic("plain tool output"), "plain tool output");
+    assert_eq!(said("plain tool output"), "plain tool output");
 }
 
 /// Root input identity is available before fetching; nested and pinned nodes stay quiet.

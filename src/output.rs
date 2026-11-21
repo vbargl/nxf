@@ -1,9 +1,12 @@
 //! Terminal presentation shared by the commands and tool wrappers.
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+use serde_json::Value;
 
 use crate::text::{fit, strip_ansi};
 use crate::{env, process, progress};
@@ -478,8 +481,8 @@ impl Monitor {
     }
 
     /// Counts and logs are throttled; input and derivation changes are immediate.
-    fn advance(&mut self, line: &str) {
-        let state = progress::advance(&self.progress, progress::event(line).as_ref());
+    fn advance(&mut self, event: Option<&Value>) {
+        let state = progress::advance(&self.progress, event);
         let snapshot = progress::snapshot(&state, self.live);
         let keys = |logs: &[(String, String)]| -> Vec<String> {
             logs.iter().map(|(key, _)| key.clone()).collect()
@@ -512,13 +515,49 @@ impl Monitor {
     }
 }
 
+/// The last lines a failing tool said, decoded: the lines of an error, and
+/// never more than a failure shows, so that they do not grow with the output.
+#[derive(Default)]
+pub struct Tail(VecDeque<String>);
+
+impl Tail {
+    /// Adds what the tool said in one piece, a line or a part of it between
+    /// carriage returns. Blank lines are not kept.
+    pub fn push(&mut self, part: &str, event: Option<&Value>) {
+        let part = strip_ansi(part);
+        for line in progress::diagnostic(&part, event).split(['\r', '\n']) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // The oldest line gives its allocation to the newest.
+            let mut kept = if self.0.len() == process::TAIL {
+                self.0.pop_front().unwrap_or_default()
+            } else {
+                String::new()
+            };
+            kept.clear();
+            kept.push_str(line);
+            self.0.push_back(kept);
+        }
+    }
+
+    /// The kept lines, one on each line.
+    pub fn text(&self) -> String {
+        self.0
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
 /// Runs a tool with curated output. Its raw output stays hidden unless it
 /// fails; then the last diagnostic lines are part of the error.
 pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Result<(), String> {
     let (mut child, reader) = process::spawn_merged(command)?;
 
     let mut monitor = progress.then(|| Monitor::new(inputs));
-    let mut output = String::new();
+    let mut tail = Tail::default();
     let mut reader = BufReader::new(reader);
     let mut buffer = Vec::new();
     loop {
@@ -528,10 +567,11 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
             Ok(_) => {}
         }
         let text = String::from_utf8_lossy(&buffer);
-        output.push_str(&text);
         for part in text.trim_end_matches('\n').split('\r') {
+            let event = progress::event(part);
+            tail.push(part, event.as_ref());
             match monitor.as_mut() {
-                Some(monitor) => monitor.advance(part),
+                Some(monitor) => monitor.advance(event.as_ref()),
                 None => detail(&strip_ansi(part)),
             }
         }
@@ -545,12 +585,9 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
     if status.success() {
         return Ok(());
     }
-    let decoded = strip_ansi(&output)
-        .replace('\r', "\n")
-        .lines()
-        .map(progress::diagnostic)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace('\r', "\n");
-    Err(process::failure(&process::name(command), status, &decoded))
+    Err(process::failure(
+        &process::name(command),
+        status,
+        &tail.text(),
+    ))
 }
