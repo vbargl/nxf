@@ -222,7 +222,7 @@ fn long_stream() {
         let mut state = initial(&[]);
         for event in &real {
             advance(&mut state, Some(event));
-            // Nothing is built between the first events: the log lines have no build yet.
+            // Lines of a build that is not active change nothing, those of an active one its text.
             for noise in noise(count) {
                 advance(&mut state, Some(&noise));
             }
@@ -237,6 +237,9 @@ fn long_stream() {
     assert_eq!(snapshot(&long, false), snapshot(&short, false));
     assert_eq!(long.builds, short.builds);
     assert_eq!(long.active, short.active);
+    assert_eq!(long.current, short.current);
+    assert_eq!(long.logs.len(), short.logs.len());
+    assert_eq!(long.logs.len(), 1);
 }
 
 /// Root input identity is available before fetching; nested and pinned nodes stay quiet.
