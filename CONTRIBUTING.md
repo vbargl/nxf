@@ -82,7 +82,7 @@ change them here first.
 | `src/env.rs` | The environment: the name of each variable nxf reads, and the readers of its values |
 | `src/process.rs` | Child processes: running them, with a deadline, reading their output and error together or apart, the one shape of their failures, and the atomic write of a file |
 | `src/ssh.rs` | Reaching a machine over ssh: the options, the trust of its host key, the quoting of the remote command |
-| `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots, the places of the hold and of the updater's results |
+| `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots and the marks of the trees whose sources are kept, the places of the hold and of the updater's results |
 | `src/time.rs` | The clock, a time as `date` reads and writes it, and how long ago a time was |
 | `src/text.rs` | Escape-sequence removal and clipping to terminal cells |
 | `nix/package.nix` | The package |

@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
 use crate::results::{Kind, Outcome};
+use crate::state::Tree;
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
 use crate::{flake, git, nixos, output, process, state};
@@ -442,9 +443,13 @@ fn update_input(dir: &Path, configuration: &str, input: &str) -> Result<InputRes
 }
 
 /// The sources of the locked inputs stay in the Nix store, so that the next
-/// build, by whoever, needs no access to where an input came from.
-fn keep_inputs(dir: &Path) {
-    let kept = flake::archive(dir).and_then(|paths| state::keep_sources(&paths));
+/// build, by whoever, needs no access to where an input came from. Those of
+/// a tree that is already kept are not kept again.
+fn keep_inputs(dir: &Path, tree: Option<&Tree>) {
+    if tree.is_some_and(state::sources_kept) {
+        return;
+    }
+    let kept = flake::archive(dir).and_then(|paths| state::keep_sources(&paths, tree));
     if let Err(err) = kept {
         let cause = err.lines().last().unwrap_or_default().trim();
         output::warning(&format!(
@@ -498,7 +503,7 @@ fn update(run: &Run, inputs: &[String], noted: &mut Vec<Outcome>) -> Result<(), 
     let unchanged = flake::lock(dir)? == before;
     if !unchanged {
         output::sub("Commit", &git::commit_line(dir, "HEAD"));
-        keep_inputs(dir);
+        keep_inputs(dir, git::clean_tree(dir).as_ref());
     }
     let mut failed: Vec<&InputResult> = Vec::new();
     for result in results.iter().filter(|result| result.mark == Mark::Failed) {
@@ -579,7 +584,7 @@ fn system(run: &Run, build: &Build) -> Result<(), Stop> {
     match tree.filter(|before| git::clean_tree(dir).as_ref() == Some(before)) {
         Some(tree) => {
             state::remember(&tree, &built);
-            keep_inputs(dir);
+            keep_inputs(dir, Some(&tree));
         }
         None => {
             output::warning("uncommitted changes or checkout changed during the build: this build cannot be identified by nxf status.")

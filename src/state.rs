@@ -19,6 +19,8 @@ pub const INSTALLED: &str = "installed.json";
 const RESULT: &str = "result";
 /// The directory of the source roots, in the per-user state.
 const SOURCES: &str = "sources";
+/// The directory of the marks of the trees whose sources are kept, in the per-user state.
+const KEPT: &str = "kept";
 /// The file of the hold on automatic updates, in the updater's state.
 const HOLD: &str = "hold.json";
 /// The marker of the last update summary that this user has read.
@@ -205,10 +207,28 @@ pub fn remember(tree: &Tree, system: &Path) {
     }
 }
 
-/// Keeps the sources of the locked inputs in the Nix store, as GC roots in
-/// the state, so that the next build needs no access to their origin. They
-/// replace those of the build before, which stay when these cannot be kept.
-pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
+/// Whether the sources of the tree are kept: its mark lists them, and each is
+/// still the target of a root and in the store.
+pub fn sources_kept(tree: &Tree) -> bool {
+    let Ok(listed) = std::fs::read_to_string(dir().join(KEPT).join(tree.as_str())) else {
+        return false;
+    };
+    let roots: Vec<PathBuf> = std::fs::read_dir(dir().join(SOURCES))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|root| std::fs::read_link(root.path()).ok())
+        .collect();
+    listed
+        .lines()
+        .map(Path::new)
+        .all(|source| roots.iter().any(|root| root == source) && source.exists())
+}
+
+/// Keeps the sources of the locked inputs in the Nix store, as GC roots in the
+/// state. They replace those of the build before, which stay when these cannot
+/// be kept; the mark of their tree replaces the marks of other trees.
+pub fn keep_sources(paths: &[PathBuf], tree: Option<&Tree>) -> Result<(), String> {
     let sources = dir().join(SOURCES);
     std::fs::create_dir_all(&sources)
         .map_err(|err| format!("cannot create {}: {err}", sources.display()))?;
@@ -226,6 +246,14 @@ pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
         if std::fs::read_link(root.path()).is_ok_and(|source| !paths.contains(&source)) {
             let _ = std::fs::remove_file(root.path());
         }
+    }
+    let marks = dir().join(KEPT);
+    let _ = std::fs::remove_dir_all(&marks);
+    // A mark that cannot be written only means the next build keeps them again.
+    if let Some(tree) = tree {
+        let listed: Vec<_> = paths.iter().map(|path| path.to_string_lossy()).collect();
+        let _ = std::fs::create_dir_all(&marks)
+            .and_then(|()| std::fs::write(marks.join(tree.as_str()), listed.join("\n")));
     }
     Ok(())
 }
