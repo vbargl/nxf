@@ -5,6 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use crate::output::Mark;
+use crate::state::Tree;
 use crate::status::system_commit;
 use crate::{env, flake, git, nixos, output, state};
 
@@ -69,6 +70,11 @@ pub fn tools() -> Check {
 
 /// Checks of the checkout, ending at the first one later checks depend on.
 pub fn checkout(location: &flake::Location) -> Vec<Check> {
+    examined(location).0
+}
+
+/// The checks of the checkout, and its committed tree when they got that far.
+fn examined(location: &flake::Location) -> (Vec<Check>, Option<Tree>) {
     let dir = &location.dir;
     let shown = dir.display();
     let origin = if location.source == "default" {
@@ -77,11 +83,8 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
         format!("from {}", env::FLAKE)
     };
     if !dir.join("flake.nix").exists() {
-        return vec![check(
-            Level::Fail,
-            "flake",
-            format!("{shown} has no flake.nix ({origin})"),
-        )];
+        let missing = format!("{shown} has no flake.nix ({origin})");
+        return (vec![check(Level::Fail, "flake", missing)], None);
     }
     let mut results = vec![check(Level::Ok, "flake", format!("{shown} ({origin})"))];
     if !git::is_repo(dir) {
@@ -90,7 +93,7 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
             "git",
             format!("{shown} is not a Git repository with a commit; nxf reads its history"),
         ));
-        return results;
+        return (results, None);
     }
     results.push(check(
         Level::Ok,
@@ -133,7 +136,8 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
             "Git has no identity to commit with; set user.name and user.email".to_string(),
         ),
     });
-    results.push(if git::clean_tree(dir).is_some() {
+    let tree = git::clean_tree(dir);
+    results.push(if tree.is_some() {
         check(Level::Ok, "changes", "no uncommitted changes".to_string())
     } else {
         check(
@@ -169,7 +173,7 @@ pub fn checkout(location: &flake::Location) -> Vec<Check> {
             ),
         },
     });
-    results
+    (results, tree)
 }
 
 fn state() -> Check {
@@ -226,16 +230,15 @@ fn records() -> Check {
     }
 }
 
-fn running(dir: Option<&Path>) -> Check {
-    let Some(dir) = dir else {
+fn running(checkout: Option<(&Path, Option<&Tree>)>) -> Check {
+    let Some((dir, tree)) = checkout else {
         return check(
             Level::Warn,
             "running",
             "skipped until the checkout checks pass".to_string(),
         );
     };
-    let tree = git::clean_tree(dir);
-    match system_commit(dir, tree.as_ref(), &nixos::running(), &state::remembered()) {
+    match system_commit(dir, tree, &nixos::running(), &state::remembered()) {
         Some(commit) => check(
             Level::Ok,
             "running",
@@ -252,14 +255,16 @@ fn running(dir: Option<&Path>) -> Check {
 
 /// Runs all checks; a failure makes the doctor exit non-zero.
 fn checks() -> Vec<Check> {
-    let checkout = checkout(&flake::location());
+    let location = flake::location();
+    let (checkout, tree) = examined(&location);
     let passed = checkout.iter().all(|result| result.level != Level::Fail);
-    let dir = passed.then(|| flake::location().dir);
     let mut results = vec![tools()];
     results.extend(checkout);
     results.push(state());
     results.push(records());
-    results.push(running(dir.as_deref()));
+    results.push(running(
+        passed.then_some((location.dir.as_path(), tree.as_ref())),
+    ));
     results
 }
 
