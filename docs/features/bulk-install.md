@@ -394,7 +394,8 @@ The run is not repeatable in CI.
 
 I1 and I5 to I7 were run by hand again with nxf 0.16.0, built with
 `nix build github:vbargl/nxf/64ee1e62811e6d072944d034c1618641dcaed804`,
-the last commit that changes code, against one Incus Ubuntu 24.04 VM with SSH as root. The template had a disko
+whose `src/` is that of the head of the branch, against one Incus Ubuntu 24.04 VM
+with SSH as root. The template had a disko
 layout and the nxf module pinned to that commit, and `--files` held a
 `host.nix` for the machine. The key pair was a throwaway one behind an `ssh`
 wrapper on `PATH`, and `HOME` and `TMPDIR` were scratch directories. Both runs

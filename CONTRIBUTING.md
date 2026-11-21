@@ -98,9 +98,11 @@ change them here first.
   other. They may use `output.rs` for progress and failure diagnostics, and
   `env.rs`, `process.rs` and `state.rs`, which uses none of the three modules. The
   tasks and the status report wire them together.
-- A tool's output is never kept whole: `output::stream` keeps the last lines
-  of it, as many as a failure shows. A run finds the checkout and its
-  configuration once, and a command reads the history of Git only to show it.
+- The output of a streamed tool is never kept whole: `output::stream` keeps
+  the last lines of it, as many as a failure shows, and reads a line longer
+  than 64 KiB in pieces; an event of the tool that long is dropped. A run
+  evaluates its configuration once, and a command reads the history of Git
+  only to show it.
 - Every variable of the environment that nxf reads is named in `env.rs` and read through it.
   Every child process is started through `process.rs`, and every call of ssh
   is made through `ssh.rs`. Only `rollout::upload`, which pipes the output of

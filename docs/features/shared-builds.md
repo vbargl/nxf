@@ -92,8 +92,10 @@ tmpfiles and per-user source roots that survive garbage collection.
 `tests/state.rs::sources_stay_until_replaced` covers that the source roots
 of a build stay until those of the next build replace them.
 `tests/state.rs::sources_kept_once` covers that a build, and the switch of an
-upgrade, keep the sources of a tree once, and `tests/state.rs::stale_mark_keeps_again`
-that a mark whose roots are gone or lead elsewhere does not skip the copy.
+upgrade, keep the sources of a tree once. `tests/state.rs::stale_mark_keeps_again`
+covers that a mark whose roots are gone or lead elsewhere does not skip the
+copy, and `tests/state.rs::partial_mark_keeps_again` that a mark with a root
+missing, or a source gone from the store, does not skip it either.
 
 See the [operating documentation](../../README.md#status) for state paths and
 migration details.
