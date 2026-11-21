@@ -59,6 +59,27 @@ fn evaluates_once() {
     );
 }
 
+/// A checkout without its lockfile fails the run before the check hook is
+/// asked: nothing is decided on a flake that cannot be read.
+#[test]
+fn lockfile_is_required() {
+    let mut fx = fixture().with("NXF_TEST_BUILD", &fake_systems().one);
+    let hooks = fx.dir.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let asked = fx.dir.join("asked");
+    common::write_script(
+        &hooks.join("check"),
+        &format!("#!/bin/sh\ntouch '{}'\n", asked.display()),
+    );
+    fx.set("NXF_HOOKS_DIR", &hooks);
+    std::fs::remove_file(fx.checkout.join("flake.lock")).unwrap();
+    let result = fx.run(&["auto-update"]);
+    assert_eq!(result.code, 1);
+    assert_contains(&result.stderr, "flake.lock");
+    assert!(!asked.exists());
+    assert!(fx.nh_calls().is_empty());
+}
+
 /// The history is not read to see what the checkout changed: a run that has
 /// nothing to do names no commit.
 #[test]

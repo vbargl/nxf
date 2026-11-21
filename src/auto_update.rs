@@ -63,6 +63,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         return Ok(());
     }
     let dir = flake::checkout()?;
+    flake::lock(&dir)?;
     // A lockfile left by an interrupted run is not work in progress; update restores it.
     let foreign = git::changed_files(&dir)
         .iter()
