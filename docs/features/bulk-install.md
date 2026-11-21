@@ -364,4 +364,32 @@ template with a disko layout and the nxf module, pinned to that commit:
 
 The run is not repeatable in CI.
 
+I1, I4 to I7 and I26 were run by hand with nxf 0.15.0, built with
+`nix build github:vbargl/nxf/1ea2dfffc8631e8796fff2130fae5567f1566fb6`,
+against one Incus Ubuntu 24.04 VM with SSH as root. The template had a disko
+layout, the nxf module pinned to that commit and an `identity.nix` that
+`--files` replaced. The key pair was a throwaway one behind an `ssh` wrapper on
+`PATH`, and `HOME` and `TMPDIR` were scratch directories. Both runs were
+`nxf rollout --config hosts.toml --template path:<template> --files <dir>
+--known-hosts <file> --yes --json`:
+
+- Run 1 installed the machine in 2 minutes and 36 seconds. Standard output
+  held only the JSON object, with `ok` true and the machine `installed`, with
+  its `revision` and its `hostKey`. Standard error held the plan, the phases
+  and the lines of the remote installation, written while it ran (I26, I5).
+  The machine had the `identity.nix` and the `MARKER` file of its own in
+  `/etc/nixos`, nxf 0.15.0, and a `status --json` that named the revision of
+  the run (I4, I6). The Ubuntu key in the `--known-hosts` file was replaced by
+  the key the machine answers with, and the line of another machine was kept.
+  The `known_hosts` file of the scratch `HOME` was not changed, and `TMPDIR`
+  was empty afterwards (I7).
+- Run 2 only probed the machine. Standard output was the object with `ok` true
+  and the machine `managed`. Standard error was the row `installed by nxf` and
+  the outcome `1 machine installed by nxf`. The `--known-hosts` file was not
+  changed (I1).
+- `status --json --config` printed the `status --json` of the machine under
+  its name, with the revision of the run.
+
+The run is not repeatable in CI.
+
 See the [operating documentation](../../README.md#from-another-computer).
