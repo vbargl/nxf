@@ -9,7 +9,7 @@ use common::{
 use serde_json::{json, Value};
 
 fn failed_update(time: u64, detail: &str) -> Value {
-    json!({"time": time, "results": [{"task": "update", "inputs": ["a"], "outcome": "failed", "detail": detail}]})
+    json!({"time": time, "results": [{"task": "update", "inputs": ["a"], "outcome": "failed", "details": [detail]}]})
 }
 
 fn unit_results(fx: &Fixture, text: &str) {
@@ -67,7 +67,7 @@ fn latest_update() {
 fn long_result_name() {
     let fx = fixture();
     fx.save_update(json!({"time": 1, "results": [
-        {"task": "update", "inputs": ["unstable"], "outcome": "reported", "detail": "no route | to host"},
+        {"task": "update", "inputs": ["unstable"], "outcome": "reported", "details": ["no route", "to host"]},
     ]}));
     assert_contains(
         &fx.run(&["status"]).stdout,
@@ -105,10 +105,10 @@ fn update_details() {
     fx.save_update(json!({
         "time": 1,
         "results": [
-            {"task": "update", "inputs": ["a"], "outcome": "done", "detail": ""},
-            {"task": "update", "inputs": ["b"], "outcome": "unchanged", "detail": ""},
-            {"task": "build", "inputs": [], "outcome": "failed", "detail": "build error"},
-            {"task": "switch", "inputs": [], "outcome": "skipped", "detail": "not attempted"},
+            {"task": "update", "inputs": ["a"], "outcome": "done", "details": []},
+            {"task": "update", "inputs": ["b"], "outcome": "unchanged", "details": []},
+            {"task": "build", "inputs": [], "outcome": "failed", "details": ["build error"]},
+            {"task": "switch", "inputs": [], "outcome": "skipped", "details": ["not attempted"]},
         ]
     }));
     let result = fx.run(&["status"]);
@@ -118,6 +118,22 @@ fn update_details() {
     assert_contains(&result.stdout, "\n  ✗ build     build error\n");
     assert_contains(&result.stdout, "\n  · switch    skipped, not attempted\n");
     assert_eq!(git(&fx.checkout, &["rev-list", "--count", "HEAD"]), "1");
+}
+
+/// Results that an older nxf saved, with one `detail` text, have another
+/// shape: status shows them as no result and does not fail.
+#[test]
+fn older_update_file() {
+    let fx = fixture();
+    fx.save_update(json!({"time": 5, "results": [
+        {"task": "update", "inputs": ["a"], "outcome": "failed", "detail": "a: no route | to host"},
+    ]}));
+    let result = fx.run(&["status"]);
+    result.ok();
+    assert_lacks(&result.stdout, "Last automatic update");
+    assert_lacks(&result.stderr, "Cannot read");
+    let json: Value = serde_json::from_str(&fx.run(&["status", "--json"]).stdout).unwrap();
+    assert_eq!(json["lastUpdate"], Value::Null);
 }
 
 /// The unit result catches an update killed before it saved. A newer saved

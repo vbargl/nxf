@@ -11,7 +11,7 @@ use nxf::env;
 use nxf::flake::{self, Location};
 use nxf::nixos;
 use nxf::output::{styled, Style, RESET};
-use nxf::state::{self, Remembered};
+use nxf::state::{self, Remembered, Tree};
 
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
 
@@ -165,7 +165,7 @@ fn shared() {
     std::fs::remove_dir_all(group).unwrap();
 }
 
-/// Remembered systems come back by key; dangling records are skipped.
+/// Remembered systems come back by tree; dangling records are skipped.
 #[test]
 fn remember() {
     let state = temp_dir("state");
@@ -175,13 +175,13 @@ fn remember() {
     ]);
     // Taken under the lock: the first call starts nix-store.
     let systems = fake_systems();
-    state::remember("one", &systems.one);
-    state::remember("one", &systems.one);
+    state::remember(&Tree::new("one"), &systems.one);
+    state::remember(&Tree::new("one"), &systems.one);
     std::os::unix::fs::symlink(state.join("missing"), state.join("nxf/systems/gone")).unwrap();
     assert_eq!(
         state::remembered(),
         [Remembered {
-            key: "one".to_string(),
+            tree: Tree::new("one"),
             system: systems.one.clone()
         }]
     );
@@ -204,7 +204,7 @@ fn remembered_updater() {
     assert_eq!(
         state::remembered(),
         [Remembered {
-            key: "tree".to_string(),
+            tree: Tree::new("tree"),
             system: systems.two.clone()
         }]
     );
@@ -212,17 +212,20 @@ fn remembered_updater() {
 }
 
 /// A source that failed its health check is marked in the updater's state,
-/// with the reason, and the mark is read back by the key of the source.
+/// with the reason, and the mark is read back by the tree of the source.
 #[test]
 fn bad_marks() {
     let updater = temp_dir("updater");
     let _guard = environment(&[("NXF_UPDATER_STATE", updater.join("state").to_str().unwrap())]);
-    assert_eq!(state::bad("tree"), None);
-    state::mark_bad("tree", "web: timed out").unwrap();
-    assert_eq!(state::bad("tree"), Some("web: timed out".to_string()));
-    assert_eq!(state::bad("other"), None);
+    assert_eq!(state::bad(&Tree::new("tree")), None);
+    state::mark_bad(&Tree::new("tree"), "web: timed out").unwrap();
+    assert_eq!(
+        state::bad(&Tree::new("tree")),
+        Some("web: timed out".to_string())
+    );
+    assert_eq!(state::bad(&Tree::new("other")), None);
     assert_contains(
-        &state::mark_bad("tree/../x", "no").unwrap_err(),
+        &state::mark_bad(&Tree::new("tree/../x"), "no").unwrap_err(),
         &updater.join("state/bad").display().to_string(),
     );
     std::fs::remove_dir_all(updater).unwrap();

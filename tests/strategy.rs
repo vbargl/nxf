@@ -1,5 +1,6 @@
 //! Tests for src/strategy.rs: the strategies of the automatic update.
 
+use nxf::results::Kind;
 use nxf::strategy::{Strategies, Strategy};
 use serde_json::json;
 
@@ -46,4 +47,13 @@ fn invalid() {
     );
     let error = Strategies::from_settings(&json!({"inputs": {"work": true}})).unwrap_err();
     assert_eq!(error, "the update strategy of input 'work' is not a word");
+}
+
+/// The outcome of a failed input is the word of its strategy; an input that
+/// is off has none, because the automatic update never tries it.
+#[test]
+fn outcomes() {
+    assert_eq!(Strategy::Flag.outcome(), Some(Kind::Flagged));
+    assert_eq!(Strategy::Report.outcome(), Some(Kind::Reported));
+    assert_eq!(Strategy::Off.outcome(), None);
 }

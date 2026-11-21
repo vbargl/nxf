@@ -3,8 +3,7 @@
 mod common;
 
 use common::{
-    assert_contains, assert_lacks, fake_systems, fixture, outcomes, pair, saved, write_script,
-    Fixture,
+    assert_contains, fake_systems, fixture, outcomes, pair, saved, write_script, Fixture,
 };
 use serde_json::Value;
 
@@ -37,15 +36,15 @@ fn check(fx: &Fixture, name: &str, script: &str) {
     );
 }
 
-/// The task, the outcome and the detail of each saved result.
-fn results(fx: &Fixture) -> Vec<(String, String, String)> {
+/// The task, the outcome and the details of each saved result.
+fn results(fx: &Fixture) -> Vec<(String, String, Vec<String>)> {
     saved(fx)["results"]
         .as_array()
         .unwrap()
         .iter()
         .map(|result| {
             let field = |name: &str| result[name].as_str().unwrap().to_string();
-            (field("task"), field("outcome"), field("detail"))
+            (field("task"), field("outcome"), common::details(result))
         })
         .collect()
 }
@@ -122,12 +121,12 @@ fn unhealthy_returns_and_marks() {
     assert_contains(&calls[2], &format!("os switch {} ", systems.one.display()));
     let health = &results(&fx)[2];
     assert_eq!((health.0.as_str(), health.1.as_str()), ("health", "failed"));
-    assert_contains(&health.2, "20-k3s: k3s is not running");
-    assert_contains(
-        &health.2,
-        &format!("Returned to {}.", systems.one.display()),
+    assert_eq!(health.2[0], "20-k3s: k3s is not running");
+    assert_eq!(
+        health.2[1],
+        format!("Returned to {}.", systems.one.display())
     );
-    assert_lacks(&health.2, "10-units");
+    assert_eq!(health.2.len(), 2);
     assert_eq!(
         std::fs::read_to_string(fx.updater.join("bad").join(fx.tree()))
             .unwrap()
@@ -150,7 +149,7 @@ fn unhealthy_returns_and_marks() {
         (skipped.0.as_str(), skipped.1.as_str()),
         ("switch", "skipped")
     );
-    assert_contains(&skipped.2, "waiting for a newer one");
+    assert_contains(&skipped.2[0], "waiting for a newer one");
 
     // A newer revision is tried, and passes once the check does.
     check(&fx, "20-k3s", "exit 0");
@@ -177,7 +176,7 @@ fn hanging_check() {
     let started = std::time::Instant::now();
     assert_eq!(fx.run(&["auto-update"]).code, 1);
     assert!(started.elapsed() < std::time::Duration::from_secs(20));
-    assert_contains(&results(&fx)[2].2, "hangs: timed out");
+    assert_contains(&results(&fx)[2].2[0], "hangs: timed out");
 }
 
 /// The times are those of the configuration switched to, like the checks.
@@ -239,10 +238,11 @@ fn unmarked_still_returns() {
     assert_contains(&calls[2], &format!("os switch {} ", systems.one.display()));
     let health = &results(&fx)[2];
     assert_eq!((health.0.as_str(), health.1.as_str()), ("health", "failed"));
-    assert_contains(&health.2, "20-k3s: k3s is not running | cannot write ");
-    assert_contains(
-        &health.2,
-        &format!(" | Returned to {}.", systems.one.display()),
+    assert_eq!(health.2[0], "20-k3s: k3s is not running");
+    assert_contains(&health.2[1], "cannot write ");
+    assert_eq!(
+        health.2[2],
+        format!("Returned to {}.", systems.one.display())
     );
 }
 
@@ -270,5 +270,5 @@ fn own_words_are_not_the_deadline() {
     );
     assert_eq!(fx.run(&["auto-update"]).code, 1);
     assert_eq!(fx.nh_actions(), ["build", "switch", "switch"]);
-    assert_contains(&results(&fx)[2].2, "10-probe: timed out");
+    assert_contains(&results(&fx)[2].2[0], "10-probe: timed out");
 }

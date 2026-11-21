@@ -297,7 +297,7 @@ fn attention() {
     let set = machines();
     set.answers(
         "node-2",
-        r#"echo '{"revision": "0123456789abcdef", "rebootRequired": true, "hold": {"reason": "freeze", "until": 4102444800}, "bad": "units", "lastUpdate": {"time": 1, "results": [{"outcome": "failed"}]}, "changes": ["flake.nix"], "matches": false}'"#,
+        r#"echo '{"revision": "0123456789abcdef", "rebootRequired": true, "hold": {"reason": "freeze", "until": 4102444800}, "bad": "units", "lastUpdate": {"time": 1, "results": [{"task": "update", "inputs": [], "outcome": "failed", "details": []}]}, "changes": ["flake.nix"], "matches": false}'"#,
     );
     let result = set.run(&["status"]);
     result.ok();
@@ -485,6 +485,99 @@ fn unreadable_answers() {
     assert_contains(&upgrade.stdout, "\n  · node-2    not started\n");
 }
 
+/// What a machine refused is its refusal on standard output, not the last
+/// line of its text: both the status and the upgrade show that cause.
+#[test]
+fn refusal_is_read_from_json() {
+    let set = machines();
+    set.answers(
+        "node-1",
+        r#"echo '{"error": "Unknown task or input: nosuch", "details": []}'; echo 'not the cause' >&2; exit 1"#,
+    );
+    let status = set.run(&["status"]);
+    assert_eq!(status.code, 1);
+    assert_contains(
+        &status.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    let upgrade = set.upgrade(&[]);
+    assert_eq!(upgrade.code, 1);
+    assert_contains(
+        &upgrade.stdout,
+        "\n  ✗ node-1    Unknown task or input: nosuch\n",
+    );
+    assert_lacks(&upgrade.stdout, "not the cause");
+}
+
+/// With --json the upgrade prints the machines and the outcome as one JSON
+/// object and nothing else on standard output: the state of each machine, and
+/// the row of one that failed. The rows are on standard error.
+#[test]
+fn upgrade_json() {
+    let set = machines();
+    let ok = set.upgrade(&["--json"]);
+    ok.ok();
+    assert_contains(&ok.stderr, "\n  ✓ node-1    no input changed, switched\n");
+    let printed: Value = serde_json::from_str(&ok.stdout).unwrap();
+    assert_eq!(printed["ok"], true);
+    assert_eq!(
+        printed["counts"],
+        json!({"managed": 0, "installed": 0, "upgraded": 3, "failed": 0, "not started": 0})
+    );
+    let names: Vec<&str> = printed["machines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|machine| machine["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["node-1", "node-2", "node-3"]);
+
+    set.fail_switch("node-1");
+    let failed = set.upgrade(&["--json"]);
+    assert_eq!(failed.code, 1);
+    assert_contains(&failed.stderr, "✗ Upgrade failed on 1 of 3 machines");
+    let printed: Value = serde_json::from_str(&failed.stdout).unwrap();
+    assert_eq!(printed["ok"], false);
+    assert_eq!(
+        printed["counts"],
+        json!({"managed": 0, "installed": 0, "upgraded": 0, "failed": 1, "not started": 2})
+    );
+    let first = &printed["machines"][0];
+    assert_eq!(first["state"], "failed");
+    assert_contains(
+        first["error"].as_str().unwrap(),
+        "switch failed: Upgrade stopped: activation did not finish",
+    );
+    assert_eq!(printed["machines"][1]["state"], "not started");
+    assert_eq!(printed["machines"][2]["state"], "not started");
+}
+
+/// A machine whose nxf is older than the outcomes this nxf reads prints a
+/// list of another shape: its row says so, and fails, whether its status is
+/// 0 or not, instead of showing the last line of the list.
+#[test]
+fn older_nxf() {
+    let set = machines();
+    let older = r#"echo '[{"task": "update", "inputs": [], "outcome": "failed", "detail": "x"}]'"#;
+    let release = concat!(
+        env!("CARGO_PKG_VERSION_MAJOR"),
+        ".",
+        env!("CARGO_PKG_VERSION_MINOR")
+    );
+    for body in [older.to_string(), format!("{older}; exit 1")] {
+        set.answers("node-1", &body);
+        let result = set.upgrade(&[]);
+        assert_eq!(result.code, 1);
+        assert_contains(
+            &result.stdout,
+            &format!(
+                "\n  ✗ node-1    unreadable answer: nxf on the machine is older than {release}; the upgrade may have run\n"
+            ),
+        );
+        assert_contains(&result.stdout, "\n  · node-2    not started\n");
+    }
+}
+
 /// An upgrade that ends with a failure status and names no failed task
 /// fails with what the machine said last, and starts no other machine.
 #[test]
@@ -492,7 +585,7 @@ fn upgrade_failure_status() {
     let set = machines();
     set.answers(
         "node-1",
-        r#"echo '[{"task": "update", "inputs": [], "outcome": "unchanged", "detail": ""}]'; echo 'the session was closed' >&2; exit 4"#,
+        r#"echo '[{"task": "update", "inputs": [], "outcome": "unchanged", "details": []}]'; echo 'the session was closed' >&2; exit 4"#,
     );
     let result = set.upgrade(&[]);
     assert_eq!(result.code, 1);

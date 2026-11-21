@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::process;
+use crate::state::Tree;
 
 fn git(dir: &Path, args: &[&str]) -> Command {
     let mut git = Command::new("git");
@@ -22,18 +23,18 @@ fn text(dir: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 /// The committed tree of HEAD, or none with uncommitted changes.
-pub fn clean_tree(dir: &Path) -> Option<String> {
+pub fn clean_tree(dir: &Path) -> Option<Tree> {
     if !succeeds(dir, &["diff", "--quiet", "HEAD", "--"]) {
         return None;
     }
     text(dir, &["rev-parse", "HEAD^{tree}"])
         .ok()
-        .map(|tree| tree.trim().to_string())
+        .map(|tree| Tree::new(tree.trim()))
 }
 
 /// Tracked work-tree changes relative to an immutable tree, including binary
 /// contents. Comparing against the same base also works across a lockfile commit.
-pub fn worktree_diff(dir: &Path, tree: &str) -> Option<String> {
+pub fn worktree_diff(dir: &Path, tree: &Tree) -> Option<String> {
     text(
         dir,
         &[
@@ -41,7 +42,7 @@ pub fn worktree_diff(dir: &Path, tree: &str) -> Option<String> {
             "--binary",
             "--no-ext-diff",
             "--no-textconv",
-            tree,
+            tree.as_str(),
             "--",
         ],
     )
@@ -49,13 +50,13 @@ pub fn worktree_diff(dir: &Path, tree: &str) -> Option<String> {
 }
 
 /// The newest commit with one of the given trees.
-pub fn commit_of(dir: &Path, trees: &[String]) -> Option<String> {
+pub fn commit_of(dir: &Path, trees: &[Tree]) -> Option<String> {
     let log = text(dir, &["log", "--all", "--date-order", "--format=%H %T"]).ok()?;
     log.lines().find_map(|line| {
         let (commit, tree) = line.split_once(' ')?;
         trees
             .iter()
-            .any(|known| known == tree)
+            .any(|known| known.as_str() == tree)
             .then(|| commit.to_string())
     })
 }

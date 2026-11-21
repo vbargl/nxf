@@ -3,15 +3,19 @@
 mod common;
 
 use common::{
-    append, assert_contains, assert_lacks, commit, configurations, events, fake_systems, fixture,
-    hostname, names, write_script,
+    append, assert_contains, assert_detail, assert_lacks, commit, configurations, events,
+    fake_systems, fixture, hostname, names, write_script,
 };
 use nxf::output::{Style, RESET};
 use nxf::tasks;
 use serde_json::{json, Value};
 
 fn plan(given: &[&str]) -> Result<tasks::Plan, String> {
-    tasks::plan(&names(given), &names(&["a", "b"]))
+    tasks::plan(
+        &names(given),
+        &names(&["a", "b"]),
+        &names(&["status", "doctor"]),
+    )
 }
 
 /// A module-provisioned directory receives records; per-user state stays separate.
@@ -241,6 +245,7 @@ fn discovery() {
         names,
         ["update", "build", "test", "boot", "switch", "upgrade"]
     );
+    assert_eq!((names[0], names[4]), (tasks::UPDATE, tasks::SWITCH));
     let takers: Vec<&str> = defined
         .iter()
         .filter(|task| task.takes_inputs)
@@ -289,6 +294,11 @@ fn plan_unknown() {
     assert_contains(
         &plan(&["update", "status"]).unwrap_err(),
         "Unknown task or input: status",
+    );
+    // The commands are those the caller names.
+    assert_contains(
+        &plan(&["status"]).unwrap_err(),
+        "\nCommands  status, doctor",
     );
 }
 
@@ -749,8 +759,8 @@ fn json() {
     assert_eq!(
         results,
         json!([
-            {"task": "update", "inputs": ["a"], "outcome": "unchanged", "detail": ""},
-            {"task": "build", "inputs": [], "outcome": "done", "detail": ""},
+            {"task": "update", "inputs": ["a"], "outcome": "unchanged", "details": []},
+            {"task": "build", "inputs": [], "outcome": "done", "details": []},
         ])
     );
     fx.bump(&["a"]);
@@ -762,10 +772,7 @@ fn json() {
     let results = results.as_array().unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["outcome"], "failed");
-    assert_contains(
-        results[0]["detail"].as_str().unwrap(),
-        "Input update failed",
-    );
+    assert_detail(&results[0], "Input update failed");
     assert_eq!(fx.locked("a"), old);
 }
 

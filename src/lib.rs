@@ -17,6 +17,7 @@ pub mod nixos;
 pub mod output;
 pub mod process;
 pub mod progress;
+pub mod results;
 pub mod rollout;
 pub mod ssh;
 pub mod state;

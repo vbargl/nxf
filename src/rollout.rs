@@ -3,7 +3,7 @@
 //! repeated. Any other machine is started into a NixOS installer and
 //! installed there with `nxf init` and `nxf install`.
 
-use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,6 +15,7 @@ use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::process;
+use crate::results::{self, Installation, Machine, Refusal, State};
 use crate::ssh::{self, quoted, Link, Trust};
 use crate::state;
 use crate::text::{last_line, plain};
@@ -35,6 +36,9 @@ pub struct Options {
     pub kexec_url: Option<String>,
     /// A known_hosts file that gets the host keys of the installed machines.
     pub known_hosts: Option<PathBuf>,
+    /// Print the machines and the outcome as JSON on standard output, and the
+    /// text on standard error. Nothing is asked, so erasing needs `yes`.
+    pub json: bool,
 }
 
 /// What a machine is before rollout.
@@ -105,11 +109,10 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
     })
 }
 
-/// Runs a remote command. On a terminal its latest line is shown until
-/// the next one replaces it; what it printed is kept for the caller and,
-/// when it fails, its last lines are the error.
-fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
-    let (mut child, reader) = process::spawn_merged(&mut link.command(remote))?;
+/// Shows the lines of a remote command as they come, and returns them. On a
+/// terminal the latest line stays until the next one replaces it; with `echo`
+/// every line is kept beneath the heading where there is no terminal.
+fn show(reader: impl Read, echo: bool) -> String {
     let mut said = String::new();
     let mut pending = false;
     for line in BufReader::new(reader).lines().map_while(Result::ok) {
@@ -117,16 +120,51 @@ fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
         if !line.trim().is_empty() {
             output::settle(pending);
             pending = output::pending(line.trim());
+            if echo && !pending {
+                output::detail(line.trim());
+            }
         }
         said.push_str(&line);
         said.push('\n');
     }
     output::settle(pending);
+    said
+}
+
+/// Runs a remote command and shows its lines. When it fails, its last lines
+/// are the error.
+fn stream(link: &Link, remote: &str, what: &str, echo: bool) -> Result<String, String> {
+    let (mut child, reader) = process::spawn_merged(&mut link.command(remote))?;
+    let said = show(reader, echo);
     let status = child.wait().map_err(|err| err.to_string())?;
     if status.success() {
         return Ok(said);
     }
     Err(format!("{what} failed\n{}", process::tail(&said)))
+}
+
+/// Runs `nxf install --json` on the machine and reads what it printed on its
+/// standard output, while its standard error is shown as it comes. Its
+/// refusal is the cause of a failure.
+fn installation(link: &Link, remote: &str, echo: bool) -> Result<Installation, String> {
+    let (mut child, stdout, stderr) = process::spawn_split(&mut link.command(remote))?;
+    let read = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stdout).read_to_string(&mut text);
+        text
+    });
+    let said = show(stderr, echo);
+    let stdout = read.join().unwrap_or_default();
+    let status = child.wait().map_err(|err| err.to_string())?;
+    if status.success() {
+        return Installation::from_json(&stdout)
+            .ok_or_else(|| "The installation did not report the host key".to_string());
+    }
+    let lines: Vec<String> = match Refusal::from_json(&stdout) {
+        Some(refusal) => [refusal.error].into_iter().chain(refusal.details).collect(),
+        None => process::tail(&said).lines().map(str::to_string).collect(),
+    };
+    Err(format!("The installation failed\n{}", lines.join("\n")))
 }
 
 fn probe(link: &Link) -> Probe {
@@ -351,21 +389,16 @@ fn install(
         upload(&link, files, FILES_DIR)?;
         init.push_str(&format!(" --files {FILES_DIR}"));
     }
-    stream(&link, &init, "Founding the machine flake")?;
+    stream(&link, &init, "Founding the machine flake", options.json)?;
     output::row(Mark::Done, "Founded on the machine");
 
     output::start("Installing");
-    let said = stream(
+    let key = installation(
         &link,
-        &format!("{nxf} install {MACHINE_DIR}"),
-        "The installation",
-    )?;
-    let key = said
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("Host key"))
-        .map(|key| key.trim().to_string())
-        .filter(|key| !key.is_empty())
-        .ok_or("The installation did not report the host key")?;
+        &format!("{nxf} install {MACHINE_DIR} --json"),
+        options.json,
+    )?
+    .host_key;
     output::row(Mark::Done, "Installed");
 
     output::start("Starting the system");
@@ -496,12 +529,26 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
         ));
     }
     let scratch = make_scratch(&temp)?;
-    let result = rollout(options, hosts, &scratch);
+    if options.json {
+        output::divert();
+    }
+    let mut machines = Vec::new();
+    let result = rollout(options, hosts, &scratch, &mut machines);
     let _ = std::fs::remove_dir_all(&scratch);
+    if let (true, Ok(ok)) = (options.json, &result) {
+        output::data(&results::machines_json(*ok, &machines));
+    }
     result
 }
 
-fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
+/// Rolls the machines out, and says in `machines` how each one ended, in the
+/// order of the hosts.
+fn rollout(
+    options: &Options,
+    hosts: &[Host],
+    scratch: &Path,
+    machines: &mut Vec<Machine>,
+) -> Result<bool, String> {
     // The scratch files of a machine extend a stem named by its place in the list:
     // ssh splits the options that name them, and a host's name may hold a space.
     let stem = |index: usize| scratch.join(index.to_string());
@@ -547,11 +594,17 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         let (what, erased) = match &probe.found {
             Found::Managed => {
                 output::row(Mark::Done, &format!("{name:<width$}installed by nxf"));
+                machines.push(Machine::new(name, State::Managed));
                 continue;
             }
             Found::Unreachable(why) => {
                 silent += 1;
                 output::row(Mark::Failed, &format!("{name:<width$}unreachable: {why}"));
+                machines.push(Machine::went_wrong(
+                    name,
+                    State::Failed,
+                    &format!("unreachable: {why}"),
+                ));
                 continue;
             }
             Found::Installer => ("NixOS installer", "its disks will be erased"),
@@ -560,14 +613,20 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         // Refused here, before anything is erased: only root can install.
         if let Some(user) = probe.user.as_deref().filter(|user| *user != "0") {
             failed.push(host.name.as_str());
-            output::row(
-                Mark::Failed,
-                &format!("{name:<width$}{what}; not installed: the SSH user must be root, and its user id is {user}"),
+            let refused = format!(
+                "{what}; not installed: the SSH user must be root, and its user id is {user}"
             );
+            output::row(Mark::Failed, &format!("{name:<width$}{refused}"));
+            machines.push(Machine::went_wrong(name, State::Failed, &refused));
             continue;
         }
         to_install.push((index, host, probe));
         output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
+        machines.push(Machine::went_wrong(
+            name,
+            State::NotStarted,
+            &format!("{what}; {erased}"),
+        ));
     }
     if to_install.is_empty() {
         if !failed.is_empty() {
@@ -592,7 +651,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         .iter()
         .map(|(_, host, _)| host.name.as_str())
         .collect();
-    if !options.yes && !std::io::stdin().is_terminal() {
+    if !options.yes && (options.json || !std::io::stdin().is_terminal()) {
         output::failure(&format!(
             "{} would be erased; nothing was changed",
             output::machines(to_install.len())
@@ -640,13 +699,16 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                     .known_hosts
                     .as_ref()
                     .map_or(Ok(()), |file| remember(file, host, &done.key));
+                let mut machine = Machine::new(&host.name, State::Installed);
+                machine.revision = done.revision.clone();
+                machine.host_key = Some(done.key.clone());
                 if let Err(error) = written {
-                    output::row(
-                        Mark::Failed,
-                        &format!("Its host key was not written: {error}"),
-                    );
+                    let row = format!("Its host key was not written: {error}");
+                    output::row(Mark::Failed, &row);
+                    machine.error = Some(row);
                     unwritten.push(host.name.as_str());
                 }
+                machines[*index] = machine;
                 installed.push((*host, done));
             }
             Err(error) => {
@@ -656,6 +718,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 for line in lines {
                     output::detail(line);
                 }
+                machines[*index] = Machine::went_wrong(&host.name, State::Failed, &error);
                 failed.push(host.name.as_str());
             }
         }

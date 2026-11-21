@@ -101,6 +101,94 @@ fn partitions_and_records() {
     );
 }
 
+/// With --json install prints the host key, the system and the revision as
+/// one JSON object on standard output, and nothing else there. The text of its
+/// steps is on standard error, as it is on standard output without --json.
+#[test]
+fn json() {
+    let (fx, root) = installer();
+    let result = fx.run(&["install", fx.checkout.to_str().unwrap(), "--json"]);
+    result.ok();
+    assert_contains(&result.stderr, "[1/3] Partitioning the disks\n");
+    assert_contains(
+        &result.stderr,
+        "\n✓ NixOS installed\n  Host key  ssh-ed25519 ",
+    );
+    let public = std::fs::read_to_string(root.join("etc/ssh/ssh_host_ed25519_key.pub")).unwrap();
+    let key: Vec<&str> = public.split_whitespace().take(2).collect();
+    let printed: Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        printed,
+        serde_json::json!({
+            "hostKey": key.join(" "),
+            "system": "/nix/store/abc-nixos-system",
+            "revision": fx.head(),
+        })
+    );
+}
+
+/// The steps of install are on standard error while it runs, with --json:
+/// the line of the tool that is held back is there before it is released.
+#[test]
+fn json_is_live() {
+    let (fx, root) = installer();
+    write_script(
+        &fx.dir.join("bin/nixos-install"),
+        &format!(
+            "#!/bin/sh\necho 'copying the system'\nuntil [ -e '{0}/release' ]; do sleep 0.1; done\nmkdir -p '{1}/nix/var/nix/profiles'\n",
+            fx.dir.display(),
+            root.display()
+        ),
+    );
+    let command = fx.command(&["install", fx.checkout.to_str().unwrap(), "--json"]);
+    let result = common::run_held(command, "copying the system", &fx.dir.join("release"));
+    assert_eq!(result.code, 0, "{}", result.stderr);
+    assert_contains(
+        &result.stderr,
+        "[2/3] Installing the system\n    copying the system\n",
+    );
+    let printed: Value = serde_json::from_str(&result.stdout).unwrap();
+    assert!(printed["hostKey"]
+        .as_str()
+        .unwrap()
+        .starts_with("ssh-ed25519 "));
+}
+
+/// A refusal under --json is one JSON object with the cause and the lines
+/// beneath it on standard output, and the text for people on standard error.
+#[test]
+fn json_refusal() {
+    let (mut fx, _) = installer();
+    let dir = fx.checkout.to_str().unwrap().to_string();
+    fx.set("NXF_INSTALLER", "no");
+    let disk = fx.run(&["install", &dir, "--json"]);
+    assert_eq!(disk.code, 1);
+    assert_contains(
+        &disk.stderr,
+        "✗ This system runs from a disk, and installing erases disks",
+    );
+    let printed: Value = serde_json::from_str(&disk.stdout).unwrap();
+    assert_eq!(
+        printed,
+        serde_json::json!({
+            "error": "This system runs from a disk, and installing erases disks",
+            "details": ["Start the machine from a NixOS installer, or let `nxf rollout` do it."],
+        })
+    );
+
+    // The failure of a program says what it said, and the exit line last.
+    fx.set("NXF_INSTALLER", "yes");
+    fx.set("NXF_TEST_INSTALL_FAILS", "1");
+    let failed = fx.run(&["install", &dir, "--json"]);
+    assert_eq!(failed.code, 1);
+    let printed: Value = serde_json::from_str(&failed.stdout).unwrap();
+    assert_eq!(printed["error"], "error: builder failed");
+    assert_eq!(
+        printed["details"].as_array().unwrap().last().unwrap(),
+        "nixos-install exited with status 1."
+    );
+}
+
 /// An already mounted target is not partitioned, and an existing host key is kept.
 #[test]
 fn mounted() {

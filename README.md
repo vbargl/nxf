@@ -27,7 +27,7 @@ changes to the flake itself.
 | `nxf release` | Release the hold |
 | `nxf auto-update` | Update unattended; see [Automatic updates](#automatic-updates) |
 | `nxf <task>...` | Run tasks, see below |
-| `nxf --json <task>...` | Run tasks quietly and print each one's result as JSON, for scripts |
+| `nxf --json <task>...` | Run tasks quietly and print each one's result as JSON, for scripts; see [Scripts](#scripts) |
 
 | Task | Action |
 | --- | --- |
@@ -148,16 +148,32 @@ runs as root, nh is told not to elevate. dix makes the package summary.
 
 ## Scripts
 
-Scripts drive nxf through JSON instead of reading its terminal output:
+Scripts drive nxf through JSON instead of reading its terminal output. With
+`--json`, standard output holds the JSON document of the run and nothing
+else; `--dry-run` prints its plan as plain lines. The text for people stays on
+standard error. Only `install` and `rollout` print all of their text there as
+it comes, so that a long run stays observable.
 
 - `nxf --json <task>...` prints nothing while the tasks run, then a list with
-  one record per task that ran: `task`, `inputs`, `outcome` and `detail`. The
+  one record per task that ran: `task`, `inputs`, `outcome` and `details`. The
   outcome is `done`, `unchanged` for an update that found nothing new, or
-  `failed`, also when only some inputs failed; `detail` holds the diagnostics
-  of a failure. A failure stops later tasks, which are then not listed, and
-  the exit status is 1. What the parser of the command line refuses, such as
-  an unknown option, exits with status 2. An error before the first task,
-  such as an unknown task, exits with status 1. Neither prints JSON.
+  `failed`, also when only some inputs failed; `details` is a list of the
+  lines that the task said about a failure, and empty otherwise. A failure
+  stops later tasks, which are then not listed, and the exit status is 1.
+
+  ```json
+  [
+    {"task": "update", "inputs": ["nixpkgs"], "outcome": "unchanged", "details": []},
+    {"task": "build", "inputs": [], "outcome": "failed", "details": ["✗ Configuration build failed", "…"]}
+  ]
+  ```
+
+- A refusal, or an error before the first task, or before the first machine,
+  is one object with the cause and the lines that help to resolve it:
+  `{"error": "Unknown task or input: nosuch", "details": ["Tasks  update, …"]}`.
+  It is printed by every task and every command that is given `--json`, with
+  the exit status of the failure: 1, and 2 for what the parser of the command
+  line refuses, such as an unknown option.
 - `nxf status --json` prints `checkout`, `changes` (tracked files with
   uncommitted changes), `inputs`, `running`, `built` (the system built from
   the committed checkout, or null) and `matches`. For monitoring it also
@@ -165,11 +181,38 @@ Scripts drive nxf through JSON instead of reading its terminal output:
   `rebootRequired`, `hold` (`reason`, `since`, `until`, or null), `bad` (why
   the checkout failed its health check, or null) and `lastUpdate` (the time
   and task results of the last automatic update, or null). It does not mark
-  the update summary as read.
+  the update summary as read. `lastUpdate` is null for results that another
+  version of nxf saved in another shape.
+- `nxf install <dir> --json` prints
+  `{"hostKey": "ssh-ed25519 AAAA…", "system": "/nix/store/…", "revision": "<commit>"}`
+  on one line when the installation ended. `system` and
+  `revision` are null when they are not known. `rollout` reads this to get the
+  host key of a machine.
+- `nxf rollout --config <file> --json` prints one object, for an installation
+  and for `--upgrade` alike, at the end: `ok` (the exit status
+  is 0), `counts` (how many machines are in each state) and `machines`, one
+  entry for each machine in the order of the hosts file. An entry has `name`
+  and `state`: `managed`, `installed`, `upgraded`, `failed` or `not started`.
+  It has `error` and `details`, the row of the machine and the lines beneath
+  it, when something went wrong with it, and `revision` and `hostKey` when it
+  was installed. It never asks, so erasing a machine needs `--yes`; without it
+  the machines to erase are `not started`.
+
+  ```json
+  {
+    "ok": false,
+    "counts": {"managed": 1, "installed": 1, "upgraded": 0, "failed": 1, "not started": 0},
+    "machines": [
+      {"name": "node-1", "state": "managed"},
+      {"name": "node-2", "state": "installed", "revision": "b28716fd9774…", "hostKey": "ssh-ed25519 AAAA…"},
+      {"name": "node-3", "state": "failed", "error": "unreachable: ssh: connect to host node-3 port 22: No route to host", "details": []}
+    ]
+  }
+  ```
 
 The results of an automatic update have the same four fields. They are in
-`lastUpdate`, in `/var/lib/nxf/update.json` and in the file `$NXF_RESULTS` of
-the [failure hook](#hooks). Besides the tasks, a result there is named
+`lastUpdate`, in `/var/lib/nxf/update.json` (`{"time": …, "results": […]}`)
+and in the file `$NXF_RESULTS` of the [failure hook](#hooks). Besides the tasks, a result there is named
 `health`, for the [health checks](#health-checks), or `hook`, for the failure
 hook. These are all outcomes:
 
@@ -178,7 +221,7 @@ hook. These are all outcomes:
 | `done` | a task, `health` | The task ran to its end, or the health checks passed |
 | `unchanged` | `update` | The update left the lockfile as it was |
 | `failed` | a task, `health`, `hook` | The task failed, the checks still failed when their time ran out, or the failure hook failed. `update` `failed` is also the result of a run that cannot go on; see [Automatic updates](#automatic-updates). The run fails |
-| `skipped` | `update`, `switch` | Automatic update only. The run did not start, because of a hold, uncommitted changes or the check hook; or the switch was left out, because the revision failed its health check before. `detail` says which |
+| `skipped` | `update`, `switch` | Automatic update only. The run did not start, because of a hold, uncommitted changes or the check hook; or the switch was left out, because the revision failed its health check before. `details` says which |
 | `flagged` | `update`, with the input in `inputs` | Automatic update only. The input could not be updated and its [strategy](#strategies) is `flag`. The run goes on and does not fail |
 | `reported` | `update`, with the input in `inputs` | The same for the strategy `report`, and the failure hook runs after the run |
 
@@ -444,8 +487,10 @@ nxf install /tmp/machine
 3. It makes the SSH host key and prints it, and records the installation in
    `/var/lib/nxf/installed.json` and which system the flake built.
 
-`--reboot` restarts into the new system. Install needs root: another user
-gets `Installing needs root`. It refuses outside an installer (a system that
+`--reboot` restarts into the new system. `--json` prints the host key, the
+system and the revision as JSON on standard output, and the text of the steps
+on standard error, for scripts; see [Scripts](#scripts). Install needs root:
+another user gets `Installing needs root`. It refuses outside an installer (a system that
 runs from a disk), on a system that nxf manages (one it installed, or one
 whose system has nxf, also when it runs from memory), with uncommitted
 changes in the flake, and, with `--mounted`, into a target whose `/etc/nixos`
@@ -496,6 +541,11 @@ machine unless both tar and ssh end well: its row is `Sending the machine's
 files failed`, and it is named under `Not installed`. A `<dir>` that is not a
 directory is refused before any machine is asked. A machine without
 `<dir>/<name>/` gets the template alone.
+
+`--json` prints the machines and the outcome as JSON instead of the text, and
+never asks: without `--yes` the machines to erase are not started. See
+[Scripts](#scripts). The remote `nxf install` is run with `--json`, and
+rollout reads its host key from that.
 
 The outcome lists the host key of every installed machine as a `known_hosts`
 line; `--known-hosts <file>` writes them into that file, replacing the key of
@@ -555,6 +605,8 @@ hosts.toml · 3 machines
   Not started: node-3. Run the rollout again once the failure is fixed.
 ```
 
+- `--json` prints the machines and the outcome as JSON; see
+  [Scripts](#scripts).
 - A failure, or a machine that does not answer, lets its own wave end and
   starts no other. The machines of a later wave are listed as not started.
   The row of a failed task holds what the task said on the machine, its

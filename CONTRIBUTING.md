@@ -61,7 +61,8 @@ change them here first.
 | `src/lib.rs` | The list of the modules |
 | `src/cli.rs` | The commands and their routing; no logic |
 | `src/tasks.rs` | The task table, and planning and running tasks |
-| `src/auto_update.rs` | The unattended run: which task comes next, and saving the results |
+| `src/results.rs` | What nxf says to programs with `--json`, and reads back: a task's outcome, a refusal, the machines of a rollout, an installation |
+| `src/auto_update.rs` | The unattended run: which task comes next, verifying its switch, and saving the results |
 | `src/health.rs` | Running the configuration's health checks until they pass or time runs out |
 | `src/strategy.rs` | How the automatic update treats each input: `off`, `flag` or `report`, read from the configuration in the checkout |
 | `src/hold.rs` | The hold on automatic updates |
@@ -73,13 +74,13 @@ change them here first.
 | `src/rollout.rs` | Installing the machines of a hosts file that nxf does not manage |
 | `src/status.rs` | The status report, the running system's flake commit and the updater's latest result |
 | `src/doctor.rs` | The doctor's checks |
-| `src/output.rs` | Terminal styles, rows, label columns, phase headings, outcomes and streaming diagnostics |
+| `src/output.rs` | Terminal styles, rows, label columns, phase headings, outcomes, streaming diagnostics, the one document of a run (`data`) and the diversion of its text to standard error (`divert`) |
 | `src/progress.rs` | Nix activity decoding, derivation counts and active package names |
 | `src/git.rs` | Git helpers |
 | `src/flake.rs` | Flake helpers: the checkout, updating inputs, reading the lockfile |
 | `src/nixos.rs` | NixOS helpers: nh, dix, the running system, package changes, sizes, the update service |
 | `src/env.rs` | The environment: the name of each variable nxf reads, and the readers of its values |
-| `src/process.rs` | Child processes: running them, with a deadline, the one shape of their failures, and the atomic write of a file |
+| `src/process.rs` | Child processes: running them, with a deadline, reading their output and error together or apart, the one shape of their failures, and the atomic write of a file |
 | `src/ssh.rs` | Reaching a machine over ssh: the options, the trust of its host key, the quoting of the remote command |
 | `src/state.rs` | The state: the per-user and the updater's directories, build records, marks of unhealthy sources, source roots, the places of the hold and of the updater's results |
 | `src/time.rs` | The clock, a time as `date` reads and writes it, and how long ago a time was |
@@ -137,23 +138,36 @@ change them here first.
 ## Commands and tasks
 
 - `status`, `doctor`, `version`, `init`, `install`, `rollout`, `hold`,
-  `release` and `auto-update` are commands: the entries of `COMMANDS` in
-  `src/cli.rs`, which also holds `help`. A command is
-  recognised only as the first word, so `nxf test status` is an unknown
-  task. A command refuses a word it does not take: `nxf version update`
+  `release` and `auto-update` are commands: the variants of `Cmd` in
+  `src/cli.rs`, which clap lists with `help`. A new command is a variant, an
+  arm of `run_command` and an arm of `Cmd::on_checkout`; nothing else names
+  it. A command is recognised only as the first word, so `nxf test status`
+  is an unknown task. A command refuses a word it does not take: `nxf version update`
   fails instead of ignoring `update`. `status` and `rollout --upgrade` take
   the names of inputs, so `nxf status update` fails as
   `Unknown input: update`.
 - Everything else is a list of tasks. Unknown words are an error and nothing
   runs.
 - Tasks are the entries of `TASKS` in `src/tasks.rs` and run in that order,
-  each at most once. Place a new task where it belongs in the order.
+  each at most once. Place a new task where it belongs in the order. An entry
+  holds what the task is, does and says, so a new task is one entry. No code
+  matches on the name of a task, except `auto-update`, which decides which
+  comes next, and the readers of results, which use `tasks::UPDATE` and
+  `tasks::SWITCH`.
 - A set of tasks given one name is an entry of `SHORTCUTS`, not a task calling
   other tasks: that keeps each task in its own place of the order.
-- Scripts get results from `--json`, never from terminal output. Every task
-  reports through it without code of its own; keep it that way.
-- `auto-update` only decides which task comes next from the task results. Put
-  logic into the tasks.
+- Scripts get results from `--json`, never from terminal output, and so do
+  the programs of nxf that run each other: `rollout` reads `install --json`,
+  and the commands with `--config` read `--json` of the machines. A word of a
+  result is a value of an enum. The shapes that `src/results.rs` owns, which
+  are the outcomes of tasks, a refusal, the machines of a rollout and an
+  installation, have one writer there, and one reader there where a program
+  of nxf reads them. The document of `status --json` is written by `src/status.rs`, and `fleet.rs` and
+  `rollout.rs` read the fields they need from it. Every task reports through
+  `--json` without code of its own; keep it that way.
+- `auto-update` decides which task comes next from the task results, and
+  verifies the switch it made: the health checks, the mark of a bad
+  revision and the return to the previous system. Everything else is a task.
 
 ## Output
 
@@ -174,7 +188,12 @@ change them here first.
 - Errors of the command line have the shape of every failure: the cause as
   the outcome, then facts that help to resolve it. What clap refuses is
   printed in that shape too and exits with status 2. Help that is asked for
-  is printed as clap prints it.
+  is printed as clap prints it. With `--json` the same cause and facts are
+  also the one object `{"error", "details"}` on standard output.
+- A command with `--json` that shows progress keeps standard output for its
+  one JSON document (`output::data`) and sends the rest, as it comes, to
+  standard error (`output::divert`). A test holds a tool back and asserts its
+  line before releasing it.
 
 ## Tests
 
@@ -191,11 +210,11 @@ change them here first.
   `install.rs` or `rollout.rs`, run `nxf rollout` against a virtual
   machine that starts as another system, and run it a second time.
 - `tests/rollout.rs` plays an installation without a machine. Its mock ssh
-  keeps the files it is sent, reports a host key for `nxf install` and
-  answers as a managed machine from then on. A mock `nix` names the source
-  of the template and does nothing on `nix copy`; a test that looks at what
-  `nix copy` is given puts a `nix` of its own in its place that records it.
-  This does not replace the run against a virtual machine.
+  keeps the files it is sent, reports a host key as the JSON of `nxf install
+  --json` and answers as a managed machine from then on. A mock `nix` names
+  the source of the template and does nothing on `nix copy`; a test that looks
+  at what `nix copy` is given puts a `nix` of its own in its place that
+  records it. This does not replace the run against a virtual machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh, and variables of the environment stand in for what belongs to
   the machine. The shipped program reads them too.

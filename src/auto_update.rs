@@ -4,49 +4,50 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
-
 use crate::health::{self, Health};
-use crate::tasks::{self, Outcome};
+use crate::results::{Kind, Outcome, Saved};
+use crate::state::Tree;
+use crate::tasks::{self, SWITCH, UPDATE};
 use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
     words.iter().map(|word| word.to_string()).collect()
 }
 
-fn outcome(task: &str, outcome: &str, detail: String) -> Outcome {
-    Outcome {
-        task: task.to_string(),
-        inputs: Vec::new(),
-        outcome: outcome.to_string(),
-        detail,
-    }
+fn outcome(task: &str, kind: Kind, details: Vec<String>) -> Outcome {
+    Outcome::new(task, Vec::new(), kind, details)
 }
 
 /// Checks the health of the system just switched to. An unhealthy system is
 /// replaced by the previous one, and its source is not tried again.
-fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
-    let mut failed = match health::check() {
+fn verify(tree: Option<&Tree>, previous: &Path) -> Option<Outcome> {
+    let failed = match health::check() {
         Health::Unchecked => return None,
-        Health::Healthy => return Some(outcome("health", "done", String::new())),
+        Health::Healthy => return Some(outcome("health", Kind::Done, Vec::new())),
         Health::Unhealthy(failed) => failed,
     };
+    let mut said = vec![failed.clone()];
     // A mark that cannot be written is said, and never keeps the unhealthy system.
     if let Some(Err(err)) = tree.map(|tree| state::mark_bad(tree, &failed)) {
-        failed.push_str(&format!(" | {err}"));
+        said.push(err);
     }
     output::capture();
-    let returned = nixos::activate("switch", previous);
+    let returned = nixos::activate(SWITCH, previous);
     output::release();
-    let effect = match returned {
-        Ok(_) => format!("Returned to {}.", previous.display()),
-        Err(err) => format!(
-            "Could not return to {}: {}",
-            previous.display(),
-            process::cause_first(&err).replace('\n', " | ")
-        ),
-    };
-    Some(outcome("health", "failed", format!("{failed} | {effect}")))
+    match returned {
+        Ok(_) => said.push(format!("Returned to {}.", previous.display())),
+        Err(err) => {
+            let cause = process::cause_first(&err);
+            let mut lines = cause.lines();
+            said.push(format!(
+                "Could not return to {}: {}",
+                previous.display(),
+                lines.next().unwrap_or_default()
+            ));
+            said.extend(lines.map(str::to_string));
+        }
+    }
+    Some(outcome("health", Kind::Failed, said))
 }
 
 /// Runs what comes next and adds its results as they come, so that a run
@@ -55,9 +56,9 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     hold::forget_ended();
     if let Some(hold) = hold::active() {
         results.push(outcome(
-            "update",
-            "skipped",
-            format!("held: {}", hold.describe()),
+            UPDATE,
+            Kind::Skipped,
+            vec![format!("held: {}", hold.describe())],
         ));
         return Ok(());
     }
@@ -68,21 +69,22 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         .any(|file| file != "flake.lock");
     if foreign {
         results.push(outcome(
-            "update",
-            "skipped",
-            "the checkout has uncommitted changes".to_string(),
+            UPDATE,
+            Kind::Skipped,
+            vec!["the checkout has uncommitted changes".to_string()],
         ));
         return Ok(());
     }
     if let Some(refused) = hooks::refused() {
-        results.push(outcome("update", "skipped", refused));
+        results.push(outcome(UPDATE, Kind::Skipped, vec![refused]));
         return Ok(());
     }
     // What is committed says how each input is treated.
     let dir = flake::checkout()?;
     let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
-    results.extend(tasks::run_unattended(&words(&["update"]), &strategies)?);
+    // Only tasks are given, so no word is unknown and no command is named.
+    results.extend(tasks::run_unattended(&words(&[UPDATE]), &strategies, &[])?);
     if results.iter().any(Outcome::failed) {
         return Ok(());
     }
@@ -91,28 +93,32 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     if checkout.matches {
         return Ok(());
     }
-    if let Some(reason) = checkout.tree.as_deref().and_then(state::bad) {
+    if let Some(reason) = checkout.tree.as_ref().and_then(state::bad) {
         results.push(outcome(
-            "switch",
-            "skipped",
-            format!("this revision failed its health check ({reason}); waiting for a newer one"),
+            SWITCH,
+            Kind::Skipped,
+            vec![format!(
+                "this revision failed its health check ({reason}); waiting for a newer one"
+            )],
         ));
         return Ok(());
     }
-    let switched = tasks::run(&words(&["switch"]), true)?;
+    let switched = tasks::run(&words(&[SWITCH]), true, &[])?;
     let activated = !switched.iter().any(Outcome::failed);
     results.extend(switched);
     if activated {
-        results.extend(verify(checkout.tree.as_deref(), &checkout.running));
+        results.extend(verify(checkout.tree.as_ref(), &checkout.running));
     }
     Ok(())
 }
 
 fn save(dir: &Path, results: &[Outcome]) -> Result<PathBuf, String> {
-    let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
-    let report = json!({"time": time::now(), "results": list});
+    let report = Saved {
+        time: time::now(),
+        results: results.to_vec(),
+    };
     let file = state::update_file(dir);
-    process::write_atomic(&file, &format!("{report:#}\n"))
+    process::write_atomic(&file, &format!("{:#}\n", report.to_json()))
         .map_err(|err| format!("cannot save {}: {err}", file.display()))?;
     Ok(file)
 }
@@ -132,10 +138,11 @@ pub fn run(state: &Path) -> Result<bool, String> {
     let mut results = Vec::new();
     let mut error = decide(&mut results).err();
     if let Some(error) = &error {
+        let cause = process::cause_first(error);
         results.push(outcome(
-            "update",
-            "failed",
-            process::cause_first(error).replace('\n', " | "),
+            UPDATE,
+            Kind::Failed,
+            cause.lines().map(str::to_string).collect(),
         ));
     }
     let saved = save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
@@ -148,15 +155,14 @@ pub fn run(state: &Path) -> Result<bool, String> {
             if let Some(error) = &mut error {
                 error.push_str(&format!("\nThe failure hook failed too: {failed}"));
             }
-            results.push(outcome("hook", "failed", failed));
+            results.push(outcome("hook", Kind::Failed, vec![failed]));
             save(state, &results).map_err(|unsaved| beneath(error.as_deref(), unsaved))?;
         }
     }
     if let Some(error) = error {
         return Err(error);
     }
-    let list: Vec<Value> = results.iter().map(Outcome::to_json).collect();
-    let rows = status::result_rows(&list);
+    let rows = status::result_rows(&results);
     if rows.is_empty() {
         output::note("Nothing changed.");
     }

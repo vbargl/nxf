@@ -7,6 +7,7 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::flake;
+use crate::results::Kind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Strategy {
@@ -19,6 +20,16 @@ pub enum Strategy {
 }
 
 impl Strategy {
+    /// The outcome of an input whose update failed. None for `off`, which keeps
+    /// no record: such a failure is the failure of the run.
+    pub fn outcome(self) -> Option<Kind> {
+        match self {
+            Strategy::Off => None,
+            Strategy::Flag => Some(Kind::Flagged),
+            Strategy::Report => Some(Kind::Reported),
+        }
+    }
+
     fn parse(word: &str) -> Result<Strategy, String> {
         match word {
             "off" => Ok(Strategy::Off),

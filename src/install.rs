@@ -8,6 +8,7 @@ use std::process::Command;
 use serde_json::json;
 
 use crate::output::{self, Mark};
+use crate::results::Installation;
 use crate::{env, flake, git, nixos, process, state, time};
 
 pub struct Options {
@@ -15,6 +16,8 @@ pub struct Options {
     /// Skip partitioning: the target is already mounted.
     pub mounted: bool,
     pub reboot: bool,
+    /// Print the result as JSON on standard output and the text on standard error.
+    pub json: bool,
 }
 
 /// Where the new system is mounted. NXF_INSTALL_ROOT stands in for it in tests.
@@ -139,6 +142,28 @@ fn installed_system(root: &Path) -> Option<PathBuf> {
 }
 
 pub fn run(options: &Options) -> Result<(), String> {
+    if options.json {
+        output::divert();
+    }
+    let installed = install(options)?;
+    output::success("NixOS installed");
+    output::fact("Host key", &installed.host_key);
+    if options.json {
+        output::data(&installed.to_json());
+    }
+    if options.reboot {
+        output::effect("Restarting into the new system.");
+        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
+            output::attention("The machine was not restarted; restart it by hand.");
+            err.lines().for_each(output::detail);
+        }
+    } else {
+        output::effect("Restart the machine to start it.");
+    }
+    Ok(())
+}
+
+fn install(options: &Options) -> Result<Installation, String> {
     let dir = std::path::absolute(&options.dir)
         .map_err(|err| format!("{}: {err}", options.dir.display()))?;
     let root = target();
@@ -215,7 +240,7 @@ pub fn run(options: &Options) -> Result<(), String> {
         output::sub("System", &inside.to_string_lossy());
         let records = updater.join(state::SYSTEMS);
         std::fs::create_dir_all(&records).map_err(|err| err.to_string())?;
-        let record = records.join(&tree);
+        let record = records.join(tree.as_str());
         let _ = std::fs::remove_file(&record);
         std::os::unix::fs::symlink(inside, &record).map_err(|err| err.to_string())?;
     }
@@ -228,22 +253,15 @@ pub fn run(options: &Options) -> Result<(), String> {
         &marker,
         format!(
             "{:#}\n",
-            json!({"time": time::now(), "tree": tree, "configuration": configuration})
+            json!({"time": time::now(), "tree": tree.as_str(), "configuration": configuration})
         ),
     )
     .map_err(|err| format!("cannot write {}: {err}", marker.display()))?;
     output::row(Mark::Done, "Host key made, installation recorded");
 
-    output::success("NixOS installed");
-    output::fact("Host key", &key);
-    if options.reboot {
-        output::effect("Restarting into the new system.");
-        if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
-            output::attention("The machine was not restarted; restart it by hand.");
-            err.lines().for_each(output::detail);
-        }
-    } else {
-        output::effect("Restart the machine to start it.");
-    }
-    Ok(())
+    Ok(Installation {
+        host_key: key,
+        system: system.map(|inside| inside.to_string_lossy().into_owned()),
+        revision: git::commit_of(&dir, &[tree]),
+    })
 }

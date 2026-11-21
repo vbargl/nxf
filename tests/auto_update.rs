@@ -3,8 +3,8 @@
 mod common;
 
 use common::{
-    append, assert_contains, fake_systems, fixture, git, lose, outcomes, pair, saved, strategies,
-    Fixture,
+    append, assert_contains, assert_detail, details, fake_systems, fixture, git, lose, outcomes,
+    pair, saved, strategies, Fixture,
 };
 use serde_json::{json, Value};
 
@@ -103,10 +103,7 @@ fn failed_build_is_restored() {
         [pair("update", "unchanged"), pair("update", "reported")]
     );
     assert_eq!(report["results"][1]["inputs"], json!(["a"]));
-    assert_contains(
-        report["results"][1]["detail"].as_str().unwrap(),
-        "nh exited with status 3.",
-    );
+    assert_detail(&report["results"][1], "nh exited with status 3.");
     assert_contains(
         &fx.run(&["status"]).stdout,
         "\n  · update a  reported, nh exited with status 3.",
@@ -124,7 +121,7 @@ fn uncommitted_changes() {
     assert!(fx.nh_calls().is_empty());
     assert_eq!(
         saved(&fx)["results"],
-        json!([{"task": "update", "inputs": [], "outcome": "skipped", "detail": "the checkout has uncommitted changes"}])
+        json!([{"task": "update", "inputs": [], "outcome": "skipped", "details": ["the checkout has uncommitted changes"]}])
     );
     common::git(&fx.checkout, &["checkout", "--quiet", "flake.nix"]);
     append(&fx.checkout.join("flake.lock"), "\n");
@@ -237,10 +234,7 @@ fn flagged_failure_goes_on() {
         ]
     );
     assert_eq!(report["results"][1]["inputs"], json!(["a"]));
-    assert_contains(
-        report["results"][1]["detail"].as_str().unwrap(),
-        "does not exist",
-    );
+    assert_detail(&report["results"][1], "does not exist");
     assert_contains(&result.stdout, "\n  · update a  flagged, ");
     assert_contains(&fx.run(&["status"]).stdout, "\n  · update a  flagged, ");
 }
@@ -331,10 +325,7 @@ fn undecided_run_is_saved() {
     assert_contains(&result.stderr, "✗ unknown update strategy 'sometimes'");
     let report = saved(&fx);
     assert_eq!(outcomes(&report), [pair("update", "failed")]);
-    assert_contains(
-        report["results"][0]["detail"].as_str().unwrap(),
-        "unknown update strategy 'sometimes'",
-    );
+    assert_detail(&report["results"][0], "unknown update strategy 'sometimes'");
     let seen: Value = serde_json::from_str(&std::fs::read_to_string(&seen).unwrap()).unwrap();
     assert_eq!(seen["results"], report["results"]);
     assert_contains(&fx.run(&["status"]).stdout, "  ✗ update    unknown update");
@@ -359,7 +350,7 @@ fn failing_hook_is_said() {
         outcomes(&report),
         [pair("update", "failed"), pair("hook", "failed")]
     );
-    assert_eq!(report["results"][1]["detail"], "the pager is down");
+    assert_eq!(details(&report["results"][1]), ["the pager is down"]);
 }
 
 /// A run that cannot go on after tasks ran keeps what ran: the results of
@@ -394,10 +385,7 @@ fn undecided_run_keeps_what_ran() {
         ]
     );
     assert_eq!(report["results"][1]["inputs"], json!(["a"]));
-    assert_contains(
-        report["results"][2]["detail"].as_str().unwrap(),
-        "has no flake.nix",
-    );
+    assert_detail(&report["results"][2], "has no flake.nix");
 }
 
 /// A failed run that cannot be saved either still fails with its cause, and

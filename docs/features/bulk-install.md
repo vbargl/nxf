@@ -45,6 +45,20 @@ or the old key cannot be removed, the machine stays installed, its line is
 still printed, the other machines are still installed, and the command
 fails.
 
+`nxf install` on a machine is run with `--json`, and rollout reads the host
+key of the machine from the last line it printed on standard output. A failed
+installation is the refusal object that it prints there, and its cause and
+lines are the row of the machine. The standard error of the remote
+installation is shown as it comes, also with `--json`.
+
+With `--json` rollout prints its text on standard error, asks nothing, and
+prints on standard output only one JSON object, at the end. The object has
+`ok`, `counts` of the machines in each state, and one entry for each machine,
+in the order of the hosts file. A machine is `managed`, `installed`, `failed`
+or `not started`, with its `error` and `details` when something went wrong,
+and with its `revision` and `hostKey` when it was installed. The README
+section [Scripts](../../README.md#scripts) has the shape.
+
 Boundaries:
 
 - The flake never exists on the computer that runs rollout; each machine
@@ -119,6 +133,11 @@ Boundaries:
 | I23: Known hosts cannot be read | `~/.ssh/known_hosts` is there and cannot be read, and a machine to install | `rollout --yes` runs | No machine is asked; the outcome is `cannot read <file>: <cause>`, with `rollout checks the host key of a machine against the keys in this file before it installs it. Make it a file that can be read, or move it away.` beneath it; the exit status is 1 |
 | I24: Every name of the directory is taken | A machine to install, and the directories `<temporary directory>/nxf-rollout.<pid>.0` to `<temporary directory>/nxf-rollout.<pid>.99` exist, made by a `sh` that then starts rollout with `exec`, so that `<pid>` is the process id of rollout | `rollout --yes` runs | No machine is asked; none of the directories is removed; the outcome is `<temporary directory>/nxf-rollout.<pid>.0 to <temporary directory>/nxf-rollout.<pid>.99 are all there already`, with `rollout keeps the keys of a run in a directory it makes itself. Remove them, or set TMPDIR to another directory.` beneath it; the exit status is 1 |
 | I25: The temporary directory is not there | A machine to install, and `TMPDIR` names a directory that does not exist | `rollout --yes` runs | No machine is asked; the outcome is `cannot create <TMPDIR>/nxf-rollout.<pid>.0: No such file or directory (os error 2)`, with `rollout keeps the keys of a run there. TMPDIR names the directory it is made in.` beneath it; the exit status is 1 |
+| I26: JSON | Two machines, a NixOS installer and a managed one | `rollout --yes --json` runs | Standard output is one JSON object: `ok` is true; `counts` has 1 `installed` and 1 `managed`; the installed machine has its `revision` and its `hostKey`, which is the key that `nxf install --json` printed on the machine; the managed machine has only its name and state; the text of the run, with `1 machine installed`, is on standard error, and the line a machine printed on its standard error while it installed is there before the machine ends; the exit status is 0; the remote command is `nxf install /tmp/nxf-machine --json` |
+| I27: JSON never asks | A managed machine, an Ubuntu machine, a NixOS installer and an unreachable machine, and no `--yes` | `rollout --json` runs | No machine is changed and nothing is asked; `ok` is false; the Ubuntu machine and the installer are `not started`, each with its row text as `error`; the unreachable machine is `failed` with `unreachable:` and the last line ssh printed as `error`; the text of the outcome is on standard error; the exit status is 1 |
+| I28: JSON refusal | `--json` and a `--files` that is not a directory | `rollout --json` runs | No machine is asked; standard output is the object `{"error", "details"}` with `<dir> is not a directory`; the exit status is 1 |
+| I29: The installation is refused on the machine | A machine to install whose `nxf install --json` prints a refusal object on standard output, exits with status 1, and prints other text on standard error | `rollout --yes` runs | The `✗` row of the machine is `The installation failed`, with the `error` of the object and its `details` beneath it, and not the text on standard error; it is named under `Not installed`; the exit status is 1 |
+| I30: Text before the document | A machine to install that prints a line on its standard output before the object of `nxf install --json` | `rollout --yes` runs | The machine is installed as in I4; its host key is the one in the object, which is the last line the machine printed |
 
 ## Existing verification
 
@@ -216,6 +235,20 @@ not run.
   in two parts, `cannot create <TMPDIR>/nxf-rollout.` and
   `: No such file or directory (os error 2)` with the line beneath it, not the
   `<pid>.0` between them. No run by hand covers it.
+- I26: `tests/rollout.rs::json`, with a played installation. It asserts the
+  whole object and the outcome on standard error.
+  `tests/rollout.rs::json_is_live` holds the remote back and asserts its line
+  on standard error before it is released.
+  `tests/rollout.rs::reads_the_installation` covers the remote
+  command and that the key written to `--known-hosts` is the one the object
+  holds.
+- I27: `tests/rollout.rs::json_does_not_ask`. It asserts the states, the
+  errors, the outcome on standard error and that only the probe ran.
+- I28: `tests/rollout.rs::json_refusal`. It asserts the exit status, `error`
+  and that no machine was asked. It does not assert `details`.
+- I29: `tests/rollout.rs::refused_installation`.
+- I30: `tests/rollout.rs::text_before_the_installation`. It asserts the outcome
+  and the exit status.
 - `tests/rollout.rs::probe` covers how the probe's answer is read, and
   `tests/rollout.rs::copy_trusts_as_the_link` that `nix copy` gets one file
   with the keys of the link and the mode 600, in options that hold no quote.
@@ -328,6 +361,34 @@ template with a disko layout and the nxf module, pinned to that commit:
 - `status`, `version`, `version --system`, `doctor`, `hold --for 1h` and
   `release` with `--config` each gave one row for the machine and an outcome
   that named the one machine.
+
+The run is not repeatable in CI.
+
+I1, I4 to I7 and I26 were run by hand with nxf 0.15.0, built with
+`nix build github:vbargl/nxf/1ea2dfffc8631e8796fff2130fae5567f1566fb6`,
+against one Incus Ubuntu 24.04 VM with SSH as root. The template had a disko
+layout, the nxf module pinned to that commit and an `identity.nix` that
+`--files` replaced. The key pair was a throwaway one behind an `ssh` wrapper on
+`PATH`, and `HOME` and `TMPDIR` were scratch directories. Both runs were
+`nxf rollout --config hosts.toml --template path:<template> --files <dir>
+--known-hosts <file> --yes --json`:
+
+- Run 1 installed the machine in 2 minutes and 36 seconds. Standard output
+  held only the JSON object, with `ok` true and the machine `installed`, with
+  its `revision` and its `hostKey`. Standard error held the plan, the phases
+  and the lines of the remote installation, written while it ran (I26, I5).
+  The machine had the `identity.nix` and the `MARKER` file of its own in
+  `/etc/nixos`, nxf 0.15.0, and a `status --json` that named the revision of
+  the run (I4, I6). The Ubuntu key in the `--known-hosts` file was replaced by
+  the key the machine answers with, and the line of another machine was kept.
+  The `known_hosts` file of the scratch `HOME` was not changed, and `TMPDIR`
+  was empty afterwards (I7).
+- Run 2 only probed the machine. Standard output was the object with `ok` true
+  and the machine `managed`. Standard error was the row `installed by nxf` and
+  the outcome `1 machine installed by nxf`. The `--known-hosts` file was not
+  changed (I1).
+- `status --json --config` printed the `status --json` of the machine under
+  its name, with the revision of the run.
 
 The run is not repeatable in CI.
 

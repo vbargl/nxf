@@ -5,8 +5,9 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
+use crate::results::{Outcome, Refusal};
 use crate::{
-    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, rollout,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, results, rollout,
     state, status, tasks,
 };
 
@@ -114,6 +115,9 @@ enum Cmd {
         /// Restart into the new system when it is installed.
         #[arg(long)]
         reboot: bool,
+        /// Print the host key, the system and the revision as JSON, for scripts; the text goes to standard error.
+        #[arg(long)]
+        json: bool,
     },
     /// Install every machine of a hosts file that nxf has not installed, or with --upgrade upgrade them in waves.
     Rollout {
@@ -145,6 +149,9 @@ enum Cmd {
         /// A known_hosts file that gets the host keys of the installed machines.
         #[arg(long, value_name = "FILE")]
         known_hosts: Option<PathBuf>,
+        /// Print the machines and the outcome as JSON, for scripts, and the text to standard error; never asks, so erasing needs --yes.
+        #[arg(long)]
+        json: bool,
     },
     /// Hold automatic updates back, with a reason, until released or until a time.
     Hold {
@@ -173,18 +180,13 @@ enum Cmd {
     },
 }
 
-const COMMANDS: &[&str] = &[
-    "status",
-    "doctor",
-    "version",
-    "init",
-    "install",
-    "rollout",
-    "hold",
-    "release",
-    "auto-update",
-    "help",
-];
+/// The names of the commands in the order they are declared, without `help`.
+pub fn commands() -> Vec<String> {
+    Cli::command()
+        .get_subcommands()
+        .map(|command| command.get_name().to_string())
+        .collect()
+}
 
 fn task_list() -> String {
     let mut list = String::from("Tasks:\n");
@@ -200,29 +202,36 @@ fn task_list() -> String {
 }
 
 /// An error in the shape of every failure: the cause as the one outcome,
-/// with what helps to resolve it beneath.
-fn fail(error: &str) -> ExitCode {
-    let error = process::cause_first(error);
-    let mut lines = error.lines();
-    output::failure(lines.next().unwrap_or("Failed"));
-    for line in lines {
-        output::effect_err(line);
-    }
+/// with what helps to resolve it beneath. With `json` they are also the one
+/// JSON object on standard output.
+fn fail(error: &str, json: bool) -> ExitCode {
+    say(&Refusal::from_text(error), json);
     ExitCode::FAILURE
+}
+
+/// Prints a refusal as the one outcome with its lines beneath, and as the one
+/// JSON object under `json`.
+fn say(refusal: &Refusal, json: bool) {
+    output::failure(&refusal.error);
+    refusal
+        .details
+        .iter()
+        .for_each(|line| output::effect_err(line));
+    if json {
+        output::data(&refusal.to_json());
+    }
 }
 
 /// What clap refused, in the same shape and with clap's exit status of a
 /// wrong call. Help that was asked for is printed as it is.
-fn refuse(error: clap::Error) -> ExitCode {
+fn refuse(error: clap::Error, json: bool) -> ExitCode {
     if !error.use_stderr() {
         let _ = error.print();
         return ExitCode::SUCCESS;
     }
     let text = error.render().to_string();
-    let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-    let cause = lines.next().unwrap_or("Failed");
-    output::failure(cause.strip_prefix("error: ").unwrap_or(cause));
-    lines.for_each(output::effect_err);
+    let text = text.trim_start().strip_prefix("error: ").unwrap_or(&text);
+    say(&Refusal::from_text(text), json);
     ExitCode::from(2)
 }
 
@@ -233,26 +242,26 @@ fn run_tasks(args: RunArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.dry_run {
-        return match tasks::dry_run(&args.words) {
+        return match tasks::dry_run(&args.words, &commands()) {
             Ok(lines) => {
                 lines.iter().for_each(|line| output::line(line));
                 ExitCode::SUCCESS
             }
-            Err(error) => fail(&error),
+            Err(error) => fail(&error, args.json),
         };
     }
-    match tasks::run(&args.words, args.json) {
+    match tasks::run(&args.words, args.json, &commands()) {
         Ok(outcomes) => {
             if args.json {
-                output::line(&tasks::to_json(&outcomes));
+                output::data(&results::outcomes_json(&outcomes));
             }
-            if outcomes.iter().any(tasks::Outcome::failed) {
+            if outcomes.iter().any(Outcome::failed) {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
             }
         }
-        Err(error) => fail(&error),
+        Err(error) => fail(&error, args.json),
     }
 }
 
@@ -316,10 +325,12 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             dir,
             mounted,
             reboot,
+            json,
         } => install::run(&install::Options {
             dir,
             mounted,
             reboot,
+            json,
         })
         .map(|()| true),
         Cmd::Rollout {
@@ -332,6 +343,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             yes,
             kexec_url,
             known_hosts,
+            json,
         } => {
             if !upgrade && (batch.is_some() || !inputs.is_empty()) {
                 return Err(
@@ -346,6 +358,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
                     &machines,
                     &inputs,
                     batch.unwrap_or(1) as usize,
+                    json,
                 ));
             }
             rollout::run(
@@ -356,6 +369,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
                     yes,
                     kexec_url,
                     known_hosts,
+                    json,
                 },
                 &machines,
             )
@@ -395,6 +409,16 @@ fn run_command(command: Cmd) -> Result<bool, String> {
 }
 
 impl Cmd {
+    /// Whether the command was given `--json`.
+    fn json(&self) -> bool {
+        match self {
+            Cmd::Status { json, .. } | Cmd::Install { json, .. } | Cmd::Rollout { json, .. } => {
+                *json
+            }
+            _ => false,
+        }
+    }
+
     /// Whether the command works on the checkout of this machine's flake,
     /// which the group of the machine may share.
     fn on_checkout(&self) -> bool {
@@ -422,20 +446,23 @@ pub fn main() -> ExitCode {
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.
     let first = std::env::args().nth(1).unwrap_or_default();
-    let wants_command = COMMANDS.contains(&first.as_str()) || first == "-h" || first == "--help";
+    // A command line that clap refuses has no parsed flag: look for the word.
+    let refused_json = std::env::args().any(|arg| arg == "--json");
+    let wants_command =
+        commands().contains(&first) || ["help", "-h", "--help"].contains(&first.as_str());
     if !wants_command {
         return match TaskCli::try_parse() {
             Ok(cli) => {
                 share_checkout();
                 run_tasks(cli.run)
             }
-            Err(error) => refuse(error),
+            Err(error) => refuse(error, refused_json),
         };
     }
     let cli = Cli::command().after_help(task_list());
     let matches = match cli.try_get_matches() {
         Ok(matches) => matches,
-        Err(error) => return refuse(error),
+        Err(error) => return refuse(error, refused_json),
     };
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
@@ -446,10 +473,11 @@ pub fn main() -> ExitCode {
             if command.on_checkout() {
                 share_checkout();
             }
+            let json = command.json();
             match run_command(command) {
                 Ok(true) => ExitCode::SUCCESS,
                 Ok(false) => ExitCode::FAILURE,
-                Err(error) => fail(&error),
+                Err(error) => fail(&error, json),
             }
         }
         None => {

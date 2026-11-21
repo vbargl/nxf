@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
+use crate::results::{self, Kind, Machine, Outcome, Refusal, Saved, State};
 use crate::ssh::{self, Link, Trust};
+use crate::tasks::UPDATE;
 use crate::text::{last_line, plain};
 use crate::{process, time};
 
@@ -25,7 +27,8 @@ struct Reply {
 }
 
 impl Reply {
-    /// Why the machine gave no usable answer, if it did not.
+    /// Why the machine gave no usable answer, if it did not. A refusal that
+    /// nxf printed as JSON is the cause, before the last line of text.
     fn error(&self) -> Option<String> {
         let said = || last_line(&plain(&self.stderr)).or_else(|| last_line(&plain(&self.stdout)));
         match self.code {
@@ -35,7 +38,12 @@ impl Reply {
                 "unreachable: {}",
                 said().unwrap_or_else(|| "ssh failed".to_string())
             )),
-            Some(code) => Some(said().unwrap_or_else(|| format!("nxf exited with status {code}"))),
+            Some(code) => Some(
+                Refusal::from_json(&self.stdout)
+                    .map(|refusal| refusal.error)
+                    .or_else(said)
+                    .unwrap_or_else(|| format!("nxf exited with status {code}")),
+            ),
             // The machine may have been reached: it did not finish, which is not unreachable.
             None => Some(match self.limit.as_secs() {
                 1 => "timed out after 1 second".to_string(),
@@ -127,9 +135,8 @@ fn attention(status: &Value) -> Vec<String> {
     if !status["bad"].is_null() {
         notes.push("failed its health check".to_string());
     }
-    let failed = status["lastUpdate"]["results"]
-        .as_array()
-        .is_some_and(|results| results.iter().any(|result| result["outcome"] == "failed"));
+    let failed = Saved::from_json(&status["lastUpdate"])
+        .is_some_and(|saved| saved.results.iter().any(Outcome::failed));
     if failed {
         notes.push("last update failed".to_string());
     }
@@ -171,7 +178,7 @@ pub fn status(file: &Path, as_json: bool) -> Result<bool, String> {
                 (reply.host.name.clone(), value)
             })
             .collect();
-        output::line(&serde_json::to_string_pretty(&all).unwrap_or_default());
+        output::data(&serde_json::to_string_pretty(&all).unwrap_or_default());
         return Ok(silent == 0);
     }
 
@@ -293,46 +300,46 @@ pub fn waves(count: usize, batch: usize) -> Vec<std::ops::Range<usize>> {
     waves
 }
 
+/// The release that writes the outcomes as nxf reads them.
+const RELEASE: &str = concat!(
+    env!("CARGO_PKG_VERSION_MAJOR"),
+    ".",
+    env!("CARGO_PKG_VERSION_MINOR")
+);
+
 /// What the upgrade did on one machine, from the outcomes its `--json` printed.
 fn upgraded(reply: &Reply) -> Result<String, String> {
     if let (None, Some(error)) = (reply.code, reply.error()) {
         // Ending ssh here does not end the task there.
         return Err(format!("{error}; the upgrade may still run on the machine"));
     }
-    let outcomes = match reply.code {
+    let list = match reply.code {
         Some(255) | None => None,
-        Some(_) => match serde_json::from_str::<Value>(&reply.stdout) {
-            Ok(Value::Array(outcomes)) => Some(outcomes),
-            _ => None,
-        },
+        Some(_) => serde_json::from_str::<Value>(&reply.stdout).ok(),
     };
+    let outcomes: Option<Vec<Outcome>> = list
+        .as_ref()
+        .and_then(|list| list.as_array()?.iter().map(Outcome::from_json).collect());
     let Some(outcomes) = outcomes else {
-        // nxf refused before any task ran: its outcome line is the cause,
-        // and the lines beneath only help to resolve it.
-        let refused = reply.code.filter(|code| *code != 255).and_then(|_| {
-            plain(&reply.stderr)
-                .lines()
-                .find_map(|line| line.trim().strip_prefix('✗').map(str::trim))
-                .filter(|cause| !cause.is_empty())
-                .map(str::to_string)
-        });
-        return Err(refused
-            .or_else(|| reply.error())
+        // A list of another shape is what an older nxf prints; its state is unknown.
+        if list.is_some_and(|list| list.is_array()) {
+            return Err(format!(
+                "unreadable answer: nxf on the machine is older than {RELEASE}; the upgrade may have run"
+            ));
+        }
+        // Otherwise nxf refused before any task ran, and its refusal is the cause.
+        return Err(reply
+            .error()
             .unwrap_or_else(|| "unreadable answer".to_string()));
     };
-    if let Some(failed) = outcomes
-        .iter()
-        .find(|outcome| outcome["outcome"] == "failed")
-    {
-        let task = failed["task"].as_str().unwrap_or("upgrade");
-        // The detail is the task's own failure, whose mark the row repeats.
-        let detail = failed["detail"]
-            .as_str()
-            .map(|detail| detail.trim_start_matches(['✗', ' ']))
-            .filter(|detail| !detail.is_empty());
-        return Err(match detail {
-            Some(detail) => format!("{task} failed: {detail}"),
-            None => format!("{task} failed"),
+    if let Some(failed) = outcomes.iter().find(|outcome| outcome.failed()) {
+        // The details are the task's own failure, whose mark the row repeats.
+        let details = failed.details.join(" | ");
+        let detail = details.trim_start_matches(['✗', ' ']);
+        return Err(if detail.is_empty() {
+            format!("{} failed", failed.task)
+        } else {
+            format!("{} failed: {detail}", failed.task)
         });
     }
     if reply.code != Some(0) {
@@ -342,7 +349,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
     }
     let updated = outcomes
         .iter()
-        .any(|outcome| outcome["task"] == "update" && outcome["outcome"] == "done");
+        .any(|outcome| outcome.task == UPDATE && outcome.kind == Kind::Done);
     Ok(if updated {
         "inputs updated, switched".to_string()
     } else {
@@ -351,13 +358,18 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
 }
 
 /// Runs `nxf upgrade` on the machines in waves: the first machine alone, then
-/// `batch` at a time. A failure lets its wave end and starts no other.
-pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> bool {
+/// `batch` at a time. A failure lets its wave end and starts no other. With
+/// `json` the machines and the outcome are printed as JSON on standard output, and the text on standard error.
+pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize, json: bool) -> bool {
+    if json {
+        output::divert();
+    }
     let mut args = vec!["--json".to_string(), "upgrade".to_string()];
     args.extend(inputs.iter().cloned());
     let timeout = env::seconds(env::UPGRADE_TIMEOUT, 3 * 3600);
     let width = header(file, hosts);
     let mut failed = Vec::new();
+    let mut machines = Vec::new();
     let mut reached = hosts.len();
     for wave in waves(hosts.len(), batch) {
         if !failed.is_empty() {
@@ -374,10 +386,17 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
         for reply in &replies {
             let name = &reply.host.name;
             match upgraded(reply) {
-                Ok(said) => output::row(Mark::Done, &format!("{name:<width$}{said}")),
+                Ok(said) => {
+                    output::row(Mark::Done, &format!("{name:<width$}{said}"));
+                    machines.push(Machine::new(name, State::Upgraded));
+                }
                 Err(error) => {
                     failed.push(name.clone());
                     output::row(Mark::Failed, &format!("{name:<width$}{error}"));
+                    machines.push(Machine {
+                        error: Some(error),
+                        ..Machine::new(name, State::Failed)
+                    });
                 }
             }
         }
@@ -391,22 +410,26 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
             Mark::Quiet,
             &format!("{name:<width$}{}", output::dim("not started")),
         );
+        machines.push(Machine::new(name, State::NotStarted));
     }
     let total = hosts.len();
     if failed.is_empty() {
         output::success(&format!("{} upgraded", output::machines(total)));
-        return true;
-    }
-    output::failure(&format!(
-        "Upgrade failed on {} of {}",
-        failed.len(),
-        output::machines(total)
-    ));
-    if !untouched.is_empty() {
-        output::effect_err(&format!(
-            "Not started: {}. Run the rollout again once the failure is fixed.",
-            untouched.join(", ")
+    } else {
+        output::failure(&format!(
+            "Upgrade failed on {} of {}",
+            failed.len(),
+            output::machines(total)
         ));
+        if !untouched.is_empty() {
+            output::effect_err(&format!(
+                "Not started: {}. Run the rollout again once the failure is fixed.",
+                untouched.join(", ")
+            ));
+        }
     }
-    false
+    if json {
+        output::data(&results::machines_json(failed.is_empty(), &machines));
+    }
+    failed.is_empty()
 }

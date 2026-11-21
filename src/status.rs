@@ -6,7 +6,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::output::{self, Mark, Style};
-use crate::state::Remembered;
+use crate::results::{Kind, Outcome, Saved};
+use crate::state::{Remembered, Tree};
 use crate::text::plain;
 use crate::{flake, git, hold, nixos, process, state, time};
 
@@ -34,40 +35,31 @@ pub struct ResultRow {
     pub more: Vec<String>,
 }
 
-pub fn result_rows(results: &[Value]) -> Vec<ResultRow> {
-    let field = |result: &Value, name: &str| -> String {
-        result
-            .get(name)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
+pub fn result_rows(results: &[Outcome]) -> Vec<ResultRow> {
     results
         .iter()
-        .filter(|result| field(result, "outcome") != "unchanged")
+        .filter(|result| result.kind != Kind::Unchanged)
         .map(|result| {
-            let mut name = vec![field(result, "task")];
-            if let Some(inputs) = result.get("inputs").and_then(Value::as_array) {
-                name.extend(inputs.iter().filter_map(Value::as_str).map(str::to_string));
-            }
-            let name = name.join(" ");
-            let detail = plain(&field(result, "detail"));
+            let name = std::iter::once(result.task.as_str())
+                .chain(result.inputs.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
             // The title of a failure repeats what the mark already says.
-            let mut pieces = detail
-                .split(" | ")
-                .filter(|piece| !piece.is_empty() && !piece.starts_with('✗'))
-                .map(str::to_string);
-            let outcome = field(result, "outcome");
-            let (mark, said) = match outcome.as_str() {
-                "done" => (Mark::Done, pieces.next().unwrap_or_default()),
-                "failed" => (Mark::Failed, pieces.next().unwrap_or_default()),
+            let mut pieces = result
+                .details
+                .iter()
+                .map(|detail| plain(detail))
+                .filter(|piece| !piece.is_empty() && !piece.starts_with('✗'));
+            let (mark, said) = match result.kind {
+                Kind::Done => (Mark::Done, pieces.next().unwrap_or_default()),
+                Kind::Failed => (Mark::Failed, pieces.next().unwrap_or_default()),
                 other => {
-                    let first = pieces.next();
+                    let word = other.as_str();
                     (
                         Mark::Quiet,
-                        match first {
-                            Some(first) => format!("{other}, {first}"),
-                            None => other.to_string(),
+                        match pieces.next() {
+                            Some(first) => format!("{word}, {first}"),
+                            None => word.to_string(),
                         },
                     )
                 }
@@ -97,41 +89,48 @@ pub fn print_rows(rows: &[ResultRow]) {
     }
 }
 
-/// The task results the updater saved last, with their time.
-fn saved_update() -> Result<Option<Value>, String> {
+/// The task results the updater saved last, with their time. Results of
+/// another shape, such as those an older nxf saved, count as none.
+fn saved_update() -> Result<Option<Saved>, String> {
     let file = state::update_file(&state::updater_dir());
     if !file.exists() {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&file)
         .map_err(|err| format!("cannot read {}: {err}", file.display()))?;
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|err| format!("cannot parse {}: {err}", file.display()))
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|err| format!("cannot parse {}: {err}", file.display()))?;
+    Ok(Saved::from_json(&value))
 }
 
 /// The latest automatic update: the saved task results, and the service's
-/// failure if it ended after them, as when it was killed before saving. The id
-/// changes whenever either does. None when there is nothing to report.
-fn update_result() -> Result<Option<Value>, String> {
+/// failure if it ended after them, as when it was killed before saving.
+struct Latest {
+    update: Option<Saved>,
+    failure: Option<Value>,
+    /// Changes whenever either does.
+    id: String,
+}
+
+/// None when there is nothing to report.
+fn update_result() -> Result<Option<Latest>, String> {
     let update = saved_update()?;
-    let saved_at = update
-        .as_ref()
-        .and_then(|update| update.get("time"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let saved_at = update.as_ref().map_or(0, |update| update.time);
     let failure = nixos::service_failure()
         .filter(|failure| failure.get("time").and_then(Value::as_u64).unwrap_or(0) > saved_at);
     if update.is_none() && failure.is_none() {
         return Ok(None);
     }
-    let mut result = json!({"update": update, "failure": failure});
-    let id = Sha256::digest(result.to_string().as_bytes())
+    let seen = json!({"update": update.as_ref().map(Saved::to_json), "failure": failure});
+    let id = Sha256::digest(seen.to_string().as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    result["id"] = Value::String(id);
-    Ok(Some(result))
+    Ok(Some(Latest {
+        update,
+        failure,
+        id,
+    }))
 }
 
 /// Prints the latest unread summary, then acknowledges this exact snapshot for
@@ -148,25 +147,26 @@ fn update_summary() {
             return;
         }
     };
-    let id = snapshot["id"].as_str().unwrap_or_default();
+    let id = snapshot.id.as_str();
     let marker = state::read_marker();
     let seen = std::fs::read_to_string(&marker).unwrap_or_default();
     if seen.trim() == id {
         return;
     }
 
-    let update = &snapshot["update"];
-    let when = update.get("time").and_then(Value::as_u64).map(time::age);
+    let when = snapshot
+        .update
+        .as_ref()
+        .map(|update| time::age(update.time));
     output::section("Last automatic update", &when.unwrap_or_default());
-    if !update.is_null() {
-        let results = update.get("results").and_then(Value::as_array);
-        let rows = result_rows(results.map_or(&[][..], Vec::as_slice));
+    if let Some(update) = &snapshot.update {
+        let rows = result_rows(&update.results);
         if rows.is_empty() {
             output::note("Nothing changed.");
         }
         print_rows(&rows);
     }
-    if let Some(failure) = snapshot.get("failure").filter(|failure| !failure.is_null()) {
+    if let Some(failure) = &snapshot.failure {
         output::row(
             Mark::Failed,
             &format!(
@@ -196,10 +196,10 @@ fn mark_read(marker: &Path, id: &str) -> Result<(), String> {
 /// The flake commit that built a system, if one is remembered. Several commits
 /// can build the same system; the checkout's wins, then the newest.
 pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Option<String> {
-    let trees: Vec<String> = remembered
+    let trees: Vec<Tree> = remembered
         .iter()
         .filter(|record| record.system == system)
-        .map(|record| record.key.clone())
+        .map(|record| record.tree.clone())
         .collect();
     match git::clean_tree(dir) {
         Some(checkout) if trees.contains(&checkout) => git::commit_of(dir, &[checkout]),
@@ -222,8 +222,8 @@ pub struct Comparison {
     pub changes: Vec<String>,
     pub running: PathBuf,
     pub running_commit: Option<String>,
-    pub running_trees: Vec<String>,
-    pub tree: Option<String>,
+    pub running_trees: Vec<Tree>,
+    pub tree: Option<Tree>,
     pub built: Option<PathBuf>,
     pub matches: bool,
 }
@@ -237,13 +237,13 @@ pub fn compare() -> Result<Comparison, String> {
     let built = tree.as_ref().and_then(|tree| {
         remembered
             .iter()
-            .find(|record| record.key == *tree)
+            .find(|record| record.tree == *tree)
             .map(|record| record.system.clone())
     });
-    let running_trees: Vec<String> = remembered
+    let running_trees: Vec<Tree> = remembered
         .iter()
         .filter(|record| record.system == running)
-        .map(|record| record.key.clone())
+        .map(|record| record.tree.clone())
         .collect();
     let matches = built.as_ref() == Some(&running)
         || tree
@@ -337,13 +337,14 @@ pub fn report(options: &Options) -> Result<(), String> {
             "revision": status.running_commit,
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
-            "bad": status.tree.as_deref().and_then(state::bad),
+            "bad": status.tree.as_ref().and_then(state::bad),
             "lastUpdate": update_result()
                 .ok()
                 .flatten()
-                .map(|result| result["update"].clone()),
+                .and_then(|latest| latest.update)
+                .map(|update| update.to_json()),
         });
-        output::line(&serde_json::to_string_pretty(&comparison).unwrap_or_default());
+        output::data(&serde_json::to_string_pretty(&comparison).unwrap_or_default());
         return Ok(());
     }
 
@@ -372,7 +373,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             plain(&hold.describe())
         ));
     }
-    if let Some(reason) = status.tree.as_deref().and_then(state::bad) {
+    if let Some(reason) = status.tree.as_ref().and_then(state::bad) {
         output::attention(&format!(
             "The checkout failed its health check and is not activated automatically: {}",
             plain(&reason)

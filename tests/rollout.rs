@@ -330,7 +330,7 @@ case "$*" in
     sh) cat > /dev/null; cat '{dir}'/"$name.probe" ;;
     *'tar --extract'*) cat > '{dir}'/"$name.tar" ;;
     *'bin/nxf install '*)
-        echo "  Host key  ssh-ed25519 AAAA$name"
+        echo "{{\"hostKey\": \"ssh-ed25519 AAAA$name\", \"system\": null, \"revision\": null}}"
         printf 'nxf-probe managed=yes installer=no uid=0 arch=x86_64\nnxf-os NixOS\n' > '{dir}'/"$name.probe" ;;
     'nxf status --json') echo '{{"revision": "0123456789abcdef"}}' ;;
 esac
@@ -524,6 +524,232 @@ fn long_names_widen_the_outcome() {
             &format!("\n  {name:<15}  0123456789ab\n  {name} ssh-ed25519 AAAA{name}\n"),
         );
     }
+}
+
+/// The remote installation is asked for its result as JSON, and the host key
+/// of the machine is the one it printed.
+#[test]
+fn reads_the_installation() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let known = fx.dir.join("known_hosts");
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--known-hosts",
+        known.to_str().unwrap(),
+    ]);
+    result.ok();
+    assert_contains(
+        &ssh_log(&fx),
+        "node-1 /nix/store/nxf-package/bin/nxf install /tmp/nxf-machine --json\n",
+    );
+    assert_eq!(
+        std::fs::read_to_string(&known).unwrap(),
+        "node-1 ssh-ed25519 AAAAnode-1\n"
+    );
+}
+
+/// Text that the machine prints on standard output before the document of
+/// its installation does not fail the machine: the last line is the document.
+#[test]
+fn text_before_the_installation() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let ssh = fx.dir.join("machines/ssh-greeting");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+[[ ${{*: -1}} != *'bin/nxf install '* ]] || echo 'Welcome to node-1'
+exec '{}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    result.ok();
+    assert_contains(&result.stdout, "\n✓ 1 machine installed\n");
+}
+
+/// The remote installation fails with its refusal on standard output: the
+/// row of the machine is the step and the cause, with the lines beneath.
+#[test]
+fn refused_installation() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let ssh = fx.dir.join("machines/ssh-refusing");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+if [[ ${{*: -1}} == *'bin/nxf install '* ]]; then
+    echo '{{"error": "error: builder failed", "details": ["nixos-install exited with status 1."]}}'
+    echo 'text for people' >&2
+    exit 1
+fi
+exec '{}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--yes"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stdout,
+        "\n  ✗ The installation failed\n    error: builder failed\n    nixos-install exited with status 1.\n",
+    );
+    assert_lacks(&result.stdout, "text for people");
+    assert_contains(&result.stderr, "Not installed: node-1.");
+}
+
+/// With --json rollout prints the machines and the outcome as one JSON object
+/// on standard output and nothing else there; the text is on standard error.
+/// An installed machine has its revision and host key, a managed one only its
+/// state.
+#[test]
+fn json() {
+    let (fx, hosts) = installers(&["node-1", "node-2"]);
+    std::fs::write(
+        fx.dir.join("machines/node-2.probe"),
+        "nxf-probe managed=yes installer=no uid=0 arch=x86_64\nnxf-os NixOS\n",
+    )
+    .unwrap();
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--json",
+    ]);
+    result.ok();
+    assert_contains(&result.stderr, "\n✓ 1 machine installed\n");
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        printed,
+        serde_json::json!({
+            "ok": true,
+            "counts": {"managed": 1, "installed": 1, "upgraded": 0, "failed": 0, "not started": 0},
+            "machines": [
+                {
+                    "name": "node-1",
+                    "state": "installed",
+                    "revision": "0123456789abcdef",
+                    "hostKey": "ssh-ed25519 AAAAnode-1",
+                },
+                {"name": "node-2", "state": "managed"},
+            ],
+        })
+    );
+}
+
+/// The standard error of the remote installation is shown as it comes, with
+/// --json too: the line of the machine is there before the machine is released.
+#[test]
+fn json_is_live() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let ssh = fx.dir.join("machines/ssh-holding");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+if [[ ${{*: -1}} == *'bin/nxf install '* ]]; then
+    echo 'copying the system' >&2
+    until [[ -e '{0}/release' ]]; do sleep 0.1; done
+fi
+exec '{0}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let mut command = fx.command(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--json",
+    ]);
+    command.stdin(std::process::Stdio::null());
+    let result = common::run_held(command, "copying the system", &fx.dir.join("release"));
+    assert_eq!(result.code, 0, "{}", result.stderr);
+    assert_contains(&result.stderr, "[3/4] Installing\n    copying the system\n");
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(printed["machines"][0]["state"], "installed");
+}
+
+/// --json never asks: without --yes nothing is erased, each machine that
+/// would be is `not started` with what its row says, and a machine that does
+/// not answer is `failed`. The text of the outcome stays on standard error.
+#[test]
+fn json_does_not_ask() {
+    let (fx, hosts) = machines(&[
+        ("node-1", MANAGED),
+        ("node-2", UBUNTU),
+        ("node-3", INSTALLER),
+        ("node-4", ""),
+    ]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--json"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        "✗ 2 machines would be erased; nothing was changed",
+    );
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(printed["ok"], false);
+    assert_eq!(
+        printed["counts"],
+        serde_json::json!({"managed": 1, "installed": 0, "upgraded": 0, "failed": 1, "not started": 2})
+    );
+    let machines = printed["machines"].as_array().unwrap();
+    assert_eq!(machines[0]["state"], "managed");
+    assert_eq!(machines[1]["state"], "not started");
+    assert_eq!(
+        machines[1]["error"],
+        "Ubuntu 24.04.5 LTS; it will be erased"
+    );
+    assert_eq!(
+        machines[2]["error"],
+        "NixOS installer; its disks will be erased"
+    );
+    assert_eq!(machines[3]["state"], "failed");
+    assert_contains(
+        machines[3]["error"].as_str().unwrap(),
+        "unreachable: ssh: connect to host node-4",
+    );
+    // Only the probe ran on each machine.
+    assert_eq!(ssh_log(&fx).lines().count(), 4);
+}
+
+/// A refusal before any machine is asked is the JSON of a refusal.
+#[test]
+fn json_refusal() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let missing = fx.dir.join("missing");
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--files",
+        missing.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(result.code, 1);
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        printed["error"],
+        format!("{} is not a directory", missing.display())
+    );
+    assert_eq!(ssh_log(&fx), "");
 }
 
 /// The key of the system that was there before is replaced by the new one.
