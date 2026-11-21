@@ -584,6 +584,113 @@ exec '{}/machines/ssh' "$@"
     assert_contains(&result.stderr, "Not installed: node-1.");
 }
 
+/// With --json rollout prints the machines and the outcome as one JSON object
+/// and no text on standard output. An installed machine has its revision and
+/// host key, a managed one only its state.
+#[test]
+fn json() {
+    let (fx, hosts) = installers(&["node-1", "node-2"]);
+    std::fs::write(
+        fx.dir.join("machines/node-2.probe"),
+        "nxf-probe managed=yes installer=no uid=0 arch=x86_64\nnxf-os NixOS\n",
+    )
+    .unwrap();
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--json",
+    ]);
+    result.ok();
+    assert_eq!(result.stderr, "");
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        printed,
+        serde_json::json!({
+            "ok": true,
+            "counts": {"managed": 1, "installed": 1, "upgraded": 0, "failed": 0, "not started": 0},
+            "machines": [
+                {
+                    "name": "node-1",
+                    "state": "installed",
+                    "revision": "0123456789abcdef",
+                    "hostKey": "ssh-ed25519 AAAAnode-1",
+                },
+                {"name": "node-2", "state": "managed"},
+            ],
+        })
+    );
+}
+
+/// --json never asks: without --yes nothing is erased, each machine that
+/// would be is `not started` with what its row says, and a machine that does
+/// not answer is `failed`. The text of the outcome stays on standard error.
+#[test]
+fn json_does_not_ask() {
+    let (fx, hosts) = machines(&[
+        ("node-1", MANAGED),
+        ("node-2", UBUNTU),
+        ("node-3", INSTALLER),
+        ("node-4", ""),
+    ]);
+    let result = fx.run(&["rollout", "--config", &hosts, "--template", "x#y", "--json"]);
+    assert_eq!(result.code, 1);
+    assert_contains(
+        &result.stderr,
+        "✗ 2 machines would be erased; nothing was changed",
+    );
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(printed["ok"], false);
+    assert_eq!(
+        printed["counts"],
+        serde_json::json!({"managed": 1, "installed": 0, "upgraded": 0, "failed": 1, "not started": 2})
+    );
+    let machines = printed["machines"].as_array().unwrap();
+    assert_eq!(machines[0]["state"], "managed");
+    assert_eq!(machines[1]["state"], "not started");
+    assert_eq!(
+        machines[1]["error"],
+        "Ubuntu 24.04.5 LTS; it will be erased"
+    );
+    assert_eq!(
+        machines[2]["error"],
+        "NixOS installer; its disks will be erased"
+    );
+    assert_eq!(machines[3]["state"], "failed");
+    assert_contains(
+        machines[3]["error"].as_str().unwrap(),
+        "unreachable: ssh: connect to host node-4",
+    );
+    // Only the probe ran on each machine.
+    assert_eq!(ssh_log(&fx).lines().count(), 4);
+}
+
+/// A refusal before any machine is asked is the JSON of a refusal.
+#[test]
+fn json_refusal() {
+    let (fx, hosts) = installers(&["node-1"]);
+    let missing = fx.dir.join("missing");
+    let result = fx.run(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--files",
+        missing.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(result.code, 1);
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(
+        printed["error"],
+        format!("{} is not a directory", missing.display())
+    );
+}
+
 /// The key of the system that was there before is replaced by the new one.
 /// When it cannot be removed, that is said and the command fails, instead of
 /// the old key staying trusted beside the new one.

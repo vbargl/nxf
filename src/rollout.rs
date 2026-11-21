@@ -15,7 +15,7 @@ use crate::env;
 use crate::hosts::Host;
 use crate::output::{self, Mark};
 use crate::process;
-use crate::results::{Installation, Refusal};
+use crate::results::{self, Installation, Machine, Refusal, State};
 use crate::ssh::{self, quoted, Link, Trust};
 use crate::state;
 use crate::text::{last_line, plain};
@@ -36,6 +36,9 @@ pub struct Options {
     pub kexec_url: Option<String>,
     /// A known_hosts file that gets the host keys of the installed machines.
     pub known_hosts: Option<PathBuf>,
+    /// Print the machines and the outcome as JSON, and nothing else on
+    /// standard output. Nothing is asked, so erasing needs `yes`.
+    pub json: bool,
 }
 
 /// What a machine is before rollout.
@@ -505,12 +508,29 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
         ));
     }
     let scratch = make_scratch(&temp)?;
-    let result = rollout(options, hosts, &scratch);
+    if options.json {
+        output::capture();
+    }
+    let mut machines = Vec::new();
+    let result = rollout(options, hosts, &scratch, &mut machines);
     let _ = std::fs::remove_dir_all(&scratch);
+    if options.json {
+        output::release_stderr();
+        if let Ok(ok) = result {
+            output::line(&results::machines_json(ok, &machines));
+        }
+    }
     result
 }
 
-fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, String> {
+/// Rolls the machines out, and says in `machines` how each one ended, in the
+/// order of the hosts.
+fn rollout(
+    options: &Options,
+    hosts: &[Host],
+    scratch: &Path,
+    machines: &mut Vec<Machine>,
+) -> Result<bool, String> {
     // The scratch files of a machine extend a stem named by its place in the list:
     // ssh splits the options that name them, and a host's name may hold a space.
     let stem = |index: usize| scratch.join(index.to_string());
@@ -556,11 +576,17 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         let (what, erased) = match &probe.found {
             Found::Managed => {
                 output::row(Mark::Done, &format!("{name:<width$}installed by nxf"));
+                machines.push(Machine::new(name, State::Managed));
                 continue;
             }
             Found::Unreachable(why) => {
                 silent += 1;
                 output::row(Mark::Failed, &format!("{name:<width$}unreachable: {why}"));
+                machines.push(Machine::went_wrong(
+                    name,
+                    State::Failed,
+                    &format!("unreachable: {why}"),
+                ));
                 continue;
             }
             Found::Installer => ("NixOS installer", "its disks will be erased"),
@@ -569,14 +595,20 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         // Refused here, before anything is erased: only root can install.
         if let Some(user) = probe.user.as_deref().filter(|user| *user != "0") {
             failed.push(host.name.as_str());
-            output::row(
-                Mark::Failed,
-                &format!("{name:<width$}{what}; not installed: the SSH user must be root, and its user id is {user}"),
+            let refused = format!(
+                "{what}; not installed: the SSH user must be root, and its user id is {user}"
             );
+            output::row(Mark::Failed, &format!("{name:<width$}{refused}"));
+            machines.push(Machine::went_wrong(name, State::Failed, &refused));
             continue;
         }
         to_install.push((index, host, probe));
         output::row(Mark::Attention, &format!("{name:<width$}{what}; {erased}"));
+        machines.push(Machine::went_wrong(
+            name,
+            State::NotStarted,
+            &format!("{what}; {erased}"),
+        ));
     }
     if to_install.is_empty() {
         if !failed.is_empty() {
@@ -601,7 +633,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
         .iter()
         .map(|(_, host, _)| host.name.as_str())
         .collect();
-    if !options.yes && !std::io::stdin().is_terminal() {
+    if !options.yes && (options.json || !std::io::stdin().is_terminal()) {
         output::failure(&format!(
             "{} would be erased; nothing was changed",
             output::machines(to_install.len())
@@ -649,13 +681,16 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                     .known_hosts
                     .as_ref()
                     .map_or(Ok(()), |file| remember(file, host, &done.key));
+                let mut machine = Machine::new(&host.name, State::Installed);
+                machine.revision = done.revision.clone();
+                machine.host_key = Some(done.key.clone());
                 if let Err(error) = written {
-                    output::row(
-                        Mark::Failed,
-                        &format!("Its host key was not written: {error}"),
-                    );
+                    let row = format!("Its host key was not written: {error}");
+                    output::row(Mark::Failed, &row);
+                    machine.error = Some(row);
                     unwritten.push(host.name.as_str());
                 }
+                machines[*index] = machine;
                 installed.push((*host, done));
             }
             Err(error) => {
@@ -665,6 +700,7 @@ fn rollout(options: &Options, hosts: &[Host], scratch: &Path) -> Result<bool, St
                 for line in lines {
                     output::detail(line);
                 }
+                machines[*index] = Machine::went_wrong(&host.name, State::Failed, &error);
                 failed.push(host.name.as_str());
             }
         }

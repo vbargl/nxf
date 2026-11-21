@@ -1,7 +1,8 @@
 //! What nxf says to programs with `--json`, and reads back from other nxf
-//! programs: the outcome of a task, a refusal and the installation of a machine. Each shape has one writer and one reader.
+//! programs: the outcome of a task, a refusal, the machines of a rollout and
+//! the installation of a machine. Each shape has one writer and one reader.
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::process;
 
@@ -169,6 +170,108 @@ impl Refusal {
             details: strings(value.get("details")?)?,
         })
     }
+}
+
+/// How a machine ended in a rollout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Installed by nxf before.
+    Managed,
+    Installed,
+    Upgraded,
+    Failed,
+    /// Left alone, because an earlier machine failed or the erasing was not confirmed.
+    NotStarted,
+}
+
+impl State {
+    const ALL: [State; 5] = [
+        State::Managed,
+        State::Installed,
+        State::Upgraded,
+        State::Failed,
+        State::NotStarted,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            State::Managed => "managed",
+            State::Installed => "installed",
+            State::Upgraded => "upgraded",
+            State::Failed => "failed",
+            State::NotStarted => "not started",
+        }
+    }
+}
+
+/// One machine of a rollout.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Machine {
+    pub name: String,
+    pub state: State,
+    /// What its row says went wrong, when something did.
+    pub error: Option<String>,
+    /// The lines beneath the row.
+    pub details: Vec<String>,
+    /// The flake commit an installed machine runs.
+    pub revision: Option<String>,
+    /// The host key an installed machine made.
+    pub host_key: Option<String>,
+}
+
+impl Machine {
+    pub fn new(name: &str, state: State) -> Machine {
+        Machine {
+            name: name.to_string(),
+            state,
+            error: None,
+            details: Vec::new(),
+            revision: None,
+            host_key: None,
+        }
+    }
+
+    /// A machine that went wrong: the first line is its row, the rest is beneath it.
+    pub fn went_wrong(name: &str, state: State, error: &str) -> Machine {
+        let refusal = Refusal::from_text(error);
+        Machine {
+            error: Some(refusal.error),
+            details: refusal.details,
+            ..Machine::new(name, state)
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        let mut machine = Map::new();
+        machine.insert("name".to_string(), json!(self.name));
+        machine.insert("state".to_string(), json!(self.state.as_str()));
+        if let Some(error) = &self.error {
+            machine.insert("error".to_string(), json!(error));
+            machine.insert("details".to_string(), json!(self.details));
+        }
+        if let Some(revision) = &self.revision {
+            machine.insert("revision".to_string(), json!(revision));
+        }
+        if let Some(key) = &self.host_key {
+            machine.insert("hostKey".to_string(), json!(key));
+        }
+        Value::Object(machine)
+    }
+}
+
+/// The result of a rollout: whether it succeeded, how many machines ended in
+/// each state, and each machine.
+pub fn machines_json(ok: bool, machines: &[Machine]) -> String {
+    let counts: Map<String, Value> = State::ALL
+        .into_iter()
+        .map(|state| {
+            let count = machines.iter().filter(|m| m.state == state).count();
+            (state.as_str().to_string(), json!(count))
+        })
+        .collect();
+    let list: Vec<Value> = machines.iter().map(Machine::to_json).collect();
+    let all = json!({"ok": ok, "counts": counts, "machines": list});
+    serde_json::to_string_pretty(&all).unwrap_or_default()
 }
 
 /// What `nxf install --json` prints, and rollout reads.

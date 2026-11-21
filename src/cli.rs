@@ -149,6 +149,9 @@ enum Cmd {
         /// A known_hosts file that gets the host keys of the installed machines.
         #[arg(long, value_name = "FILE")]
         known_hosts: Option<PathBuf>,
+        /// Print the machines and the outcome as JSON, for scripts; never asks, so erasing needs --yes.
+        #[arg(long)]
+        json: bool,
     },
     /// Hold automatic updates back, with a reason, until released or until a time.
     Hold {
@@ -347,6 +350,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
             yes,
             kexec_url,
             known_hosts,
+            json,
         } => {
             if !upgrade && (batch.is_some() || !inputs.is_empty()) {
                 return Err(
@@ -361,6 +365,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
                     &machines,
                     &inputs,
                     batch.unwrap_or(1) as usize,
+                    json,
                 ));
             }
             rollout::run(
@@ -371,6 +376,7 @@ fn run_command(command: Cmd) -> Result<bool, String> {
                     yes,
                     kexec_url,
                     known_hosts,
+                    json,
                 },
                 &machines,
             )

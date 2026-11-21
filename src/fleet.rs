@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::env;
 use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
-use crate::results::{Kind, Outcome, Refusal};
+use crate::results::{self, Kind, Machine, Outcome, Refusal, State};
 use crate::ssh::{self, Link, Trust};
 use crate::text::{last_line, plain};
 use crate::{process, time};
@@ -348,13 +348,18 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
 }
 
 /// Runs `nxf upgrade` on the machines in waves: the first machine alone, then
-/// `batch` at a time. A failure lets its wave end and starts no other.
-pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> bool {
+/// `batch` at a time. A failure lets its wave end and starts no other. With
+/// `json` the machines and the outcome are printed as JSON, and no text on standard output.
+pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize, json: bool) -> bool {
+    if json {
+        output::capture();
+    }
     let mut args = vec!["--json".to_string(), "upgrade".to_string()];
     args.extend(inputs.iter().cloned());
     let timeout = env::seconds(env::UPGRADE_TIMEOUT, 3 * 3600);
     let width = header(file, hosts);
     let mut failed = Vec::new();
+    let mut machines = Vec::new();
     let mut reached = hosts.len();
     for wave in waves(hosts.len(), batch) {
         if !failed.is_empty() {
@@ -371,10 +376,17 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
         for reply in &replies {
             let name = &reply.host.name;
             match upgraded(reply) {
-                Ok(said) => output::row(Mark::Done, &format!("{name:<width$}{said}")),
+                Ok(said) => {
+                    output::row(Mark::Done, &format!("{name:<width$}{said}"));
+                    machines.push(Machine::new(name, State::Upgraded));
+                }
                 Err(error) => {
                     failed.push(name.clone());
                     output::row(Mark::Failed, &format!("{name:<width$}{error}"));
+                    machines.push(Machine {
+                        error: Some(error),
+                        ..Machine::new(name, State::Failed)
+                    });
                 }
             }
         }
@@ -388,22 +400,27 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize) -> 
             Mark::Quiet,
             &format!("{name:<width$}{}", output::dim("not started")),
         );
+        machines.push(Machine::new(name, State::NotStarted));
     }
     let total = hosts.len();
     if failed.is_empty() {
         output::success(&format!("{} upgraded", output::machines(total)));
-        return true;
-    }
-    output::failure(&format!(
-        "Upgrade failed on {} of {}",
-        failed.len(),
-        output::machines(total)
-    ));
-    if !untouched.is_empty() {
-        output::effect_err(&format!(
-            "Not started: {}. Run the rollout again once the failure is fixed.",
-            untouched.join(", ")
+    } else {
+        output::failure(&format!(
+            "Upgrade failed on {} of {}",
+            failed.len(),
+            output::machines(total)
         ));
+        if !untouched.is_empty() {
+            output::effect_err(&format!(
+                "Not started: {}. Run the rollout again once the failure is fixed.",
+                untouched.join(", ")
+            ));
+        }
     }
-    false
+    if json {
+        output::release_stderr();
+        output::line(&results::machines_json(failed.is_empty(), &machines));
+    }
+    failed.is_empty()
 }

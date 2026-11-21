@@ -509,6 +509,48 @@ fn refusal_is_read_from_json() {
     assert_lacks(&upgrade.stdout, "not the cause");
 }
 
+/// With --json the upgrade prints the machines and the outcome as one JSON
+/// object and no text on standard output: the state of each machine, and the
+/// row of one that failed.
+#[test]
+fn upgrade_json() {
+    let set = machines();
+    let ok = set.upgrade(&["--json"]);
+    ok.ok();
+    let printed: Value = serde_json::from_str(&ok.stdout).unwrap();
+    assert_eq!(printed["ok"], true);
+    assert_eq!(
+        printed["counts"],
+        json!({"managed": 0, "installed": 0, "upgraded": 3, "failed": 0, "not started": 0})
+    );
+    let names: Vec<&str> = printed["machines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|machine| machine["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["node-1", "node-2", "node-3"]);
+
+    set.fail_switch("node-1");
+    let failed = set.upgrade(&["--json"]);
+    assert_eq!(failed.code, 1);
+    assert_contains(&failed.stderr, "✗ Upgrade failed on 1 of 3 machines");
+    let printed: Value = serde_json::from_str(&failed.stdout).unwrap();
+    assert_eq!(printed["ok"], false);
+    assert_eq!(
+        printed["counts"],
+        json!({"managed": 0, "installed": 0, "upgraded": 0, "failed": 1, "not started": 2})
+    );
+    let first = &printed["machines"][0];
+    assert_eq!(first["state"], "failed");
+    assert_contains(
+        first["error"].as_str().unwrap(),
+        "switch failed: Upgrade stopped: activation did not finish",
+    );
+    assert_eq!(printed["machines"][1]["state"], "not started");
+    assert_eq!(printed["machines"][2]["state"], "not started");
+}
+
 /// An upgrade that ends with a failure status and names no failed task
 /// fails with what the machine said last, and starts no other machine.
 #[test]

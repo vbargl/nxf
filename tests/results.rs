@@ -1,6 +1,8 @@
 //! Tests for src/results.rs: the JSON shapes nxf writes and reads.
 
-use nxf::results::{outcomes_json, Installation, Kind, Outcome, Refusal, Saved};
+use nxf::results::{
+    machines_json, outcomes_json, Installation, Kind, Machine, Outcome, Refusal, Saved, State,
+};
 use serde_json::{json, Value};
 
 /// Each word of an outcome is the one the README documents, and reads back.
@@ -92,6 +94,43 @@ fn refusal_shape() {
     assert_eq!(Refusal::from_json("[]"), None);
     assert_eq!(Refusal::from_json("Welcome to the machine"), None);
     assert_eq!(Refusal::from_json(r#"{"error": "x"}"#), None);
+}
+
+/// The machines of a rollout have a state each, and the result counts them.
+/// `error` and `details` appear for a machine that went wrong, `revision` and
+/// `hostKey` for one that was installed.
+#[test]
+fn machines_shape() {
+    let mut installed = Machine::new("node-1", State::Installed);
+    installed.revision = Some("0123".to_string());
+    installed.host_key = Some("ssh-ed25519 AAAA".to_string());
+    let machines = [
+        installed,
+        Machine::new("node-2", State::Managed),
+        Machine::went_wrong(
+            "node-3",
+            State::Failed,
+            "The installation failed\nlast line",
+        ),
+        Machine::went_wrong("node-4", State::NotStarted, "it will be erased"),
+        Machine::new("node-5", State::Upgraded),
+    ];
+    let value: Value = serde_json::from_str(&machines_json(false, &machines)).unwrap();
+    assert_eq!(
+        value["counts"],
+        json!({"managed": 1, "installed": 1, "upgraded": 1, "failed": 1, "not started": 1})
+    );
+    assert_eq!(value["ok"], false);
+    assert_eq!(
+        value["machines"],
+        json!([
+            {"name": "node-1", "state": "installed", "revision": "0123", "hostKey": "ssh-ed25519 AAAA"},
+            {"name": "node-2", "state": "managed"},
+            {"name": "node-3", "state": "failed", "error": "The installation failed", "details": ["last line"]},
+            {"name": "node-4", "state": "not started", "error": "it will be erased", "details": []},
+            {"name": "node-5", "state": "upgraded"},
+        ])
+    );
 }
 
 /// The installation is the host key, the system and the revision; one
