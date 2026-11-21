@@ -510,13 +510,14 @@ fn refusal_is_read_from_json() {
 }
 
 /// With --json the upgrade prints the machines and the outcome as one JSON
-/// object and no text on standard output: the state of each machine, and the
-/// row of one that failed.
+/// object and nothing else on standard output: the state of each machine, and
+/// the row of one that failed. The rows are on standard error.
 #[test]
 fn upgrade_json() {
     let set = machines();
     let ok = set.upgrade(&["--json"]);
     ok.ok();
+    assert_contains(&ok.stderr, "\n  ✓ node-1    inputs updated, switched\n");
     let printed: Value = serde_json::from_str(&ok.stdout).unwrap();
     assert_eq!(printed["ok"], true);
     assert_eq!(

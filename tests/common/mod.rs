@@ -537,6 +537,55 @@ pub fn outcomes(report: &serde_json::Value) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Runs a command whose standard error shows `line` while it is held back:
+/// asserts that the line is there before `release` exists, then makes the
+/// file, and returns what the command printed.
+#[track_caller]
+pub fn run_held(mut command: Command, line: &str, release: &Path) -> Ran {
+    use std::io::{BufRead, BufReader, Read};
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let out = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let (sender, lines) = std::sync::mpsc::channel();
+    let stderr = child.stderr.take().unwrap();
+    let err = std::thread::spawn(move || {
+        let mut text = String::new();
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            text.push_str(&line);
+            text.push('\n');
+            let _ = sender.send(line);
+        }
+        text
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut seen = Vec::new();
+    while !seen.iter().any(|said: &String| said.contains(line)) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        match lines.recv_timeout(left) {
+            Ok(said) => seen.push(said),
+            Err(_) => {
+                let _ = child.kill();
+                panic!("<{line}> was not said before the release; saw {seen:?}");
+            }
+        }
+    }
+    std::fs::write(release, "").unwrap();
+    let status = child.wait().unwrap();
+    Ran {
+        code: status.code().unwrap_or(-1),
+        stdout: out.join().unwrap(),
+        stderr: err.join().unwrap(),
+    }
+}
+
 /// The details of a result: what the task said, one entry for each line.
 pub fn details(result: &serde_json::Value) -> Vec<String> {
     result["details"]

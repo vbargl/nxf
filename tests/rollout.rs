@@ -585,7 +585,7 @@ exec '{}/machines/ssh' "$@"
 }
 
 /// With --json rollout prints the machines and the outcome as one JSON object
-/// and no text on standard output. An installed machine has its revision and
+/// on standard output and nothing else there; the text is on standard error. An installed machine has its revision and
 /// host key, a managed one only its state.
 #[test]
 fn json() {
@@ -605,7 +605,7 @@ fn json() {
         "--json",
     ]);
     result.ok();
-    assert_eq!(result.stderr, "");
+    assert_contains(&result.stderr, "\n✓ 1 machine installed\n");
     let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
     assert_eq!(
         printed,
@@ -623,6 +623,43 @@ fn json() {
             ],
         })
     );
+}
+
+/// The standard error of the remote installation is shown as it comes, with
+/// --json too: the line of the machine is there before the machine is released.
+#[test]
+fn json_is_live() {
+    let (mut fx, hosts) = installers(&["node-1"]);
+    let ssh = fx.dir.join("machines/ssh-holding");
+    write_script(
+        &ssh,
+        &format!(
+            r#"#!/usr/bin/env bash
+if [[ ${{*: -1}} == *'bin/nxf install '* ]]; then
+    echo 'copying the system' >&2
+    until [[ -e '{0}/release' ]]; do sleep 0.1; done
+fi
+exec '{0}/machines/ssh' "$@"
+"#,
+            fx.dir.display()
+        ),
+    );
+    fx.set("NXF_SSH", &ssh);
+    let mut command = fx.command(&[
+        "rollout",
+        "--config",
+        &hosts,
+        "--template",
+        "x#y",
+        "--yes",
+        "--json",
+    ]);
+    command.stdin(std::process::Stdio::null());
+    let result = common::run_held(command, "copying the system", &fx.dir.join("release"));
+    assert_eq!(result.code, 0, "{}", result.stderr);
+    assert_contains(&result.stderr, "[3/4] Installing\n    copying the system\n");
+    let printed: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(printed["machines"][0]["state"], "installed");
 }
 
 /// --json never asks: without --yes nothing is erased, each machine that

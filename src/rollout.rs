@@ -3,7 +3,7 @@
 //! repeated. Any other machine is started into a NixOS installer and
 //! installed there with `nxf init` and `nxf install`.
 
-use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,8 +36,8 @@ pub struct Options {
     pub kexec_url: Option<String>,
     /// A known_hosts file that gets the host keys of the installed machines.
     pub known_hosts: Option<PathBuf>,
-    /// Print the machines and the outcome as JSON, and nothing else on
-    /// standard output. Nothing is asked, so erasing needs `yes`.
+    /// Print the machines and the outcome as JSON on standard output, and the
+    /// text on standard error. Nothing is asked, so erasing needs `yes`.
     pub json: bool,
 }
 
@@ -109,11 +109,10 @@ pub fn parse_probe(text: &str) -> Option<Probe> {
     })
 }
 
-/// Runs a remote command. On a terminal its latest line is shown until
-/// the next one replaces it; what it printed is kept for the caller and,
-/// when it fails, its last lines are the error.
-fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
-    let (mut child, reader) = process::spawn_merged(&mut link.command(remote))?;
+/// Shows the lines of a remote command as they come, and returns them. On a
+/// terminal the latest line stays until the next one replaces it; with `echo`
+/// every line is kept beneath the heading where there is no terminal.
+fn show(reader: impl Read, echo: bool) -> String {
     let mut said = String::new();
     let mut pending = false;
     for line in BufReader::new(reader).lines().map_while(Result::ok) {
@@ -121,11 +120,22 @@ fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
         if !line.trim().is_empty() {
             output::settle(pending);
             pending = output::pending(line.trim());
+            if echo && !pending {
+                output::detail(line.trim());
+            }
         }
         said.push_str(&line);
         said.push('\n');
     }
     output::settle(pending);
+    said
+}
+
+/// Runs a remote command and shows its lines. When it fails, its last lines
+/// are the error.
+fn stream(link: &Link, remote: &str, what: &str, echo: bool) -> Result<String, String> {
+    let (mut child, reader) = process::spawn_merged(&mut link.command(remote))?;
+    let said = show(reader, echo);
     let status = child.wait().map_err(|err| err.to_string())?;
     if status.success() {
         return Ok(said);
@@ -133,22 +143,28 @@ fn stream(link: &Link, remote: &str, what: &str) -> Result<String, String> {
     Err(format!("{what} failed\n{}", process::tail(&said)))
 }
 
-/// Runs `nxf install --json` on the machine and reads what it printed. Its
+/// Runs `nxf install --json` on the machine and reads what it printed on its
+/// standard output, while its standard error is shown as it comes. Its
 /// refusal is the cause of a failure.
-fn installation(link: &Link, remote: &str) -> Result<Installation, String> {
-    let (ok, stdout, stderr) = link.capture(remote, "");
-    if ok {
+fn installation(link: &Link, remote: &str, echo: bool) -> Result<Installation, String> {
+    let (mut child, stdout, stderr) = process::spawn_split(&mut link.command(remote))?;
+    let read = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stdout).read_to_string(&mut text);
+        text
+    });
+    let said = show(stderr, echo);
+    let stdout = read.join().unwrap_or_default();
+    let status = child.wait().map_err(|err| err.to_string())?;
+    if status.success() {
         return Installation::from_json(&stdout)
             .ok_or_else(|| "The installation did not report the host key".to_string());
     }
-    let said: Vec<String> = match Refusal::from_json(&stdout) {
+    let lines: Vec<String> = match Refusal::from_json(&stdout) {
         Some(refusal) => [refusal.error].into_iter().chain(refusal.details).collect(),
-        None => process::tail(&plain(&format!("{stdout}\n{stderr}")))
-            .lines()
-            .map(str::to_string)
-            .collect(),
+        None => process::tail(&said).lines().map(str::to_string).collect(),
     };
-    Err(format!("The installation failed\n{}", said.join("\n")))
+    Err(format!("The installation failed\n{}", lines.join("\n")))
 }
 
 fn probe(link: &Link) -> Probe {
@@ -373,11 +389,16 @@ fn install(
         upload(&link, files, FILES_DIR)?;
         init.push_str(&format!(" --files {FILES_DIR}"));
     }
-    stream(&link, &init, "Founding the machine flake")?;
+    stream(&link, &init, "Founding the machine flake", options.json)?;
     output::row(Mark::Done, "Founded on the machine");
 
     output::start("Installing");
-    let key = installation(&link, &format!("{nxf} install {MACHINE_DIR} --json"))?.host_key;
+    let key = installation(
+        &link,
+        &format!("{nxf} install {MACHINE_DIR} --json"),
+        options.json,
+    )?
+    .host_key;
     output::row(Mark::Done, "Installed");
 
     output::start("Starting the system");
@@ -509,16 +530,13 @@ pub fn run(options: &Options, hosts: &[Host]) -> Result<bool, String> {
     }
     let scratch = make_scratch(&temp)?;
     if options.json {
-        output::capture();
+        output::divert();
     }
     let mut machines = Vec::new();
     let result = rollout(options, hosts, &scratch, &mut machines);
     let _ = std::fs::remove_dir_all(&scratch);
-    if options.json {
-        output::release_stderr();
-        if let Ok(ok) = result {
-            output::line(&results::machines_json(ok, &machines));
-        }
+    if let (true, Ok(ok)) = (options.json, &result) {
+        output::data(&results::machines_json(*ok, &machines));
     }
     result
 }

@@ -16,7 +16,7 @@ pub struct Options {
     /// Skip partitioning: the target is already mounted.
     pub mounted: bool,
     pub reboot: bool,
-    /// Print the result as JSON and nothing else on standard output.
+    /// Print the result as JSON on standard output and the text on standard error.
     pub json: bool,
 }
 
@@ -143,33 +143,21 @@ fn installed_system(root: &Path) -> Option<PathBuf> {
 
 pub fn run(options: &Options) -> Result<(), String> {
     if options.json {
-        output::capture();
+        output::divert();
     }
-    let installed = install(options);
+    let installed = install(options)?;
+    output::success("NixOS installed");
+    output::fact("Host key", &installed.host_key);
     if options.json {
-        output::release_stderr();
-    }
-    let installed = installed?;
-    if options.json {
-        output::line(&installed.to_json());
-    } else {
-        output::success("NixOS installed");
-        output::fact("Host key", &installed.host_key);
+        output::data(&installed.to_json());
     }
     if options.reboot {
-        if !options.json {
-            output::effect("Restarting into the new system.");
-        }
+        output::effect("Restarting into the new system.");
         if let Err(err) = process::run(Command::new(nixos::systemctl()).arg("reboot")) {
-            if options.json {
-                output::warning("The machine was not restarted; restart it by hand.");
-                err.lines().for_each(output::note_err);
-            } else {
-                output::attention("The machine was not restarted; restart it by hand.");
-                err.lines().for_each(output::detail);
-            }
+            output::attention("The machine was not restarted; restart it by hand.");
+            err.lines().for_each(output::detail);
         }
-    } else if !options.json {
+    } else {
         output::effect("Restart the machine to start it.");
     }
     Ok(())

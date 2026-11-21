@@ -195,6 +195,14 @@ pub fn spawn_merged(command: &mut Command) -> Result<(Child, PipeReader), String
     Ok((child, pipes.stdout))
 }
 
+/// Starts a command with no input, and its standard output and its standard
+/// error in two readers, which the caller reads as they come.
+pub fn spawn_split(command: &mut Command) -> Result<(Child, PipeReader, PipeReader), String> {
+    let (child, pipes) = spawn_piped(command, false)?;
+    let stderr = pipes.stderr.ok_or("cannot read the standard error")?;
+    Ok((child, pipes.stdout, stderr))
+}
+
 /// Runs a command to its end with the given input, whatever its status.
 pub fn feed(command: &mut Command, input: &str) -> Result<Output, String> {
     command

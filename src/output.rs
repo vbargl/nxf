@@ -50,12 +50,15 @@ pub struct Captured {
 
 struct Screen {
     captured: Option<Captured>,
+    /// Whether what a run says on standard output goes to standard error.
+    diverted: bool,
     phase: usize,
     phases: usize,
 }
 
 static SCREEN: Mutex<Screen> = Mutex::new(Screen {
     captured: None,
+    diverted: false,
     phase: 0,
     phases: 1,
 });
@@ -76,9 +79,21 @@ pub fn release() -> Captured {
     screen().captured.take().unwrap_or_default()
 }
 
-/// Stops keeping output, and prints what was kept for standard error.
-pub fn release_stderr() {
-    release().stderr.lines().for_each(line_err);
+/// Sends what the run says on standard output to standard error, so that
+/// standard output keeps only what `data` prints.
+pub fn divert() {
+    screen().diverted = true;
+}
+
+/// Prints the one document of a run, such as JSON, on standard output.
+pub fn data(text: &str) {
+    let mut stdout = std::io::stdout();
+    let _ = writeln!(stdout, "{text}");
+    let _ = stdout.flush();
+}
+
+fn diverted() -> bool {
+    screen().diverted
 }
 
 fn capturing() -> bool {
@@ -90,7 +105,12 @@ fn plain_requested() -> bool {
 }
 
 fn capable_terminal() -> bool {
-    std::io::stdout().is_terminal() && env::text(env::TERM).as_deref() != Some("dumb")
+    let terminal = if diverted() {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    terminal && env::text(env::TERM).as_deref() != Some("dumb")
 }
 
 fn colored() -> bool {
@@ -127,6 +147,7 @@ fn emit(stderr: bool, text: &str) {
         target.push_str(text);
         return;
     }
+    let stderr = stderr || screen.diverted;
     drop(screen);
     if stderr {
         let _ = std::io::stderr().write_all(text.as_bytes());

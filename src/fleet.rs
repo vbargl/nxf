@@ -349,10 +349,10 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
 
 /// Runs `nxf upgrade` on the machines in waves: the first machine alone, then
 /// `batch` at a time. A failure lets its wave end and starts no other. With
-/// `json` the machines and the outcome are printed as JSON, and no text on standard output.
+/// `json` the machines and the outcome are printed as JSON on standard output, and the text on standard error.
 pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize, json: bool) -> bool {
     if json {
-        output::capture();
+        output::divert();
     }
     let mut args = vec!["--json".to_string(), "upgrade".to_string()];
     args.extend(inputs.iter().cloned());
@@ -419,8 +419,7 @@ pub fn upgrade(file: &Path, hosts: &[Host], inputs: &[String], batch: usize, jso
         }
     }
     if json {
-        output::release_stderr();
-        output::line(&results::machines_json(failed.is_empty(), &machines));
+        output::data(&results::machines_json(failed.is_empty(), &machines));
     }
     failed.is_empty()
 }

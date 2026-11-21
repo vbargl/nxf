@@ -115,7 +115,7 @@ enum Cmd {
         /// Restart into the new system when it is installed.
         #[arg(long)]
         reboot: bool,
-        /// Print the host key, the system and the revision as JSON, for scripts.
+        /// Print the host key, the system and the revision as JSON, for scripts; the text goes to standard error.
         #[arg(long)]
         json: bool,
     },
@@ -149,7 +149,7 @@ enum Cmd {
         /// A known_hosts file that gets the host keys of the installed machines.
         #[arg(long, value_name = "FILE")]
         known_hosts: Option<PathBuf>,
-        /// Print the machines and the outcome as JSON, for scripts; never asks, so erasing needs --yes.
+        /// Print the machines and the outcome as JSON, for scripts, and the text to standard error; never asks, so erasing needs --yes.
         #[arg(long)]
         json: bool,
     },
@@ -213,7 +213,7 @@ fn fail(error: &str, json: bool) -> ExitCode {
         output::effect_err(line);
     }
     if json {
-        output::line(&Refusal::from_text(&error).to_json());
+        output::data(&Refusal::from_text(&error).to_json());
     }
     ExitCode::FAILURE
 }
@@ -237,7 +237,7 @@ fn refuse(error: clap::Error, json: bool) -> ExitCode {
             error: cause.to_string(),
             details: details.iter().map(|line| line.to_string()).collect(),
         };
-        output::line(&refusal.to_json());
+        output::data(&refusal.to_json());
     }
     ExitCode::from(2)
 }
@@ -260,7 +260,7 @@ fn run_tasks(args: RunArgs, json: bool) -> ExitCode {
     match tasks::run(&args.words, args.json) {
         Ok(outcomes) => {
             if args.json {
-                output::line(&results::outcomes_json(&outcomes));
+                output::data(&results::outcomes_json(&outcomes));
             }
             if outcomes.iter().any(Outcome::failed) {
                 ExitCode::FAILURE
