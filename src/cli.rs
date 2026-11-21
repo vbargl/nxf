@@ -7,8 +7,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::results::{Outcome, Refusal};
 use crate::{
-    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, process, results,
-    rollout, state, status, tasks,
+    auto_update, doctor, env, flake, fleet, hold, hosts, init, install, output, results, rollout,
+    state, status, tasks,
 };
 
 /// Manage the machine's flake: NXF_FLAKE, or /etc/nixos.
@@ -205,16 +205,21 @@ fn task_list() -> String {
 /// with what helps to resolve it beneath. With `json` they are also the one
 /// JSON object on standard output.
 fn fail(error: &str, json: bool) -> ExitCode {
-    let error = process::cause_first(error);
-    let mut lines = error.lines();
-    output::failure(lines.next().unwrap_or("Failed"));
-    for line in lines {
-        output::effect_err(line);
-    }
-    if json {
-        output::data(&Refusal::from_text(&error).to_json());
-    }
+    say(&Refusal::from_text(error), json);
     ExitCode::FAILURE
+}
+
+/// Prints a refusal as the one outcome with its lines beneath, and as the one
+/// JSON object under `json`.
+fn say(refusal: &Refusal, json: bool) {
+    output::failure(&refusal.error);
+    refusal
+        .details
+        .iter()
+        .for_each(|line| output::effect_err(line));
+    if json {
+        output::data(&refusal.to_json());
+    }
 }
 
 /// What clap refused, in the same shape and with clap's exit status of a
@@ -226,15 +231,7 @@ fn refuse(error: clap::Error, json: bool) -> ExitCode {
     }
     let text = error.render().to_string();
     let text = text.trim_start().strip_prefix("error: ").unwrap_or(&text);
-    let refusal = Refusal::from_text(text);
-    output::failure(&refusal.error);
-    refusal
-        .details
-        .iter()
-        .for_each(|line| output::effect_err(line));
-    if json {
-        output::data(&refusal.to_json());
-    }
+    say(&Refusal::from_text(text), json);
     ExitCode::from(2)
 }
 

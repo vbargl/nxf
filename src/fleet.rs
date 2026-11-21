@@ -324,7 +324,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
         // A list of another shape is what an older nxf prints; its state is unknown.
         if list.is_some_and(|list| list.is_array()) {
             return Err(format!(
-                "unreadable answer: nxf on the machine is older than {RELEASE}"
+                "unreadable answer: nxf on the machine is older than {RELEASE}; the upgrade may have run"
             ));
         }
         // Otherwise nxf refused before any task ran, and its refusal is the cause.

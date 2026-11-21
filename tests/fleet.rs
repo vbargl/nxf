@@ -571,7 +571,7 @@ fn older_nxf() {
         assert_contains(
             &result.stdout,
             &format!(
-                "\n  ✗ node-1    unreadable answer: nxf on the machine is older than {release}\n"
+                "\n  ✗ node-1    unreadable answer: nxf on the machine is older than {release}; the upgrade may have run\n"
             ),
         );
         assert_contains(&result.stdout, "\n  · node-2    not started\n");
