@@ -245,6 +245,7 @@ fn discovery() {
         names,
         ["update", "build", "test", "boot", "switch", "upgrade"]
     );
+    assert_eq!((names[0], names[4]), (tasks::UPDATE, tasks::SWITCH));
     let takers: Vec<&str> = defined
         .iter()
         .filter(|task| task.takes_inputs)

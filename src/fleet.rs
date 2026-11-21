@@ -13,6 +13,7 @@ use crate::hosts::{self, Host};
 use crate::output::{self, Mark, Style};
 use crate::results::{self, Kind, Machine, Outcome, Refusal, Saved, State};
 use crate::ssh::{self, Link, Trust};
+use crate::tasks::UPDATE;
 use crate::text::{last_line, plain};
 use crate::{process, time};
 
@@ -348,7 +349,7 @@ fn upgraded(reply: &Reply) -> Result<String, String> {
     }
     let updated = outcomes
         .iter()
-        .any(|outcome| outcome.task == "update" && outcome.kind == Kind::Done);
+        .any(|outcome| outcome.task == UPDATE && outcome.kind == Kind::Done);
     Ok(if updated {
         "inputs updated, switched".to_string()
     } else {

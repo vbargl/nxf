@@ -54,9 +54,13 @@ struct Shortcut {
     pub expands: &'static [&'static str],
 }
 
+/// The names of the tasks that other code reads results of or runs.
+pub const UPDATE: &str = "update";
+pub const SWITCH: &str = "switch";
+
 const TASKS: &[Task] = &[
     Task {
-        name: "update",
+        name: UPDATE,
         description: "Update all inputs, or only the named ones, one at a time. Each update is built, then committed; one that does not build is restored.",
         takes_inputs: true,
         phases: 1,
@@ -128,7 +132,7 @@ const TASKS: &[Task] = &[
         },
     },
     Task {
-        name: "switch",
+        name: SWITCH,
         description: "Activate the configuration and make it the boot default.",
         takes_inputs: false,
         phases: 2,
@@ -155,7 +159,7 @@ const TASKS: &[Task] = &[
 const SHORTCUTS: &[Shortcut] = &[Shortcut {
     name: "upgrade",
     description: "Update each input, then switch.",
-    expands: &["update", "switch"],
+    expands: &[UPDATE, SWITCH],
 }];
 
 fn task(name: &str) -> Option<&'static Task> {

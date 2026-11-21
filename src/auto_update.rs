@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::health::{self, Health};
 use crate::results::{Kind, Outcome, Saved};
 use crate::state::Tree;
-use crate::tasks;
+use crate::tasks::{self, SWITCH, UPDATE};
 use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
 
 fn words(words: &[&str]) -> Vec<String> {
@@ -32,7 +32,7 @@ fn verify(tree: Option<&Tree>, previous: &Path) -> Option<Outcome> {
         said.push(err);
     }
     output::capture();
-    let returned = nixos::activate("switch", previous);
+    let returned = nixos::activate(SWITCH, previous);
     output::release();
     match returned {
         Ok(_) => said.push(format!("Returned to {}.", previous.display())),
@@ -56,7 +56,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     hold::forget_ended();
     if let Some(hold) = hold::active() {
         results.push(outcome(
-            "update",
+            UPDATE,
             Kind::Skipped,
             vec![format!("held: {}", hold.describe())],
         ));
@@ -69,14 +69,14 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         .any(|file| file != "flake.lock");
     if foreign {
         results.push(outcome(
-            "update",
+            UPDATE,
             Kind::Skipped,
             vec!["the checkout has uncommitted changes".to_string()],
         ));
         return Ok(());
     }
     if let Some(refused) = hooks::refused() {
-        results.push(outcome("update", Kind::Skipped, vec![refused]));
+        results.push(outcome(UPDATE, Kind::Skipped, vec![refused]));
         return Ok(());
     }
     // What is committed says how each input is treated.
@@ -84,7 +84,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     let strategies = strategy::read(&dir, &flake::configuration(&dir)?)?;
     // Every input that builds is committed; the others stay as they were.
     // Only tasks are given, so no word is unknown and no command is named.
-    results.extend(tasks::run_unattended(&words(&["update"]), &strategies, &[])?);
+    results.extend(tasks::run_unattended(&words(&[UPDATE]), &strategies, &[])?);
     if results.iter().any(Outcome::failed) {
         return Ok(());
     }
@@ -95,7 +95,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     }
     if let Some(reason) = checkout.tree.as_ref().and_then(state::bad) {
         results.push(outcome(
-            "switch",
+            SWITCH,
             Kind::Skipped,
             vec![format!(
                 "this revision failed its health check ({reason}); waiting for a newer one"
@@ -103,7 +103,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
         ));
         return Ok(());
     }
-    let switched = tasks::run(&words(&["switch"]), true, &[])?;
+    let switched = tasks::run(&words(&[SWITCH]), true, &[])?;
     let activated = !switched.iter().any(Outcome::failed);
     results.extend(switched);
     if activated {
@@ -140,7 +140,7 @@ pub fn run(state: &Path) -> Result<bool, String> {
     if let Some(error) = &error {
         let cause = process::cause_first(error);
         results.push(outcome(
-            "update",
+            UPDATE,
             Kind::Failed,
             cause.lines().map(str::to_string).collect(),
         ));
