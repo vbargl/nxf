@@ -291,3 +291,11 @@ fn fact_without_value() {
     let printed = output::release();
     assert_eq!(printed.stdout, "  name\n  Flake     value\n");
 }
+
+/// Rows are clipped to the width of the descriptor they go to: standard
+/// output, or standard error when the text of the run is diverted there.
+#[test]
+fn rows_width() {
+    assert_eq!(output::rows_descriptor(false), 1);
+    assert_eq!(output::rows_descriptor(true), 2);
+}

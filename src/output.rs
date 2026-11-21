@@ -404,10 +404,19 @@ pub fn verdict(text: &str, system: &str, matches: bool) {
     ));
 }
 
+/// The descriptor that the rows go to, and so the one whose width bounds them.
+pub fn rows_descriptor(diverted: bool) -> i32 {
+    if diverted {
+        libc::STDERR_FILENO
+    } else {
+        libc::STDOUT_FILENO
+    }
+}
+
 fn columns() -> usize {
     // SAFETY: winsize is plain numbers, and TIOCGWINSZ fills the one it is given.
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    let ok = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
+    let ok = unsafe { libc::ioctl(rows_descriptor(diverted()), libc::TIOCGWINSZ, &mut size) } == 0;
     if ok && size.ws_col > 0 {
         size.ws_col as usize
     } else {
