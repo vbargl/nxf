@@ -141,8 +141,8 @@ change them here first.
   `release` and `auto-update` are commands: the variants of `Cmd` in
   `src/cli.rs`, which clap lists with `help`. A new command is a variant, an
   arm of `run_command` and an arm of `Cmd::on_checkout`; nothing else names
-  it. A command is recognised only as the first word, so `nxf test status` is an unknown
-  task. A command refuses a word it does not take: `nxf version update`
+  it. A command is recognised only as the first word, so `nxf test status`
+  is an unknown task. A command refuses a word it does not take: `nxf version update`
   fails instead of ignoring `update`. `status` and `rollout --upgrade` take
   the names of inputs, so `nxf status update` fails as
   `Unknown input: update`.
@@ -161,8 +161,8 @@ change them here first.
   and the commands with `--config` read `--json` of the machines. A word of a
   result is a value of an enum. The shapes that `src/results.rs` owns, which
   are the outcomes of tasks, a refusal, the machines of a rollout and an
-  installation, have one writer and one reader there. The document of
-  `status --json` is written by `src/status.rs`, and `fleet.rs` and
+  installation, have one writer there, and one reader there where a program
+  of nxf reads them. The document of `status --json` is written by `src/status.rs`, and `fleet.rs` and
   `rollout.rs` read the fields they need from it. Every task reports through
   `--json` without code of its own; keep it that way.
 - `auto-update` decides which task comes next from the task results, and
@@ -211,10 +211,10 @@ change them here first.
   machine that starts as another system, and run it a second time.
 - `tests/rollout.rs` plays an installation without a machine. Its mock ssh
   keeps the files it is sent, reports a host key as the JSON of `nxf install
-  --json` and answers as a managed machine from then on. A mock `nix` names the source
-  of the template and does nothing on `nix copy`; a test that looks at what
-  `nix copy` is given puts a `nix` of its own in its place that records it.
-  This does not replace the run against a virtual machine.
+  --json` and answers as a managed machine from then on. A mock `nix` names
+  the source of the template and does nothing on `nix copy`; a test that looks
+  at what `nix copy` is given puts a `nix` of its own in its place that
+  records it. This does not replace the run against a virtual machine.
 - Tests never touch the machine. End-to-end tests use the throwaway flake and
   the mock nh, and variables of the environment stand in for what belongs to
   the machine. The shipped program reads them too.

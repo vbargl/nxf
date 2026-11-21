@@ -151,9 +151,8 @@ runs as root, nh is told not to elevate. dix makes the package summary.
 Scripts drive nxf through JSON instead of reading its terminal output. With
 `--json`, standard output holds the JSON document of the run and nothing
 else; `--dry-run` prints its plan as plain lines. The text for people stays on
-standard error. A task prints nothing until it ends. Only `install` and
-`rollout` print all of their text there as it comes, so that a long run stays
-observable.
+standard error. Only `install` and `rollout` print all of their text there as
+it comes, so that a long run stays observable.
 
 - `nxf --json <task>...` prints nothing while the tasks run, then a list with
   one record per task that ran: `task`, `inputs`, `outcome` and `details`. The
@@ -212,8 +211,8 @@ observable.
   ```
 
 The results of an automatic update have the same four fields. They are in
-`lastUpdate`, in `/var/lib/nxf/update.json` (`{"time": …, "results": […]}`) and in the file `$NXF_RESULTS` of
-the [failure hook](#hooks). Besides the tasks, a result there is named
+`lastUpdate`, in `/var/lib/nxf/update.json` (`{"time": …, "results": […]}`)
+and in the file `$NXF_RESULTS` of the [failure hook](#hooks). Besides the tasks, a result there is named
 `health`, for the [health checks](#health-checks), or `hook`, for the failure
 hook. These are all outcomes:
 
@@ -490,8 +489,8 @@ nxf install /tmp/machine
 
 `--reboot` restarts into the new system. `--json` prints the host key, the
 system and the revision as JSON on standard output, and the text of the steps
-on standard error, for scripts; see [Scripts](#scripts). Install needs root: another user
-gets `Installing needs root`. It refuses outside an installer (a system that
+on standard error, for scripts; see [Scripts](#scripts). Install needs root:
+another user gets `Installing needs root`. It refuses outside an installer (a system that
 runs from a disk), on a system that nxf manages (one it installed, or one
 whose system has nxf, also when it runs from memory), with uncommitted
 changes in the flake, and, with `--mounted`, into a target whose `/etc/nixos`

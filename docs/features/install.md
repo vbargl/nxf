@@ -116,9 +116,9 @@ real `nixos-install` or reads the `/proc/mounts` of the machine.
 | N11 | `tests/install.rs::refuses_unmounted_and_unlocked`, with `NXF_INSTALL_ROOT` in the place of `/mnt` | Which exit status: the test asserts that it is not 0 |
 | N12 | `tests/install.rs::reboot`, with a `systemctl` that notes its call; `tests/install.rs::reboots_through_the_stand_in` for the restart through `NXF_SYSTEMCTL` and not through the `systemctl` of `PATH` | A real restart |
 | N13 | `tests/install.rs::refuses_a_managed_system` | Which exit status: the test asserts that it is not 0. The line beneath the outcome. The same with `--mounted` |
+| N14 | `tests/install.rs::mounted`: its stand-in for `/mnt` is a directory with nothing mounted on it | What `/mnt/etc/nixos` holds, the arguments of `nixos-install` and the outcome: the test asserts the exit status 0, one call of `nixos-install` and the `Host key` line. That the system lands in memory |
 | N15 | `tests/install.rs::json`; `tests/install.rs::json_is_live` holds `nixos-install` back and asserts its line on standard error before it is released | The `system` of an installation whose profile is not found, which is null |
 | N16 | `tests/install.rs::json_refusal`, for N3 and N7 | The other refusals |
-| N14 | `tests/install.rs::mounted`: its stand-in for `/mnt` is a directory with nothing mounted on it | What `/mnt/etc/nixos` holds, the arguments of `nixos-install` and the outcome: the test asserts the exit status 0, one call of `nixos-install` and the `Host key` line. That the system lands in memory |
 
 `tests/install.rs::root_is_the_last_mount` covers which line of
 `/proc/mounts` decides whether the system runs from memory, on text it is
