@@ -9,7 +9,7 @@ use crate::output::Mark;
 use crate::results::{Kind, Outcome};
 use crate::strategy::{Strategies, Strategy};
 use crate::text::strip_ansi;
-use crate::{flake, git, nixos, output, process, state};
+use crate::{cli, flake, git, nixos, output, process, state};
 
 /// Runs a task with the inputs it takes. The outcomes it has besides its own,
 /// such as one for an input of the automatic update, are added to the last argument.
@@ -222,13 +222,14 @@ pub fn plan(given: &[String], inputs: &[String]) -> Result<Plan, String> {
     if !unknown.is_empty() {
         let width = output::LABEL;
         return Err(format!(
-            "Unknown task or input: {}\n{:<width$}{}\n{:<width$}{}\n{:<width$}status, doctor, version, init, install, rollout, hold, release, auto-update",
+            "Unknown task or input: {}\n{:<width$}{}\n{:<width$}{}\n{:<width$}{}",
             unknown.join(", "),
             "Tasks",
             names.join(", "),
             "Inputs",
             inputs.join(", "),
             "Commands",
+            cli::commands().join(", "),
         ));
     }
     let wanted: Vec<&str> = defined

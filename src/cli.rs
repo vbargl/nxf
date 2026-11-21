@@ -173,18 +173,13 @@ enum Cmd {
     },
 }
 
-const COMMANDS: &[&str] = &[
-    "status",
-    "doctor",
-    "version",
-    "init",
-    "install",
-    "rollout",
-    "hold",
-    "release",
-    "auto-update",
-    "help",
-];
+/// The names of the commands in the order they are declared, without `help`.
+pub fn commands() -> Vec<String> {
+    Cli::command()
+        .get_subcommands()
+        .map(|command| command.get_name().to_string())
+        .collect()
+}
 
 fn task_list() -> String {
     let mut list = String::from("Tasks:\n");
@@ -422,7 +417,8 @@ pub fn main() -> ExitCode {
     // A command is recognised only in first place, so that `nxf test status`
     // is an unknown task instead of a status report.
     let first = std::env::args().nth(1).unwrap_or_default();
-    let wants_command = COMMANDS.contains(&first.as_str()) || first == "-h" || first == "--help";
+    let wants_command =
+        commands().contains(&first) || ["help", "-h", "--help"].contains(&first.as_str());
     if !wants_command {
         return match TaskCli::try_parse() {
             Ok(cli) => {

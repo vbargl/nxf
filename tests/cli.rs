@@ -84,6 +84,40 @@ fn auto_update_state() {
     assert!(!fx.updater.join("update.json").exists());
 }
 
+/// The commands are those that clap knows, in the order they are declared;
+/// each is recognised as the first word, and the text of an unknown task
+/// lists them.
+#[test]
+fn command_list() {
+    let commands = nxf::cli::commands();
+    assert_eq!(
+        commands,
+        [
+            "status",
+            "doctor",
+            "version",
+            "init",
+            "install",
+            "rollout",
+            "hold",
+            "release",
+            "auto-update"
+        ]
+    );
+    let fx = fixture();
+    for command in &commands {
+        let help = fx.run(&[command, "--help"]);
+        help.ok();
+        assert_contains(&help.stdout, &format!("Usage: nxf {command}"));
+    }
+    let unknown = fx.run(&["nosuch"]);
+    assert_eq!(unknown.code, 1);
+    assert_contains(
+        &unknown.stderr,
+        &format!("  Commands  {}\n", commands.join(", ")),
+    );
+}
+
 /// The example in the help shows what the help claims for it: the words
 /// after `update` are inputs to update, and none of them is a task that
 /// would run as well.
