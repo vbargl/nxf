@@ -317,6 +317,37 @@ fn stream_memory() {
     assert!(growth < 16 * 1024, "the peak grew by {growth} kB");
 }
 
+/// A tool that never ends a line, or ends it with carriage returns only,
+/// does not make the process hold its output: the peak grows by a few MB.
+#[test]
+fn stream_unbroken_memory() {
+    let peak = || -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))
+            .and_then(|kilobytes| kilobytes.trim().trim_end_matches("kB").trim().parse().ok())
+            .unwrap()
+    };
+    for (script, last) in [
+        ("head -c 100000000 /dev/zero | tr '\\0' x", "xxxx"),
+        (
+            "yes 'a line of some length' | head -n 2000000 | tr '\\n' '\\r'",
+            "a line of some length",
+        ),
+    ] {
+        let before = peak();
+        let mut loud = Command::new("sh");
+        loud.args(["-c", &format!("{script}; echo; echo end; exit 1")]);
+        let error = output::stream(&mut loud, true, &[]).unwrap_err();
+        assert!(error.starts_with("sh exited with status 1.\n"), "{error}");
+        assert!(error.ends_with("end"), "{error}");
+        assert_contains(&error, last);
+        let growth = peak().saturating_sub(before);
+        assert!(growth < 16 * 1024, "{script}: the peak grew by {growth} kB");
+    }
+}
+
 /// A label column is as wide as the labels, and two more than the longest
 /// name when that is wider.
 #[test]

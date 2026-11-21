@@ -1,7 +1,7 @@
 //! Terminal presentation shared by the commands and tool wrappers.
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, IsTerminal, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -509,6 +509,9 @@ impl Monitor {
     }
 }
 
+/// The most of a line that is held at once: a longer one is read in pieces.
+const PIECE: u64 = 64 * 1024;
+
 /// The last lines a failing tool said, decoded: the lines of an error, and
 /// never more than a failure shows, so that they do not grow with the output.
 #[derive(Default)]
@@ -556,7 +559,7 @@ pub fn stream(command: &mut Command, progress: bool, inputs: &[String]) -> Resul
     let mut buffer = Vec::new();
     loop {
         buffer.clear();
-        match reader.read_until(b'\n', &mut buffer) {
+        match (&mut reader).take(PIECE).read_until(b'\n', &mut buffer) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
