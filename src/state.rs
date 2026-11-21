@@ -26,6 +26,27 @@ const READ: &str = "update-read";
 /// The directory of the marks of the sources that failed their health check.
 const BAD: &str = "bad";
 
+/// The hash of a committed Git tree. A build record and a mark of an
+/// unhealthy source are named by it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Tree(String);
+
+impl Tree {
+    pub fn new(hash: impl Into<String>) -> Tree {
+        Tree(hash.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for Tree {
+    fn fmt(&self, out: &mut std::fmt::Formatter) -> std::fmt::Result {
+        out.write_str(&self.0)
+    }
+}
+
 /// Makes what nxf creates writable by the group when the directory is: the
 /// group shares the checkout, and the next member must be able to change the
 /// lockfile and the Git objects this run writes. Returns whether it did.
@@ -108,24 +129,24 @@ fn bad_dir() -> PathBuf {
     updater_dir().join(BAD)
 }
 
-/// Marks the source with the given key as unhealthy, with the reason.
-pub fn mark_bad(tree: &str, reason: &str) -> Result<(), String> {
-    let mark = bad_dir().join(tree);
+/// Marks the source with the given tree as unhealthy, with the reason.
+pub fn mark_bad(tree: &Tree, reason: &str) -> Result<(), String> {
+    let mark = bad_dir().join(tree.as_str());
     std::fs::create_dir_all(bad_dir())
         .and_then(|()| std::fs::write(&mark, format!("{reason}\n")))
         .map_err(|err| format!("cannot write {}: {err}", mark.display()))
 }
 
-/// Why the source with the given key is marked as unhealthy, if it is.
-pub fn bad(tree: &str) -> Option<String> {
-    std::fs::read_to_string(bad_dir().join(tree))
+/// Why the source with the given tree is marked as unhealthy, if it is.
+pub fn bad(tree: &Tree) -> Option<String> {
+    std::fs::read_to_string(bad_dir().join(tree.as_str()))
         .ok()
         .map(|reason| reason.trim().to_string())
 }
 
-fn write_record(systems: &Path, key: &str, system: &Path) -> Result<(), String> {
-    let link = systems.join(key);
-    let temporary = systems.join(format!(".{key}.{}", std::process::id()));
+fn write_record(systems: &Path, tree: &Tree, system: &Path) -> Result<(), String> {
+    let link = systems.join(tree.as_str());
+    let temporary = systems.join(format!(".{tree}.{}", std::process::id()));
     let _ = std::fs::remove_file(&temporary);
     let result = std::os::unix::fs::symlink(system, &temporary)
         .and_then(|()| std::fs::rename(&temporary, &link))
@@ -136,11 +157,11 @@ fn write_record(systems: &Path, key: &str, system: &Path) -> Result<(), String> 
 
 /// Publishes a plain link, not a GC root. Metadata failures never fail a build.
 /// Only this caller's legacy records are imported, without replacing shared ones.
-pub fn remember(key: &str, system: &Path) {
+pub fn remember(tree: &Tree, system: &Path) {
     let (shared, local) = (shared_records(), local_records());
     if shared.exists() {
         let result = if writable_directory(&shared) {
-            write_record(&shared, key, system)
+            write_record(&shared, tree, system)
         } else {
             Err(format!(
                 "{} is not writable/searchable by this process",
@@ -153,13 +174,14 @@ pub fn remember(key: &str, system: &Path) {
                     for record in records(&local) {
                         // Creating the final symlink is atomic and refuses any existing entry,
                         // including a dangling link. Never replace a newer shared record.
-                        if let Err(err) =
-                            std::os::unix::fs::symlink(record.system, shared.join(&record.key))
-                        {
+                        if let Err(err) = std::os::unix::fs::symlink(
+                            record.system,
+                            shared.join(record.tree.as_str()),
+                        ) {
                             if err.kind() != std::io::ErrorKind::AlreadyExists {
                                 output::warning(&format!(
                                     "cannot import build record {}: {err}",
-                                    record.key
+                                    record.tree
                                 ));
                             }
                         }
@@ -177,7 +199,7 @@ pub fn remember(key: &str, system: &Path) {
     }
     let result = std::fs::create_dir_all(&local)
         .map_err(|err| format!("cannot create {}: {err}", local.display()))
-        .and_then(|()| write_record(&local, key, system));
+        .and_then(|()| write_record(&local, tree, system));
     if let Err(err) = result {
         output::warning(&format!("build record was not saved: {err}"));
     }
@@ -210,7 +232,7 @@ pub fn keep_sources(paths: &[PathBuf]) -> Result<(), String> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Remembered {
-    pub key: String,
+    pub tree: Tree,
     pub system: PathBuf,
 }
 
@@ -227,12 +249,12 @@ fn records(systems: &Path) -> Vec<Remembered> {
             }
             let system = std::fs::canonicalize(entry.path()).ok()?;
             (system.starts_with("/nix/store") && system.is_dir()).then(|| Remembered {
-                key: entry.file_name().to_string_lossy().into_owned(),
+                tree: Tree::new(entry.file_name().to_string_lossy()),
                 system,
             })
         })
         .collect();
-    records.sort_by(|a, b| a.key.cmp(&b.key));
+    records.sort_by(|a, b| a.tree.cmp(&b.tree));
     records
 }
 
@@ -240,7 +262,7 @@ fn records(systems: &Path) -> Vec<Remembered> {
 pub fn remembered() -> Vec<Remembered> {
     let mut all = records(&shared_records());
     for record in records(&local_records()) {
-        if !all.iter().any(|known| known.key == record.key) {
+        if !all.iter().any(|known| known.tree == record.tree) {
             all.push(record);
         }
     }

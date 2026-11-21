@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::output::{self, Mark, Style};
-use crate::state::Remembered;
+use crate::state::{Remembered, Tree};
 use crate::text::plain;
 use crate::{flake, git, hold, nixos, process, state, time};
 
@@ -196,10 +196,10 @@ fn mark_read(marker: &Path, id: &str) -> Result<(), String> {
 /// The flake commit that built a system, if one is remembered. Several commits
 /// can build the same system; the checkout's wins, then the newest.
 pub fn system_commit(dir: &Path, system: &Path, remembered: &[Remembered]) -> Option<String> {
-    let trees: Vec<String> = remembered
+    let trees: Vec<Tree> = remembered
         .iter()
         .filter(|record| record.system == system)
-        .map(|record| record.key.clone())
+        .map(|record| record.tree.clone())
         .collect();
     match git::clean_tree(dir) {
         Some(checkout) if trees.contains(&checkout) => git::commit_of(dir, &[checkout]),
@@ -222,8 +222,8 @@ pub struct Comparison {
     pub changes: Vec<String>,
     pub running: PathBuf,
     pub running_commit: Option<String>,
-    pub running_trees: Vec<String>,
-    pub tree: Option<String>,
+    pub running_trees: Vec<Tree>,
+    pub tree: Option<Tree>,
     pub built: Option<PathBuf>,
     pub matches: bool,
 }
@@ -237,13 +237,13 @@ pub fn compare() -> Result<Comparison, String> {
     let built = tree.as_ref().and_then(|tree| {
         remembered
             .iter()
-            .find(|record| record.key == *tree)
+            .find(|record| record.tree == *tree)
             .map(|record| record.system.clone())
     });
-    let running_trees: Vec<String> = remembered
+    let running_trees: Vec<Tree> = remembered
         .iter()
         .filter(|record| record.system == running)
-        .map(|record| record.key.clone())
+        .map(|record| record.tree.clone())
         .collect();
     let matches = built.as_ref() == Some(&running)
         || tree
@@ -337,7 +337,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             "revision": status.running_commit,
             "rebootRequired": nixos::reboot_required(),
             "hold": hold::active().map(|hold| hold.to_json()),
-            "bad": status.tree.as_deref().and_then(state::bad),
+            "bad": status.tree.as_ref().and_then(state::bad),
             "lastUpdate": update_result()
                 .ok()
                 .flatten()
@@ -372,7 +372,7 @@ pub fn report(options: &Options) -> Result<(), String> {
             plain(&hold.describe())
         ));
     }
-    if let Some(reason) = status.tree.as_deref().and_then(state::bad) {
+    if let Some(reason) = status.tree.as_ref().and_then(state::bad) {
         output::attention(&format!(
             "The checkout failed its health check and is not activated automatically: {}",
             plain(&reason)

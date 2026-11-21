@@ -4,6 +4,7 @@ mod common;
 
 use common::{append, commit, fixture, git as run_git, temp_dir};
 use nxf::git;
+use nxf::state::Tree;
 
 /// A fixture for calls of `nxf::git` in this process. A variable of the caller
 /// that names another repository or index would send those calls there.
@@ -18,7 +19,7 @@ fn own_repository() -> common::Fixture {
 #[test]
 fn clean_tree() {
     let fx = own_repository();
-    assert_eq!(git::clean_tree(&fx.checkout), Some(fx.tree()));
+    assert_eq!(git::clean_tree(&fx.checkout), Some(Tree::new(fx.tree())));
     append(&fx.checkout.join("flake.nix"), "# dirty\n");
     assert_eq!(git::clean_tree(&fx.checkout), None);
 }
@@ -27,17 +28,20 @@ fn clean_tree() {
 #[test]
 fn commit_of() {
     let fx = own_repository();
-    let first = fx.tree();
+    let first = Tree::new(fx.tree());
     assert_eq!(
         git::commit_of(&fx.checkout, std::slice::from_ref(&first)),
         Some(fx.head())
     );
-    assert_eq!(git::commit_of(&fx.checkout, &["0".repeat(40)]), None);
+    assert_eq!(
+        git::commit_of(&fx.checkout, &[Tree::new("0".repeat(40))]),
+        None
+    );
     append(&fx.checkout.join("flake.nix"), "# more\n");
     commit(&fx.checkout, "more");
     // The newest commit with any of the trees wins.
     assert_eq!(
-        git::commit_of(&fx.checkout, &[first, fx.tree()]),
+        git::commit_of(&fx.checkout, &[first, Tree::new(fx.tree())]),
         Some(fx.head())
     );
 }

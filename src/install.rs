@@ -215,7 +215,7 @@ pub fn run(options: &Options) -> Result<(), String> {
         output::sub("System", &inside.to_string_lossy());
         let records = updater.join(state::SYSTEMS);
         std::fs::create_dir_all(&records).map_err(|err| err.to_string())?;
-        let record = records.join(&tree);
+        let record = records.join(tree.as_str());
         let _ = std::fs::remove_file(&record);
         std::os::unix::fs::symlink(inside, &record).map_err(|err| err.to_string())?;
     }
@@ -228,7 +228,7 @@ pub fn run(options: &Options) -> Result<(), String> {
         &marker,
         format!(
             "{:#}\n",
-            json!({"time": time::now(), "tree": tree, "configuration": configuration})
+            json!({"time": time::now(), "tree": tree.as_str(), "configuration": configuration})
         ),
     )
     .map_err(|err| format!("cannot write {}: {err}", marker.display()))?;

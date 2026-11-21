@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::health::{self, Health};
+use crate::state::Tree;
 use crate::tasks::{self, Outcome};
 use crate::{flake, hold, hooks, nixos, output, process, state, status, strategy, time};
 
@@ -25,7 +26,7 @@ fn outcome(task: &str, outcome: &str, detail: String) -> Outcome {
 
 /// Checks the health of the system just switched to. An unhealthy system is
 /// replaced by the previous one, and its source is not tried again.
-fn verify(tree: Option<&str>, previous: &Path) -> Option<Outcome> {
+fn verify(tree: Option<&Tree>, previous: &Path) -> Option<Outcome> {
     let mut failed = match health::check() {
         Health::Unchecked => return None,
         Health::Healthy => return Some(outcome("health", "done", String::new())),
@@ -91,7 +92,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     if checkout.matches {
         return Ok(());
     }
-    if let Some(reason) = checkout.tree.as_deref().and_then(state::bad) {
+    if let Some(reason) = checkout.tree.as_ref().and_then(state::bad) {
         results.push(outcome(
             "switch",
             "skipped",
@@ -103,7 +104,7 @@ fn decide(results: &mut Vec<Outcome>) -> Result<(), String> {
     let activated = !switched.iter().any(Outcome::failed);
     results.extend(switched);
     if activated {
-        results.extend(verify(checkout.tree.as_deref(), &checkout.running));
+        results.extend(verify(checkout.tree.as_ref(), &checkout.running));
     }
     Ok(())
 }
