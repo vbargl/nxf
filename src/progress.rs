@@ -67,11 +67,13 @@ fn computed_input(message: &str) -> Option<&str> {
     (!name.contains('\'')).then_some(name)
 }
 
-pub fn advance(state: &State, event: Option<&Value>) -> State {
+/// Applies an event to the state. Returns whether the input, the active
+/// builds, the current build or the builds with a log line changed: what is
+/// shown at once, where counts and log text wait for the throttle.
+pub fn advance(state: &mut State, event: Option<&Value>) -> bool {
     let Some(event) = event else {
-        return state.clone();
+        return false;
     };
-    let mut next = state.clone();
     let action = event.get("action").and_then(Value::as_str).unwrap_or("");
     let kind = event.get("type").and_then(Value::as_i64);
 
@@ -82,8 +84,9 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
             if let Some(name) = computed_input(&strip_ansi(message)) {
                 let name = name.split('/').next().unwrap_or(name);
                 if state.inputs.is_empty() || state.inputs.iter().any(|input| input == name) {
-                    next.input = Some(name.to_string());
-                    return next;
+                    let changed = state.input.as_deref() != Some(name);
+                    state.input = Some(name.to_string());
+                    return changed;
                 }
             }
         }
@@ -91,17 +94,17 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
     let id = match event.get("id") {
         Some(Value::Number(number)) => number.to_string(),
         Some(Value::String(text)) => text.clone(),
-        _ => return next,
+        _ => return false,
     };
     let fields = match event.get("fields") {
         None | Some(Value::Null) => &[][..],
         Some(Value::Array(fields)) => fields.as_slice(),
-        Some(_) => return next,
+        Some(_) => return false,
     };
 
     if action == "start" && kind == Some(BUILDS) {
         upsert(
-            &mut next.builds,
+            &mut state.builds,
             &id,
             Build {
                 done: 0,
@@ -114,13 +117,13 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
             fields.first().and_then(Value::as_i64),
             fields.get(1).and_then(Value::as_i64),
         ) else {
-            return next;
+            return false;
         };
         if done < 0 || expected < done {
-            return next;
+            return false;
         }
         upsert(
-            &mut next.builds,
+            &mut state.builds,
             &id,
             Build {
                 done,
@@ -134,16 +137,20 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
             .and_then(Value::as_str)
             .filter(|drv| drv.ends_with(".drv"))
         else {
-            return next;
+            return false;
         };
-        upsert(&mut next.active, &id, derivation_name(drv));
-        next.current = Some(id);
+        let name = derivation_name(drv);
+        let changed =
+            get(&state.active, &id) != Some(&name) || state.current.as_deref() != Some(id.as_str());
+        upsert(&mut state.active, &id, name);
+        state.current = Some(id);
+        return changed;
     } else if action == "result"
         && matches!(kind, Some(BUILD_LOG_LINE) | Some(POST_BUILD_LOG_LINE))
         && get(&state.active, &id).is_some()
     {
         let Some(text) = fields.first().and_then(Value::as_str) else {
-            return next;
+            return false;
         };
         let last = text
             .replace('\r', "\n")
@@ -152,17 +159,23 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
             .map(|line| strip_controls(&strip_ansi(line)).trim().to_string())
             .unwrap_or_default();
         if last.is_empty() {
-            return next;
+            return false;
         }
-        upsert(&mut next.logs, &id, last);
-        next.current = Some(id);
+        let changed =
+            get(&state.logs, &id).is_none() || state.current.as_deref() != Some(id.as_str());
+        upsert(&mut state.logs, &id, last);
+        state.current = Some(id);
+        return changed;
     } else if action == "stop" {
-        next.active.retain(|(key, _)| *key != id);
-        next.logs.retain(|(key, _)| *key != id);
-        if next.current.as_deref() == Some(id.as_str()) {
-            next.current = next.active.last().map(|(key, _)| key.clone());
+        let (active, logs) = (state.active.len(), state.logs.len());
+        state.active.retain(|(key, _)| *key != id);
+        state.logs.retain(|(key, _)| *key != id);
+        let mut changed = state.active.len() != active || state.logs.len() != logs;
+        if state.current.as_deref() == Some(id.as_str()) {
+            state.current = state.active.last().map(|(key, _)| key.clone());
+            changed = true;
         }
-        if let Some(build) = next
+        if let Some(build) = state
             .builds
             .iter_mut()
             .find(|(key, _)| *key == id)
@@ -170,8 +183,9 @@ pub fn advance(state: &State, event: Option<&Value>) -> State {
         {
             build.closed = true;
         }
+        return changed;
     }
-    next
+    false
 }
 
 fn derivation_name(drv: &str) -> String {

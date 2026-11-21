@@ -482,18 +482,12 @@ impl Monitor {
 
     /// Counts and logs are throttled; input and derivation changes are immediate.
     fn advance(&mut self, event: Option<&Value>) {
-        let state = progress::advance(&self.progress, event);
-        let snapshot = progress::snapshot(&state, self.live);
-        let keys = |logs: &[(String, String)]| -> Vec<String> {
-            logs.iter().map(|(key, _)| key.clone()).collect()
-        };
-        let changed = state.input != self.progress.input
-            || state.active != self.progress.active
-            || state.current != self.progress.current
-            || keys(&state.logs) != keys(&self.progress.logs);
-        let ready = changed || self.at.elapsed() >= Duration::from_secs(1);
-        self.progress = state;
-        if snapshot != self.shown && ready && (!snapshot.is_empty() || (self.live && self.drawn)) {
+        let changed = progress::advance(&mut self.progress, event);
+        if !changed && self.at.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let snapshot = progress::snapshot(&self.progress, self.live);
+        if snapshot != self.shown && (!snapshot.is_empty() || (self.live && self.drawn)) {
             self.show(snapshot);
         }
     }
