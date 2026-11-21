@@ -240,7 +240,7 @@ pub struct Comparison {
 impl Comparison {
     /// The flake commit of the running system. Finding it reads the whole
     /// history, so it is left to those who show it.
-    pub fn running_commit(&self) -> Option<String> {
+    pub fn commit(&self) -> Option<String> {
         system_commit(
             &self.dir,
             self.tree.as_ref(),
@@ -318,7 +318,7 @@ fn input_table(lock: &Value, inputs: &[String], other: Option<&Value>) {
 pub fn report(options: &Options) -> Result<(), String> {
     let status = compare()?;
     let dir = &status.dir;
-    let running_commit = status.running_commit();
+    let running_commit = status.commit();
     let running_lock: Option<Value> = match &running_commit {
         Some(commit) => Some(
             serde_json::from_str(&git::show_file(dir, commit, "flake.lock")?)
