@@ -795,6 +795,23 @@ The hold is the file `/var/lib/nxf/hold.json`, so it survives a restart, and
 only root or a member of the group `nxf` can set or release it. `nxf status` shows it. A
 hold with an end stops holding at that time. Tasks run by hand are not held.
 
+Do not release the hold of a new machine before one run of the service has
+succeeded. The service runs as the user `nxf` with its own environment: no SSH
+keys of yours, no VPN and an empty fetcher cache. A flake that builds for you
+can therefore fail for the service, for example when it fetches a private
+repository at evaluation time. A hold makes the run `skipped`, and a run by
+hand as another user does not test that environment, so test with the service
+itself, with the timer stopped so that it does not start a second run:
+
+```sh
+sudo systemctl stop nxf-auto-update.timer
+nxf release
+sudo systemctl start nxf-auto-update.service   # waits until the run ends
+nxf status                                     # the outcome
+nxf hold --reason "the first run failed"       # when it failed
+sudo systemctl start nxf-auto-update.timer     # when it succeeded
+```
+
 ### Strategies
 
 Not every input can be updated unattended: one needs a VPN, another
